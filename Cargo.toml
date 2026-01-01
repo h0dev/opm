@@ -7,9 +7,7 @@ repository = "https://lab.themackabu.dev/self/pmc"
 description = "PMC is a simple and easy to use PM2 alternative"
 
 [build-dependencies]
-tar = "0.4.41"
 chrono = "0.4.38"
-flate2 = "1.0.31"
 
 [dependencies]
 ron = "0.8.1"
@@ -61,13 +59,5 @@ default-features = false
 features = [
    "blocking", 
    "json", 
-   "rustls-tls", 
-]
-
-[build-dependencies.reqwest]
-version = "0.11.27"
-default-features = false
-features = [
-   "blocking", 
    "rustls-tls", 
 ]
