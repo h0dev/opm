@@ -1,4 +1,5 @@
 use colored::Colorize;
+use lazy_static::lazy_static;
 use macros_rs::{crashln, string, ternary, then};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use pmc::process::{MemoryInfo, unix::NativeProcess as Process};
@@ -23,6 +24,11 @@ use tabled::{
     Table, Tabled,
 };
 
+lazy_static! {
+    static ref SCRIPT_EXTENSION_PATTERN: Regex = Regex::new(r"^[^\s]+\.(js|ts|py|sh|rb|pl|php)(\s|$)").unwrap();
+    static ref SIMPLE_PATH_PATTERN: Regex = Regex::new(r"^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$").unwrap();
+}
+
 pub struct Internal<'i> {
     pub id: usize,
     pub runner: Runner,
@@ -42,9 +48,8 @@ impl<'i> Internal<'i> {
             // Check if script is a file path with an extension
             let script_to_run = if let Some(ext_start) = script.rfind('.') {
                 let ext = &script[ext_start..];
-                let base_pattern = Regex::new(r"^[^\s]+\.(js|ts|py|sh|rb|pl|php)(\s|$)").unwrap();
                 
-                if base_pattern.is_match(script) {
+                if SCRIPT_EXTENSION_PATTERN.is_match(script) {
                     // It's a script file with extension - determine the interpreter
                     let interpreter = match ext {
                         ".js" | ".ts" => config.runner.node.clone(),
@@ -66,8 +71,7 @@ impl<'i> Internal<'i> {
                 }
             } else {
                 // No extension, check old pattern for js/ts
-                let pattern = Regex::new(r"(?m)^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$").unwrap();
-                if pattern.is_match(script) {
+                if SIMPLE_PATH_PATTERN.is_match(script) {
                     format!("{} {}", config.runner.node, script)
                 } else {
                     script.clone()
