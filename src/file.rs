@@ -31,39 +31,49 @@ pub fn logs_with_options(item: &Process, lines_to_tail: usize, kind: &str, follo
         
         if follow {
             // Follow mode: continuously watch for new lines
-            use std::io::Seek;
+            use std::io::{Seek, SeekFrom};
             let mut file = File::open(&log_file).unwrap();
-            file.seek(std::io::SeekFrom::End(0)).unwrap();
+            
+            // Start from the current end of file
+            let mut last_pos = file.seek(SeekFrom::End(0)).unwrap();
             
             loop {
-                let reader = BufReader::new(&file);
-                let mut new_lines = Vec::new();
+                // Check current file size
+                let current_size = file.metadata().unwrap().len();
                 
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        new_lines.push(line);
-                    }
-                }
-                
-                if !new_lines.is_empty() {
-                    for line in new_lines {
-                        if let Some(pattern) = filter {
-                            if !line.to_lowercase().contains(&pattern.to_lowercase()) {
-                                continue;
+                if current_size > last_pos {
+                    // New content available - read from last position
+                    file.seek(SeekFrom::Start(last_pos)).unwrap();
+                    let reader = BufReader::new(&file);
+                    
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            if let Some(pattern) = filter {
+                                if !line.to_lowercase().contains(&pattern.to_lowercase()) {
+                                    continue;
+                                }
                             }
+                            
+                            let (level_indicator, line_color) = detect_log_level(&line, kind);
+                            let color = ternary!(kind == "out", "green", "red");
+                            println!(
+                                "{} {} {}",
+                                format!("{}|{}", item.id, item.name).color(color),
+                                level_indicator,
+                                line.color(line_color)
+                            );
                         }
-                        
-                        let (level_indicator, line_color) = detect_log_level(&line, kind);
-                        let color = ternary!(kind == "out", "green", "red");
-                        println!(
-                            "{} {} {}",
-                            format!("{}|{}", item.id, item.name).color(color),
-                            level_indicator,
-                            line.color(line_color)
-                        );
                     }
+                    
+                    last_pos = current_size;
+                } else if current_size < last_pos {
+                    // File was truncated or rotated - reset position
+                    last_pos = 0;
+                    file.seek(SeekFrom::Start(0)).unwrap();
                 }
                 
+                // Poll interval - using a simple polling mechanism
+                // TODO: Consider using inotify on Linux for more efficient file watching
                 sleep(Duration::from_millis(500));
             }
         }

@@ -480,8 +480,17 @@ impl<'i> Internal<'i> {
             if errors_only {
                 file::logs_with_options(item, *lines, "error", follow, filter, stats);
             } else {
-                file::logs_with_options(item, *lines, "error", follow, filter, stats);
-                file::logs_with_options(item, *lines, "out", follow, filter, stats);
+                // When follow mode is enabled, we can't follow both logs simultaneously
+                // So we'll only display initial content for both, then follow stdout
+                if follow {
+                    println!("{}", "\n--- Error Logs (last lines) ---".bright_red());
+                    file::logs_with_options(item, *lines, "error", false, filter, false);
+                    println!("{}", "\n--- Standard Output (following) ---".bright_green());
+                    file::logs_with_options(item, *lines, "out", true, filter, stats);
+                } else {
+                    file::logs_with_options(item, *lines, "error", false, filter, stats);
+                    file::logs_with_options(item, *lines, "out", false, filter, stats);
+                }
             }
         }
     }

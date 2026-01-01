@@ -175,7 +175,7 @@ enum Commands {
     Logs {
         #[clap(value_parser = cli::validate::<Item>)]
         item: Item,
-        #[arg(long, default_value_t = 15, help = "Number of lines to display")]
+        #[arg(long, default_value_t = 15, help = "Number of lines to display from the end of the log file")]
         lines: usize,
         /// Server
         #[arg(short, long)]
