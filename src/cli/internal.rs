@@ -6,6 +6,7 @@ use pmc::process::{MemoryInfo, unix::NativeProcess as Process};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
+use std::fs;
 
 use pmc::{
     config, file,
@@ -532,6 +533,30 @@ impl<'i> Internal<'i> {
 
         if !matches!(&**server_name, "internal" | "local") {
             crashln!("{} Cannot restore on remote servers", *helpers::FAIL)
+        }
+
+        // Clear log folder before restoring processes
+        let config = config::read();
+        let log_path = &config.runner.log_path;
+        
+        if file::Exists::check(log_path).folder() {
+            // Remove all log files in the log directory
+            if let Ok(entries) = fs::read_dir(log_path) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            let path = entry.path();
+                            if let Some(ext) = path.extension() {
+                                if ext == "log" {
+                                    let _ = fs::remove_file(path);
+                                }
+                            }
+                        }
+                    }
+                }
+                log!("Cleared log folder: {}", log_path);
+                println!("{} Cleared log folder", *helpers::SUCCESS);
+            }
         }
 
         Runner::new().list().for_each(|(id, p)| {
