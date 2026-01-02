@@ -592,8 +592,8 @@ impl Process {
         let name = self.name.replace(" ", "_");
 
         LogInfo {
-            out: global!("pmc.logs.out", name.as_str()),
-            error: global!("pmc.logs.error", name.as_str()),
+            out: global!("opm.logs.out", name.as_str()),
+            error: global!("opm.logs.error", name.as_str()),
         }
     }
 }

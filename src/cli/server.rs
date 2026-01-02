@@ -15,7 +15,7 @@ fn save(servers: BTreeMap<String, Server>) {
     match home::home_dir() {
         Some(path) => {
             let path = path.display();
-            let config_path = format!("{path}/.pmc/servers.toml");
+            let config_path = format!("{path}/.opm/servers.toml");
 
             let contents = match toml::to_string(&Servers { servers: Some(servers) }) {
                 Ok(contents) => contents,

@@ -9,7 +9,7 @@ pub struct Logger {
 
 impl Logger {
     pub fn new() -> io::Result<Self> {
-        let file = OpenOptions::new().create(true).append(true).open(global!("pmc.log"))?;
+        let file = OpenOptions::new().create(true).append(true).open(global!("opm.log"))?;
         Ok(Logger { file })
     }
 

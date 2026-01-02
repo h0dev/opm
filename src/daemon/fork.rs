@@ -8,7 +8,7 @@ pub enum Fork {
 }
 
 pub fn chdir() -> Result<libc::c_int, i32> {
-    let dir = CString::new(global!("pmc.base")).expect("CString::new failed");
+    let dir = CString::new(global!("opm.base")).expect("CString::new failed");
     let res = unsafe { libc::chdir(dir.as_ptr()) };
     match res {
         -1 => Err(-1),

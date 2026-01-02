@@ -33,16 +33,16 @@ pub(crate) fn init() {
         Some(path) => {
             let path = path.display();
 
-            if !Exists::check(&format!("{path}/.pmc/")).folder() {
-                fs::create_dir_all(format!("{path}/.pmc/")).unwrap();
-                log::info!("created pmc base dir");
+            if !Exists::check(&format!("{path}/.opm/")).folder() {
+                fs::create_dir_all(format!("{path}/.opm/")).unwrap();
+                log::info!("created opm base dir");
             }
 
             let config = config::read();
             then!(
                 !config.check_shell_absolute(),
                 println!(
-                    "{} Shell is not an absolute path.\n {1} Please update this in {path}/.pmc/config.toml\n {1} Failure to update will prevent programs from restarting",
+                    "{} Shell is not an absolute path.\n {1} Please update this in {path}/.opm/config.toml\n {1} Failure to update will prevent programs from restarting",
                     *helpers::WARN,
                     *helpers::WARN_STAR
                 )
@@ -50,22 +50,22 @@ pub(crate) fn init() {
 
             if !Exists::check(&config.runner.log_path).folder() {
                 fs::create_dir_all(&config.runner.log_path).unwrap();
-                log::info!("created pmc log dir");
+                log::info!("created opm log dir");
             }
 
-            init!("pmc.base", format!("{path}/.pmc/"));
-            init!("pmc.log", format!("{path}/.pmc/pmc.log"));
-            init!("pmc.pid", format!("{path}/.pmc/daemon.pid"));
-            init!("pmc.dump", format!("{path}/.pmc/process.dump"));
+            init!("opm.base", format!("{path}/.opm/"));
+            init!("opm.log", format!("{path}/.opm/opm.log"));
+            init!("opm.pid", format!("{path}/.opm/daemon.pid"));
+            init!("opm.dump", format!("{path}/.opm/process.dump"));
 
-            init!("pmc.daemon.kind", config.daemon.kind);
-            init!("pmc.daemon.log", format!("{path}/.pmc/daemon.log"));
+            init!("opm.daemon.kind", config.daemon.kind);
+            init!("opm.daemon.log", format!("{path}/.opm/daemon.log"));
 
             let out = format!("{}/{{}}-out.log", config.runner.log_path);
             let error = format!("{}/{{}}-error.log", config.runner.log_path);
 
-            init!("pmc.logs.out", out);
-            init!("pmc.logs.error", error);
+            init!("opm.logs.out", out);
+            init!("opm.logs.error", error);
         }
         None => crashln!("{} Impossible to get your home directory", *helpers::FAIL),
     }

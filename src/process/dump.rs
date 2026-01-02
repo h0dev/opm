@@ -26,7 +26,7 @@ pub fn from(address: &str, token: Option<&str>) -> Result<Runner, anyhow::Error>
 }
 
 pub fn read() -> Runner {
-    if !Exists::check(&global!("pmc.dump")).file() {
+    if !Exists::check(&global!("opm.dump")).file() {
         let runner = Runner {
             id: Id::new(0),
             list: BTreeMap::new(),
@@ -37,11 +37,11 @@ pub fn read() -> Runner {
         log!("created dump file");
     }
 
-    file::read_object(global!("pmc.dump"))
+    file::read_object(global!("opm.dump"))
 }
 
 pub fn raw() -> Vec<u8> {
-    if !Exists::check(&global!("pmc.dump")).file() {
+    if !Exists::check(&global!("opm.dump")).file() {
         let runner = Runner {
             id: Id::new(0),
             list: BTreeMap::new(),
@@ -52,7 +52,7 @@ pub fn raw() -> Vec<u8> {
         log!("created dump file");
     }
 
-    file::raw(global!("pmc.dump"))
+    file::raw(global!("opm.dump"))
 }
 
 pub fn write(dump: &Runner) {
@@ -61,7 +61,7 @@ pub fn write(dump: &Runner) {
         Err(err) => crashln!("{} Cannot encode dump.\n{}", *helpers::FAIL, string!(err).white()),
     };
 
-    if let Err(err) = fs::write(global!("pmc.dump"), encoded) {
+    if let Err(err) = fs::write(global!("opm.dump"), encoded) {
         crashln!("{} Error writing dumpfile.\n{}", *helpers::FAIL, string!(err).white())
     }
 }

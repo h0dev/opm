@@ -88,7 +88,7 @@ pub fn health(format: &String) {
     let mut cpu_percent: Option<f64> = None;
     let mut uptime: Option<DateTime<Utc>> = None;
     let mut memory_usage: Option<MemoryInfo> = None;
-    let mut runner: Runner = file::read_object(global!("pmc.dump"));
+    let mut runner: Runner = file::read_object(global!("opm.dump"));
 
     #[derive(Clone, Debug, Tabled)]
     struct Info {
@@ -162,10 +162,10 @@ pub fn health(format: &String) {
         cpu_percent,
         memory_usage,
         uptime: uptime,
-        path: global!("pmc.base"),
-        external: global!("pmc.daemon.kind"),
+        path: global!("opm.base"),
+        external: global!("opm.daemon.kind"),
         process_count: runner.count(),
-        pid_file: format!("{}  ", global!("pmc.pid")),
+        pid_file: format!("{}  ", global!("opm.pid")),
         status: ColoredString(ternary!(pid::exists(), "online".green().bold(), "stopped".red().bold())),
     }];
 
@@ -211,7 +211,7 @@ pub fn stop() {
 }
 
 pub fn start(verbose: bool) {
-    println!("{} Spawning PMC daemon (pmc_base={})", *helpers::SUCCESS, global!("pmc.base"));
+    println!("{} Spawning OPM daemon (opm_base={})", *helpers::SUCCESS, global!("opm.base"));
 
     if pid::exists() {
         match pid::read() {
@@ -223,7 +223,7 @@ pub fn start(verbose: bool) {
     #[inline]
     #[tokio::main]
     async extern "C" fn init() {
-        pid::name("PMC Restart Handler Daemon");
+        pid::name("OPM Restart Handler Daemon");
 
         let config = config::read().daemon;
 
@@ -238,7 +238,7 @@ pub fn start(verbose: bool) {
         }
     }
 
-    println!("{} PMC Successfully daemonized (type={})", *helpers::SUCCESS, global!("pmc.daemon.kind"));
+    println!("{} OPM Successfully daemonized (type={})", *helpers::SUCCESS, global!("opm.daemon.kind"));
     match daemon(false, verbose) {
         Ok(Fork::Parent(_)) => {}
         Ok(Fork::Child) => init(),

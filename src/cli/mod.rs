@@ -139,14 +139,14 @@ pub fn info(item: &Item, format: &String, server_name: &String) {
     }
 }
 
-pub fn logs(item: &Item, lines: &usize, server_name: &String) {
+pub fn logs(item: &Item, lines: &usize, server_name: &String, follow: bool, filter: Option<&str>, errors_only: bool, stats: bool) {
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
     match item {
-        Item::Id(id) => Internal { id: *id, runner, server_name, kind }.logs(lines),
+        Item::Id(id) => Internal { id: *id, runner, server_name, kind }.logs(lines, follow, filter, errors_only, stats),
         Item::Name(name) => match runner.find(&name, server_name) {
-            Some(id) => Internal { id, runner, server_name, kind }.logs(lines),
+            Some(id) => Internal { id, runner, server_name, kind }.logs(lines, follow, filter, errors_only, stats),
             None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
         },
     }

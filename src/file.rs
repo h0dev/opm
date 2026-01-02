@@ -12,6 +12,10 @@ use std::{
 };
 
 pub fn logs(item: &Process, lines_to_tail: usize, kind: &str) {
+    logs_with_options(item, lines_to_tail, kind, false, None, false);
+}
+
+pub fn logs_with_options(item: &Process, lines_to_tail: usize, kind: &str, follow: bool, filter: Option<&str>, stats: bool) {
     let log_file = match kind {
         "out" => item.logs().out,
         "error" => item.logs().error,
@@ -21,23 +25,159 @@ pub fn logs(item: &Process, lines_to_tail: usize, kind: &str) {
     if !Exists::check(&log_file).empty() {
         let file = File::open(&log_file).unwrap();
         let reader = BufReader::new(file);
-        let lines = reader.lines().map(|line| line.unwrap_or_else(|err| format!("error reading line: {err}"))).collect();
+        let lines: Vec<String> = reader.lines().map(|line| line.unwrap_or_else(|err| format!("error reading line: {err}"))).collect();
 
-        logs_internal(lines, lines_to_tail, &log_file, item.id, kind, &item.name)
+        logs_internal_with_options(lines, lines_to_tail, &log_file, item.id, kind, &item.name, filter, stats);
+        
+        if follow {
+            // Follow mode: continuously watch for new lines
+            use std::io::{Seek, SeekFrom};
+            let mut file = File::open(&log_file).unwrap();
+            
+            // Start from the current end of file
+            let mut last_pos = file.seek(SeekFrom::End(0)).unwrap();
+            
+            loop {
+                // Check current file size
+                let current_size = file.metadata().unwrap().len();
+                
+                if current_size > last_pos {
+                    // New content available - read from last position
+                    file.seek(SeekFrom::Start(last_pos)).unwrap();
+                    let reader = BufReader::new(&file);
+                    
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            if let Some(pattern) = filter {
+                                if !line.to_lowercase().contains(&pattern.to_lowercase()) {
+                                    continue;
+                                }
+                            }
+                            
+                            let (level_indicator, line_color) = detect_log_level(&line, kind);
+                            let color = ternary!(kind == "out", "green", "red");
+                            println!(
+                                "{} {} {}",
+                                format!("{}|{}", item.id, item.name).color(color),
+                                level_indicator,
+                                line.color(line_color)
+                            );
+                        }
+                    }
+                    
+                    last_pos = current_size;
+                } else if current_size < last_pos {
+                    // File was truncated or rotated - reset position
+                    last_pos = 0;
+                    file.seek(SeekFrom::Start(0)).unwrap();
+                }
+                
+                // Poll interval - using a simple polling mechanism
+                // TODO: Consider using inotify on Linux for more efficient file watching
+                sleep(Duration::from_millis(500));
+            }
+        }
     } else {
         println!("{} No logs found in {log_file}", *helpers::FAIL)
     }
 }
 
 pub fn logs_internal(lines: Vec<String>, lines_to_tail: usize, log_file: &str, id: usize, log_type: &str, item_name: &str) {
+    logs_internal_with_options(lines, lines_to_tail, log_file, id, log_type, item_name, None, false);
+}
+
+pub fn logs_internal_with_options(lines: Vec<String>, lines_to_tail: usize, log_file: &str, id: usize, log_type: &str, item_name: &str, filter: Option<&str>, stats: bool) {
     println!("{}", format!("\n{log_file} last {lines_to_tail} lines:").bright_black());
 
     let color = ternary!(log_type == "out", "green", "red");
     let start_index = if lines.len() > lines_to_tail { lines.len() - lines_to_tail } else { 0 };
 
+    // Statistics counters
+    let mut error_count = 0;
+    let mut warn_count = 0;
+    let mut info_count = 0;
+    let mut debug_count = 0;
+    let mut filtered_lines = Vec::new();
+
     for (_, line) in lines.iter().skip(start_index).enumerate() {
-        println!("{} {}", format!("{}|{} |", id, item_name).color(color), line);
+        // Apply filter if provided
+        if let Some(pattern) = filter {
+            if !line.to_lowercase().contains(&pattern.to_lowercase()) {
+                continue;
+            }
+        }
+        
+        // Detect log level in the line content for better identification
+        let (level_indicator, line_color) = detect_log_level(&line, log_type);
+        
+        // Count log levels for statistics
+        if level_indicator.contains("ERR") {
+            error_count += 1;
+        } else if level_indicator.contains("WARN") {
+            warn_count += 1;
+        } else if level_indicator.contains("INFO") {
+            info_count += 1;
+        } else if level_indicator.contains("DBG") {
+            debug_count += 1;
+        }
+        
+        filtered_lines.push((level_indicator, line_color, line));
     }
+    
+    // Display statistics if requested
+    if stats {
+        println!("{}", "".bright_black());
+        println!("{}", "Log Statistics:".bright_yellow().bold());
+        println!("  {} Errors:   {}", "✗".red(), error_count.to_string().red());
+        println!("  {} Warnings: {}", "⚠".yellow(), warn_count.to_string().yellow());
+        println!("  {} Info:     {}", "ℹ".blue(), info_count.to_string().blue());
+        println!("  {} Debug:    {}", "⚙".cyan(), debug_count.to_string().cyan());
+        println!("  {} Total:    {}", "∑".white(), filtered_lines.len().to_string().white());
+        println!("{}", "".bright_black());
+    }
+    
+    // Display the filtered logs
+    for (level_indicator, line_color, line) in filtered_lines {
+        println!(
+            "{} {} {}",
+            format!("{}|{}", id, item_name).color(color),
+            level_indicator,
+            line.color(line_color)
+        );
+    }
+}
+
+/// Detect log level from line content and return appropriate indicator and color
+fn detect_log_level(line: &str, log_type: &str) -> (String, &'static str) {
+    let line_lower = line.to_lowercase();
+    
+    // Check for common error patterns
+    if line_lower.contains("error") || line_lower.contains("fatal") || line_lower.contains("fail") {
+        return ("[ ERR]".to_string(), "red");
+    }
+    
+    // Check for common warning patterns
+    if line_lower.contains("warn") || line_lower.contains("warning") {
+        return ("[WARN]".to_string(), "yellow");
+    }
+    
+    // Check for debug patterns
+    if line_lower.contains("debug") || line_lower.contains("trace") {
+        return ("[ DBG]".to_string(), "cyan");
+    }
+    
+    // Check for info patterns
+    if line_lower.contains("info") {
+        return ("[INFO]".to_string(), "blue");
+    }
+    
+    // Default based on log type
+    if log_type == "error" {
+        return ("[ ERR]".to_string(), "red");
+    }
+    
+    // Default to stdout
+    ("[OUT ]".to_string(), "white")
 }
 
 pub fn cwd() -> PathBuf {

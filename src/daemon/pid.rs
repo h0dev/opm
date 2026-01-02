@@ -24,11 +24,11 @@ impl fmt::Display for Pid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
 }
 
-pub fn exists() -> bool { fs::metadata(global!("pmc.pid")).is_ok() }
+pub fn exists() -> bool { fs::metadata(global!("opm.pid")).is_ok() }
 pub fn running(pid: i32) -> bool { unsafe { libc::kill(pid, 0) == 0 } }
 
 pub fn uptime() -> io::Result<DateTime<Utc>> {
-    let metadata = fs::metadata(global!("pmc.pid"))?;
+    let metadata = fs::metadata(global!("opm.pid"))?;
     let creation_time = metadata.created()?;
     let creation_time = DateTime::from(creation_time);
 
@@ -36,7 +36,7 @@ pub fn uptime() -> io::Result<DateTime<Utc>> {
 }
 
 pub fn read() -> Result<Pid> {
-    let pid = fs::read_to_string(global!("pmc.pid")).map_err(|err| anyhow!(err))?;
+    let pid = fs::read_to_string(global!("opm.pid")).map_err(|err| anyhow!(err))?;
 
     let trimmed_pid = pid.trim();
     let parsed_pid = trimmed_pid.parse::<i32>().map_err(|err| anyhow!(err))?;
@@ -45,15 +45,15 @@ pub fn read() -> Result<Pid> {
 }
 
 pub fn write(pid: u32) {
-    if let Err(err) = fs::write(global!("pmc.pid"), pid.to_string()) {
+    if let Err(err) = fs::write(global!("opm.pid"), pid.to_string()) {
         crashln!("{} Failed to write PID to file: {}", *helpers::FAIL, err);
     }
 }
 
 pub fn remove() {
-    if Exists::check(&global!("pmc.pid")).file() {
+    if Exists::check(&global!("opm.pid")).file() {
         log::warn!("Stale PID file detected. Removing the PID file.");
-        if let Err(err) = fs::remove_file(global!("pmc.pid")) {
+        if let Err(err) = fs::remove_file(global!("opm.pid")) {
             log::error!("Failed to remove PID file: {}", err);
         }
     } else {

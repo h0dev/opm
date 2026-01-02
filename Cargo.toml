@@ -4,7 +4,11 @@ version = "2.0.0"
 edition = "2024"
 license = "MIT"
 repository = "https://lab.themackabu.dev/self/pmc"
-description = "PMC is a simple and easy to use PM2 alternative"
+description = "OPM is a simple and easy to use PM2 alternative"
+
+[[bin]]
+name = "opm"
+path = "src/main.rs"
 
 [build-dependencies]
 chrono = "0.4.38"

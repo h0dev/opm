@@ -36,7 +36,7 @@ pub fn read() -> Config {
         Some(path) => {
             let path = path.display();
 
-            let config_path = format!("{path}/.pmc/config.toml");
+            let config_path = format!("{path}/.opm/config.toml");
 
             if !Exists::check(&config_path).file() {
                 let config = Config {
@@ -45,7 +45,7 @@ pub fn read() -> Config {
                         shell: string!("/bin/sh"),
                         args: vec![string!("-c")],
                         node: string!("node"),
-                        log_path: format!("{path}/.pmc/logs"),
+                        log_path: format!("{path}/.opm/logs"),
                     },
                     daemon: Daemon {
                         restarts: 10,
@@ -75,7 +75,7 @@ pub fn servers() -> Servers {
     match home::home_dir() {
         Some(path) => {
             let path = path.display();
-            let config_path = format!("{path}/.pmc/servers.toml");
+            let config_path = format!("{path}/.opm/servers.toml");
 
             if !Exists::check(&config_path).file() {
                 if let Err(err) = write(&config_path, "") {
@@ -96,7 +96,7 @@ impl Config {
         match home::home_dir() {
             Some(path) => {
                 let path = path.display();
-                let config_path = format!("{path}/.pmc/config.toml");
+                let config_path = format!("{path}/.opm/config.toml");
 
                 let contents = match toml::to_string(&self) {
                     Ok(contents) => contents,

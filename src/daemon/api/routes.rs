@@ -79,7 +79,7 @@ pub(crate) struct ConfigBody {
     shell: String,
     #[schema(min_items = 1, example = json!(["-c"]))]
     args: Vec<String>,
-    #[schema(example = "/home/user/.pmc/logs")]
+    #[schema(example = "/home/user/.opm/logs")]
     log_path: String,
 }
 
@@ -791,7 +791,7 @@ pub async fn get_metrics() -> MetricsRoot {
     let mut cpu_percent: Option<f64> = None;
     let mut uptime: Option<DateTime<Utc>> = None;
     let mut memory_usage: Option<u64> = None;
-    let mut runner: Runner = file::read_object(global!("pmc.dump"));
+    let mut runner: Runner = file::read_object(global!("opm.dump"));
 
     HTTP_COUNTER.inc();
     if pid::exists() {
@@ -835,7 +835,7 @@ pub async fn get_metrics() -> MetricsRoot {
             uptime: uptime_fmt,
             running: pid::exists(),
             process_count: runner.count(),
-            daemon_type: global!("pmc.daemon.kind"),
+            daemon_type: global!("opm.daemon.kind"),
             stats: Stats {
                 memory_usage: memory_usage_fmt,
                 cpu_percent: cpu_percent_fmt,

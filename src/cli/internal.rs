@@ -6,6 +6,7 @@ use pmc::process::{MemoryInfo, unix::NativeProcess as Process};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
+use std::fs;
 
 use pmc::{
     config, file,
@@ -290,8 +291,8 @@ impl<'i> Internal<'i> {
                     "json" => println!("{json}"),
                     _ => {
                         println!("{}\n{table}\n", format!("Describing {}process with id ({})", self.kind, self.id).on_bright_white().black());
-                        println!(" {}", format!("Use `pmc logs {} [--lines <num>]` to display logs", self.id).white());
-                        println!(" {}", format!("Use `pmc env {}`  to display environment variables", self.id).white());
+                        println!(" {}", format!("Use `opm logs {} [--lines <num>]` to display logs", self.id).white());
+                        println!(" {}", format!("Use `opm env {}`  to display environment variables", self.id).white());
                     }
                 };
             };
@@ -425,7 +426,7 @@ impl<'i> Internal<'i> {
         }
     }
 
-    pub fn logs(mut self, lines: &usize) {
+    pub fn logs(mut self, lines: &usize, follow: bool, filter: Option<&str>, errors_only: bool, stats: bool) {
         if !matches!(self.server_name, "internal" | "local") {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -447,6 +448,10 @@ impl<'i> Internal<'i> {
             );
 
             for kind in vec!["error", "out"] {
+                if errors_only && kind == "out" {
+                    continue;
+                }
+                
                 let logs = http::logs(&self.runner.remote.as_ref().unwrap(), self.id, kind);
 
                 if let Ok(log) = logs {
@@ -455,18 +460,39 @@ impl<'i> Internal<'i> {
                         continue;
                     }
 
-                    file::logs_internal(log.lines, *lines, log.path, self.id, kind, &item.name)
+                    file::logs_internal_with_options(log.lines, *lines, log.path, self.id, kind, &item.name, filter, stats)
                 }
             }
         } else {
             let item = self.runner.info(self.id).unwrap_or_else(|| crashln!("{} Process ({}) not found", *helpers::FAIL, self.id));
-            println!(
-                "{}",
-                format!("Showing last {lines} lines for {}process [{}] (change the value with --lines option)", self.kind, self.id).yellow()
-            );
+            
+            if follow {
+                println!(
+                    "{}",
+                    format!("Following logs for {}process [{}] (press Ctrl+C to exit)", self.kind, self.id).yellow()
+                );
+            } else {
+                println!(
+                    "{}",
+                    format!("Showing last {lines} lines for {}process [{}] (change the value with --lines option)", self.kind, self.id).yellow()
+                );
+            }
 
-            file::logs(item, *lines, "error");
-            file::logs(item, *lines, "out");
+            if errors_only {
+                file::logs_with_options(item, *lines, "error", follow, filter, stats);
+            } else {
+                // When follow mode is enabled, we can't follow both logs simultaneously
+                // So we'll only display initial content for both, then follow stdout
+                if follow {
+                    println!("{}", "\n--- Error Logs (last lines) ---".bright_red());
+                    file::logs_with_options(item, *lines, "error", false, filter, false);
+                    println!("{}", "\n--- Standard Output (following) ---".bright_green());
+                    file::logs_with_options(item, *lines, "out", true, filter, stats);
+                } else {
+                    file::logs_with_options(item, *lines, "error", false, filter, stats);
+                    file::logs_with_options(item, *lines, "out", false, filter, stats);
+                }
+            }
         }
     }
 
@@ -507,6 +533,30 @@ impl<'i> Internal<'i> {
 
         if !matches!(&**server_name, "internal" | "local") {
             crashln!("{} Cannot restore on remote servers", *helpers::FAIL)
+        }
+
+        // Clear log folder before restoring processes
+        let config = config::read();
+        let log_path = &config.runner.log_path;
+        
+        if file::Exists::check(log_path).folder() {
+            // Remove all log files in the log directory
+            if let Ok(entries) = fs::read_dir(log_path) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            let path = entry.path();
+                            if let Some(ext) = path.extension() {
+                                if ext == "log" {
+                                    let _ = fs::remove_file(path);
+                                }
+                            }
+                        }
+                    }
+                }
+                log!("Cleared log folder: {}", log_path);
+                println!("{} Cleared log folder", *helpers::SUCCESS);
+            }
         }
 
         Runner::new().list().for_each(|(id, p)| {
