@@ -3,7 +3,6 @@ pub use args::*;
 
 pub(crate) mod import;
 pub(crate) mod internal;
-pub(crate) mod server;
 
 use internal::Internal;
 use macros_rs::{crashln, string, ternary};
@@ -177,4 +176,23 @@ pub fn flush(item: &Item, server_name: &String) {
             None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
         },
     }
+}
+
+pub fn restart(item: &Item, server_name: &String) {
+    let runner: Runner = Runner::new();
+    let (kind, list_name) = format(server_name);
+
+    match item {
+        Item::Id(id) => {
+            Internal { id: *id, runner, server_name, kind }.restart(&None, &None, false, false);
+        }
+        Item::Name(name) => match runner.find(&name, server_name) {
+            Some(id) => {
+                Internal { id, runner, server_name, kind }.restart(&None, &None, false, false);
+            }
+            None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
+        },
+    }
+
+    Internal::list(&string!("default"), &list_name);
 }

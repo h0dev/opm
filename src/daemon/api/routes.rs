@@ -28,7 +28,7 @@ use super::{
 
 use pmc::{
     config, file, helpers,
-    process::{dump, http::client, ItemSingle, ProcessItem, Runner, get_process_cpu_usage_percentage},
+    process::{dump, http::client, ItemSingle, ProcessItem, Runner, get_process_cpu_usage_with_children, get_process_memory_with_children},
 };
 
 use crate::daemon::{
@@ -799,8 +799,10 @@ pub async fn get_metrics() -> MetricsRoot {
             if let Ok(process) = Process::new(process_id.get()) {
                 pid = Some(process_id);
                 uptime = Some(pid::uptime().unwrap());
-                memory_usage = Some(process.memory_info().unwrap().rss());
-                cpu_percent = Some(get_process_cpu_usage_percentage(process_id.get::<i64>()));
+                if let Some(mem_info) = get_process_memory_with_children(process_id.get::<i64>()) {
+                    memory_usage = Some(mem_info.rss);
+                }
+                cpu_percent = Some(get_process_cpu_usage_with_children(process_id.get::<i64>()));
             }
         }
     }

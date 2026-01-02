@@ -47,31 +47,7 @@ enum Daemon {
     },
 }
 
-#[derive(Subcommand)]
-enum Server {
-    /// Add new server
-    #[command(visible_alias = "add")]
-    New,
-    /// List servers
-    #[command(visible_alias = "ls")]
-    List {
-        /// Format output
-        #[arg(long, default_value_t = string!("default"))]
-        format: String,
-    },
-    /// Remove server
-    #[command(visible_alias = "rm", visible_alias = "delete")]
-    Remove {
-        /// Server name
-        name: String,
-    },
-    /// Set default server
-    #[command(visible_alias = "set")]
-    Default {
-        /// Server name
-        name: Option<String>,
-    },
-}
+
 
 // add pmc restore command
 #[derive(Subcommand)]
@@ -91,7 +67,6 @@ enum Commands {
         path: Option<String>,
     },
     /// Start/Restart a process
-    #[command(visible_alias = "restart")]
     Start {
         /// Process name
         #[arg(long)]
@@ -209,11 +184,13 @@ enum Commands {
         command: Daemon,
     },
 
-    /// Server management
-    #[command(visible_alias = "remote", visible_alias = "srv")]
-    Server {
-        #[command(subcommand)]
-        command: Server,
+    /// Restart a process
+    Restart {
+        #[clap(value_parser = cli::validate::<Item>)]
+        item: Item,
+        /// Server
+        #[arg(short, long)]
+        server: Option<String>,
     },
 }
 
@@ -253,16 +230,10 @@ fn main() {
             Daemon::Restore => daemon::restart(level.as_str() != "OFF"),
         },
 
-        Commands::Server { command } => match command {
-            Server::New => cli::server::new(),
-            Server::Remove { name } => cli::server::remove(name),
-            Server::Default { name } => cli::server::default(name),
-            Server::List { format } => cli::server::list(format, cli.verbose.log_level()),
-        },
+        Commands::Restart { item, server } => cli::restart(item, &defaults(server)),
     };
 
     if !matches!(&cli.command, Commands::Daemon { .. })
-        && !matches!(&cli.command, Commands::Server { .. })
         && !matches!(&cli.command, Commands::Save { .. })
         && !matches!(&cli.command, Commands::Env { .. })
         && !matches!(&cli.command, Commands::Export { .. })

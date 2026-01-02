@@ -530,9 +530,9 @@ impl Runner {
             let mut cpu_percent: Option<f64> = None;
 
             if let Ok(process) = unix::NativeProcess::new(item.pid as u32) && 
-                let Ok(mem_info_native) = process.memory_info() {
-                cpu_percent = Some(get_process_cpu_usage_percentage(item.pid as i64));
-                memory_usage = Some(MemoryInfo::from(mem_info_native));
+                let Ok(_mem_info_native) = process.memory_info() {
+                cpu_percent = Some(get_process_cpu_usage_with_children(item.pid as i64));
+                memory_usage = get_process_memory_with_children(item.pid as i64);
             }
 
             let cpu_percent = match cpu_percent {
@@ -637,9 +637,9 @@ impl ProcessWrapper {
         let mut cpu_percent: Option<f64> = None;
 
         if let Ok(process) = unix::NativeProcess::new(item.pid as u32) &&
-            let Ok(mem_info_native) = process.memory_info() {
-            cpu_percent = Some(get_process_cpu_usage_percentage(item.pid as i64));
-            memory_usage = Some(MemoryInfo::from(mem_info_native));
+            let Ok(_mem_info_native) = process.memory_info() {
+            cpu_percent = Some(get_process_cpu_usage_with_children(item.pid as i64));
+            memory_usage = get_process_memory_with_children(item.pid as i64);
         }
 
         let status = if item.running {
@@ -697,6 +697,45 @@ pub fn get_process_cpu_usage_percentage(pid: i64) -> f64 {
         },
         Err(_) => 0.0,
     }
+}
+
+/// Get the total CPU usage percentage of the process and its children
+pub fn get_process_cpu_usage_with_children(pid: i64) -> f64 {
+    let parent_cpu = get_process_cpu_usage_percentage(pid);
+    let children = process_find_children(pid);
+    
+    let children_cpu: f64 = children.iter()
+        .map(|&child_pid| get_process_cpu_usage_percentage(child_pid))
+        .sum();
+    
+    (parent_cpu + children_cpu).min(100.0 * num_cpus::get() as f64)
+}
+
+/// Get the total memory usage of the process and its children
+pub fn get_process_memory_with_children(pid: i64) -> Option<MemoryInfo> {
+    let parent_memory = unix::NativeProcess::new(pid as u32)
+        .ok()?
+        .memory_info()
+        .ok()
+        .map(MemoryInfo::from)?;
+    
+    let children = process_find_children(pid);
+    
+    let children_memory: (u64, u64) = children.iter()
+        .filter_map(|&child_pid| {
+            unix::NativeProcess::new(child_pid as u32)
+                .ok()
+                .and_then(|p| p.memory_info().ok())
+                .map(|m| (m.rss(), m.vms()))
+        })
+        .fold((0, 0), |(rss_sum, vms_sum), (rss, vms)| {
+            (rss_sum + rss, vms_sum + vms)
+        });
+    
+    Some(MemoryInfo {
+        rss: parent_memory.rss + children_memory.0,
+        vms: parent_memory.vms + children_memory.1,
+    })
 }
 
 /// Stop the process

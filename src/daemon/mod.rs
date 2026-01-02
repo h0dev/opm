@@ -16,7 +16,7 @@ use std::{process, thread::sleep, time::Duration};
 use pmc::{
     config, file,
     helpers::{self, ColoredString},
-    process::{hash, id::Id, Runner, Status, get_process_cpu_usage_percentage},
+    process::{hash, id::Id, Runner, Status, get_process_cpu_usage_with_children},
 };
 
 use tabled::{
@@ -132,7 +132,7 @@ pub fn health(format: &String) {
                 pid = Some(process.pid() as i32);
                 uptime = Some(pid::uptime().unwrap());
                 memory_usage = process.memory_info().ok().map(MemoryInfo::from);
-                cpu_percent = Some(get_process_cpu_usage_percentage(process_id.get::<i64>()));
+                cpu_percent = Some(get_process_cpu_usage_with_children(process_id.get::<i64>()));
             }
         }
     }
