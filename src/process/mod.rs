@@ -717,7 +717,7 @@ pub fn get_process_memory_with_children(pid: i64) -> Option<MemoryInfo> {
         .ok()?
         .memory_info()
         .ok()
-        .map(MemoryInfo::from);
+        .map(MemoryInfo::from)?;
     
     let children = process_find_children(pid);
     
@@ -732,10 +732,9 @@ pub fn get_process_memory_with_children(pid: i64) -> Option<MemoryInfo> {
             (rss_sum + rss, vms_sum + vms)
         });
     
-    parent_memory.map(|mut parent| {
-        parent.rss += children_memory.0;
-        parent.vms += children_memory.1;
-        parent
+    Some(MemoryInfo {
+        rss: parent_memory.rss + children_memory.0,
+        vms: parent_memory.vms + children_memory.1,
     })
 }
 
