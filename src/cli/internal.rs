@@ -62,6 +62,23 @@ impl<'i> Internal<'i> {
         }
     }
 
+    /// Display real-time statistics multiple times during process initialization
+    fn show_initialization_stats(runner: &mut Runner, process_id: usize) {
+        let process = runner.process(process_id);
+        let pid = process.pid;
+        let process_name = process.name.clone();
+        
+        // Wait a moment for process to initialize
+        thread::sleep(Duration::from_millis(150));
+        
+        // Display initial statistics
+        Self::display_realtime_stats(pid, &process_name);
+        
+        // Display again after a short delay to show activity
+        thread::sleep(Duration::from_millis(200));
+        Self::display_realtime_stats(pid, &process_name);
+    }
+
     pub fn create(mut self, script: &String, name: &Option<String>, watch: &Option<String>, silent: bool) -> Runner {
         let config = config::read();
         let name = match name {
@@ -124,21 +141,13 @@ impl<'i> Internal<'i> {
         
         // Display real-time statistics during process initialization
         if !silent && matches!(self.server_name, "internal" | "local") {
-            // Get the newly created process
-            if let Some(latest_id) = self.runner.size() {
-                let process = self.runner.process(*latest_id);
-                let pid = process.pid;
-                let process_name = process.name.clone();
-                
-                // Wait a moment for process to initialize
-                thread::sleep(Duration::from_millis(150));
-                
-                // Display initial statistics
-                Self::display_realtime_stats(pid, &process_name);
-                
-                // Display again after a short delay to show activity
-                thread::sleep(Duration::from_millis(200));
-                Self::display_realtime_stats(pid, &process_name);
+            // Find the newly created process by name (search in the list directly)
+            let process_id = self.runner.list.iter()
+                .find(|(_, p)| p.name == name)
+                .map(|(id, _)| *id);
+            
+            if let Some(pid) = process_id {
+                Self::show_initialization_stats(&mut self.runner, pid);
             }
         }
         
@@ -189,19 +198,7 @@ impl<'i> Internal<'i> {
         if !silent {
             // Display real-time statistics during process restart
             if matches!(self.server_name, "internal" | "local") {
-                let process = self.runner.process(self.id);
-                let pid = process.pid;
-                let process_name = process.name.clone();
-                
-                // Wait a moment for process to restart and initialize
-                thread::sleep(Duration::from_millis(150));
-                
-                // Display initial statistics
-                Self::display_realtime_stats(pid, &process_name);
-                
-                // Display again after a short delay to show activity
-                thread::sleep(Duration::from_millis(200));
-                Self::display_realtime_stats(pid, &process_name);
+                Self::show_initialization_stats(&mut self.runner, self.id);
             }
             
             println!("{} Restarted {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
