@@ -596,7 +596,7 @@ impl Runner {
 
             if let Ok(process) = unix::NativeProcess::new(item.pid as u32) && 
                 let Ok(_mem_info_native) = process.memory_info() {
-                cpu_percent = Some(get_process_cpu_usage_with_children(item.pid as i64));
+                cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, item.pid as i64));
                 memory_usage = get_process_memory_with_children(item.pid as i64);
             }
 
@@ -703,7 +703,7 @@ impl ProcessWrapper {
 
         if let Ok(process) = unix::NativeProcess::new(item.pid as u32) &&
             let Ok(_mem_info_native) = process.memory_info() {
-            cpu_percent = Some(get_process_cpu_usage_with_children(item.pid as i64));
+            cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, item.pid as i64));
             memory_usage = get_process_memory_with_children(item.pid as i64);
         }
 
@@ -762,6 +762,23 @@ pub fn get_process_cpu_usage_percentage(pid: i64) -> f64 {
         },
         Err(_) => 0.0,
     }
+}
+
+/// Get the total CPU usage percentage of the process and its children
+/// If parent_process is provided, it will be used instead of creating a new one
+pub fn get_process_cpu_usage_with_children_from_process(parent_process: &unix::NativeProcess, pid: i64) -> f64 {
+    let parent_cpu = match parent_process.cpu_percent() {
+        Ok(cpu_percent) => cpu_percent.min(100.0 * num_cpus::get() as f64),
+        Err(_) => 0.0,
+    };
+    
+    let children = process_find_children(pid);
+    
+    let children_cpu: f64 = children.iter()
+        .map(|&child_pid| get_process_cpu_usage_percentage(child_pid))
+        .sum();
+    
+    (parent_cpu + children_cpu).min(100.0 * num_cpus::get() as f64)
 }
 
 /// Get the total CPU usage percentage of the process and its children
