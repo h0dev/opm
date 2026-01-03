@@ -69,7 +69,7 @@ const Login = (props: { base: string }) => {
 				<div className="mt-10 sm:mx-auto sm:w-full sm:max-w-sm bg-zinc-900/70 backdrop-blur-md px-5 py-6 rounded-lg border border-zinc-800 transition-all shadow-xl">
 					<div className="flex min-h-full flex-1 flex-col justify-center">
 						<div className="mb-5">
-							<img className="h-10 w-auto" src={`${props.base}/assets/favicon.svg`} alt="OPM" />
+							<img className="h-10 w-auto" src={`${props.base}/assets/favicon.svg`} alt="PMC" />
 							<h2 className="mt-6 text-2xl font-bold leading-9 tracking-tight text-white">Welcome back</h2>
 							<p className="mt-1.5 text-sm leading-6 text-zinc-300">Sign in to your account</p>
 						</div>
