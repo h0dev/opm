@@ -7,7 +7,6 @@ use prometheus::{Encoder, TextEncoder};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use opm::process::unix::NativeProcess as Process;
 use reqwest::header::HeaderValue;
-use tera::Context;
 use utoipa::ToSchema;
 
 use rocket::{
@@ -21,9 +20,7 @@ use rocket::{
 
 use super::{
     helpers::{generic_error, not_found, GenericError, NotFound},
-    render,
     structs::ErrorMessage,
-    EnableWebUI, TeraState,
 };
 
 use opm::{
@@ -156,29 +153,6 @@ fn attempt(done: bool, method: &str) -> ActionResponse {
         done,
         action: ternary!(done, Box::leak(Box::from(method)), "DOES_NOT_EXIST").to_string(),
     }
-}
-
-#[get("/")]
-pub async fn dashboard(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { Ok((ContentType::HTML, render("dashboard", &state, &mut Context::new()).await?)) }
-
-#[get("/servers")]
-pub async fn servers(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { Ok((ContentType::HTML, render("servers", &state, &mut Context::new()).await?)) }
-
-#[get("/login")]
-pub async fn login(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { Ok((ContentType::HTML, render("login", &state, &mut Context::new()).await?)) }
-
-#[get("/view/<id>")]
-pub async fn view_process(id: usize, state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> {
-    let mut ctx = Context::new();
-    ctx.insert("process_id", &id);
-    Ok((ContentType::HTML, render("view", &state, &mut ctx).await?))
-}
-
-#[get("/status/<name>")]
-pub async fn server_status(name: String, state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> {
-    let mut ctx = Context::new();
-    ctx.insert("server_name", &name);
-    Ok((ContentType::HTML, render("status", &state, &mut ctx).await?))
 }
 
 #[get("/daemon/prometheus")]
