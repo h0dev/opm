@@ -583,8 +583,9 @@ impl<'i> Internal<'i> {
         
         // Reset restart and crash counters after restore for all running processes
         for id in running_ids {
-            runner.reset_counters(id).save();
+            runner.reset_counters(id);
         }
+        runner.save();
 
         println!("{} Restored process statuses from dumpfile", *helpers::SUCCESS);
         Internal::list(&string!("default"), &list_name);
