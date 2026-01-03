@@ -76,7 +76,7 @@ pub fn validate<T: Validatable>(s: &str) -> Result<T, String> {
     }
 }
 
-// Parse comma-separated or space-separated items
+// Parse comma-separated items
 pub fn validate_items(s: &str) -> Result<Items, String> {
     // First check if it's "all"
     if s.trim() == "all" {

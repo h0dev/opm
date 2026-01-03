@@ -89,7 +89,6 @@ pub fn stop(items: &Items, server_name: &String) {
             None => println!("{} Cannot stop all, no processes found", *helpers::FAIL),
         }
     } else {
-        // Process multiple items
         for item in &items.items {
             match item {
                 Item::Id(id) => {
@@ -124,7 +123,6 @@ pub fn remove(items: &Items, server_name: &String) {
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
-    // Process multiple items
     for item in &items.items {
         match item {
             Item::Id(id) => {
@@ -228,7 +226,6 @@ pub fn restart(items: &Items, server_name: &String) {
             None => println!("{} Cannot restart all, no processes found", *helpers::FAIL),
         }
     } else {
-        // Process multiple items
         for item in &items.items {
             match item {
                 Item::Id(id) => {
