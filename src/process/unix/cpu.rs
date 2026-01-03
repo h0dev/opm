@@ -69,24 +69,36 @@ pub fn get_cpu_percent_fast(pid: u32) -> f64 {
     let stat_path = format!("/proc/{}/stat", pid);
     if let Ok(stat_content) = fs::read_to_string(&stat_path) {
         let parts: Vec<&str> = stat_content.split_whitespace().collect();
-        if parts.len() > 21 {
+        // Indices from /proc/[pid]/stat format (see `man 5 proc`):
+        // [13] = utime (CPU time in user mode)
+        // [14] = stime (CPU time in kernel mode)
+        // [21] = starttime (time process started after system boot)
+        const UTIME_INDEX: usize = 13;
+        const STIME_INDEX: usize = 14;
+        const STARTTIME_INDEX: usize = 21;
+        
+        if parts.len() > STARTTIME_INDEX {
             // Get process CPU time (utime + stime)
-            let utime = parts[13].parse::<u64>().unwrap_or(0) as f64;
-            let stime = parts[14].parse::<u64>().unwrap_or(0) as f64;
-            let starttime = parts[21].parse::<u64>().unwrap_or(0) as f64;
+            let utime = parts[UTIME_INDEX].parse::<u64>().unwrap_or(0) as f64;
+            let stime = parts[STIME_INDEX].parse::<u64>().unwrap_or(0) as f64;
+            let starttime = parts[STARTTIME_INDEX].parse::<u64>().unwrap_or(0) as f64;
             
             // Get system uptime
             if let Ok(uptime_content) = fs::read_to_string("/proc/uptime") {
                 if let Some(uptime_str) = uptime_content.split_whitespace().next() {
                     if let Ok(uptime) = uptime_str.parse::<f64>() {
-                        let clock_ticks_per_sec = 100.0; // sysconf(_SC_CLK_TCK)
+                        // CLK_TCK (clock ticks per second) is typically 100 on Linux
+                        // but can vary. Common values are 100 (most Linux), 1000 (some systems)
+                        // Using sysconf(_SC_CLK_TCK) would be ideal but requires libc calls
+                        // For now, use 100 which is standard for most Linux systems
+                        const CLOCK_TICKS_PER_SEC: f64 = 100.0;
                         
                         // Calculate process uptime in seconds
-                        let process_uptime = uptime - (starttime / clock_ticks_per_sec);
+                        let process_uptime = uptime - (starttime / CLOCK_TICKS_PER_SEC);
                         
                         if process_uptime > 0.0 {
                             // Total CPU time used by process in seconds
-                            let process_cpu_time = (utime + stime) / clock_ticks_per_sec;
+                            let process_cpu_time = (utime + stime) / CLOCK_TICKS_PER_SEC;
                             
                             // CPU percentage = (CPU time / elapsed time) * 100
                             let cpu_percent = (process_cpu_time / process_uptime) * 100.0;
