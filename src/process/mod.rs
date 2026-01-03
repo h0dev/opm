@@ -118,6 +118,11 @@ pub type Env = BTreeMap<String, String>;
 pub struct Process {
     pub id: usize,
     pub pid: i64,
+    /// PID of the parent shell process when running commands through a shell.
+    /// This is set when the command is executed via a shell (e.g., bash -c 'script.sh')
+    /// and shell_pid != actual_pid. Used for accurate CPU monitoring of shell scripts.
+    #[serde(default)]
+    pub shell_pid: Option<i64>,
     pub env: Env,
     pub name: String,
     pub path: PathBuf,
@@ -316,7 +321,7 @@ impl Runner {
             // Then add system environment
             process_env.extend(system_env);
 
-            let pid = process_run(ProcessMetadata {
+            let result = process_run(ProcessMetadata {
                 args: config.args,
                 name: name.clone(),
                 shell: config.shell,
@@ -334,7 +339,8 @@ impl Runner {
                 id,
                 Process {
                     id,
-                    pid,
+                    pid: result.pid,
+                    shell_pid: result.shell_pid,
                     path,
                     watch,
                     crash,
@@ -387,7 +393,7 @@ impl Runner {
                 // Finally add system environment
                 temp_env.extend(system_env);
 
-                process.pid = process_run(ProcessMetadata {
+                let result = process_run(ProcessMetadata {
                     args: config.args,
                     name: name.clone(),
                     shell: config.shell,
@@ -396,6 +402,8 @@ impl Runner {
                     env: temp_env,
                 }).unwrap_or_else(|err| crashln!("Failed to run process: {err}"));
 
+                process.pid = result.pid;
+                process.shell_pid = result.shell_pid;
                 process.running = true;
                 process.children = vec![];
                 process.started = Utc::now();
@@ -597,11 +605,15 @@ impl Runner {
             // Use new_fast() to avoid CPU measurement delays for list view
             // This uses average CPU since process start instead of current instantaneous CPU
             // For accurate current CPU, use the info endpoint which measures over a 100ms window
-            if let Ok(process) = unix::NativeProcess::new_fast(item.pid as u32) && 
+            
+            // For shell scripts, use shell_pid to capture the entire process tree
+            let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+            
+            if let Ok(process) = unix::NativeProcess::new_fast(pid_for_monitoring as u32) && 
                 let Ok(_mem_info_native) = process.memory_info() {
                 // Use fast CPU calculation that includes children (important for .sh scripts)
-                cpu_percent = Some(get_process_cpu_usage_with_children_fast(item.pid as i64));
-                memory_usage = get_process_memory_with_children(item.pid as i64);
+                cpu_percent = Some(get_process_cpu_usage_with_children_fast(pid_for_monitoring));
+                memory_usage = get_process_memory_with_children(pid_for_monitoring);
             }
 
             let cpu_percent = match cpu_percent {
@@ -705,10 +717,13 @@ impl ProcessWrapper {
         let mut memory_usage: Option<MemoryInfo> = None;
         let mut cpu_percent: Option<f64> = None;
 
-        if let Ok(process) = unix::NativeProcess::new(item.pid as u32) &&
+        // For shell scripts, use shell_pid to capture the entire process tree
+        let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+
+        if let Ok(process) = unix::NativeProcess::new(pid_for_monitoring as u32) &&
             let Ok(_mem_info_native) = process.memory_info() {
-            cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, item.pid as i64));
-            memory_usage = get_process_memory_with_children(item.pid as i64);
+            cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, pid_for_monitoring));
+            memory_usage = get_process_memory_with_children(pid_for_monitoring);
         }
 
         let status = if item.running {
@@ -934,8 +949,15 @@ pub fn process_find_children(parent_pid: i64) -> Vec<i64> {
     children
 }
 
+/// Result of running a process
+#[derive(Debug, Clone)]
+pub struct ProcessRunResult {
+    pub pid: i64,
+    pub shell_pid: Option<i64>,
+}
+
 /// Run the process
-pub fn process_run(metadata: ProcessMetadata) -> Result<i64, String> {
+pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String> {
     use std::process::{Command, Stdio};
     use std::fs::OpenOptions;
 
@@ -978,7 +1000,13 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<i64, String> {
     let shell_pid = child.id() as i64;
     let actual_pid = unix::get_actual_child_pid(shell_pid);
 
-    Ok(actual_pid)
+    // If shell and actual PIDs differ, store the shell PID for CPU monitoring
+    let shell_pid_opt = (shell_pid != actual_pid).then_some(shell_pid);
+
+    Ok(ProcessRunResult {
+        pid: actual_pid,
+        shell_pid: shell_pid_opt,
+    })
 }
 
 #[cfg(test)]
@@ -1004,6 +1032,7 @@ mod tests {
         let process = Process {
             id,
             pid: 12345,
+            shell_pid: None,
             env: BTreeMap::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
@@ -1046,6 +1075,7 @@ mod tests {
         let process = Process {
             id,
             pid: 12345,
+            shell_pid: None,
             env: BTreeMap::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
@@ -1103,14 +1133,14 @@ mod tests {
         };
 
         match process_run(metadata) {
-            Ok(pid) => {
-                assert!(pid > 0);
+            Ok(result) => {
+                assert!(result.pid > 0);
                 
                 // Wait a bit for process to complete
                 thread::sleep(Duration::from_millis(100));
                 
                 // Try to stop it (might already be finished)
-                let _ = process_stop(pid);
+                let _ = process_stop(result.pid);
             }
             Err(e) => {
                 panic!("Failed to run test process: {}", e);
