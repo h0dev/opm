@@ -7,6 +7,8 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
 use std::fs;
+use std::thread;
+use std::time::Duration;
 
 use opm::{
     config, file,
@@ -38,6 +40,28 @@ pub struct Internal<'i> {
 }
 
 impl<'i> Internal<'i> {
+    /// Display real-time statistics for a process during initialization
+    fn display_realtime_stats(pid: i64, process_name: &str) {
+        if let Ok(process) = Process::new(pid as u32) {
+            let cpu_percent = get_process_cpu_usage_with_children_from_process(&process, pid);
+            let memory_info = get_process_memory_with_children(pid);
+            
+            let cpu_str = format!("{:.2}%", cpu_percent);
+            let mem_str = match memory_info {
+                Some(mem) => helpers::format_memory(mem.rss),
+                None => string!("0b"),
+            };
+            
+            println!(
+                "  {} Process ({}) - CPU: {}, Memory: {}",
+                *helpers::SUCCESS,
+                process_name.bright_cyan(),
+                cpu_str.bright_green(),
+                mem_str.bright_yellow()
+            );
+        }
+    }
+
     pub fn create(mut self, script: &String, name: &Option<String>, watch: &Option<String>, silent: bool) -> Runner {
         let config = config::read();
         let name = match name {
@@ -95,7 +119,29 @@ impl<'i> Internal<'i> {
             };
         }
 
+
         then!(!silent, println!("{} Creating {}process with ({name})", *helpers::SUCCESS, self.kind));
+        
+        // Display real-time statistics during process initialization
+        if !silent && matches!(self.server_name, "internal" | "local") {
+            // Get the newly created process
+            if let Some(latest_id) = self.runner.size() {
+                let process = self.runner.process(*latest_id);
+                let pid = process.pid;
+                let process_name = process.name.clone();
+                
+                // Wait a moment for process to initialize
+                thread::sleep(Duration::from_millis(150));
+                
+                // Display initial statistics
+                Self::display_realtime_stats(pid, &process_name);
+                
+                // Display again after a short delay to show activity
+                thread::sleep(Duration::from_millis(200));
+                Self::display_realtime_stats(pid, &process_name);
+            }
+        }
+        
         then!(!silent, println!("{} {}Created ({name}) ✓", *helpers::SUCCESS, self.kind));
 
         return self.runner;
@@ -141,6 +187,23 @@ impl<'i> Internal<'i> {
         }
 
         if !silent {
+            // Display real-time statistics during process restart
+            if matches!(self.server_name, "internal" | "local") {
+                let process = self.runner.process(self.id);
+                let pid = process.pid;
+                let process_name = process.name.clone();
+                
+                // Wait a moment for process to restart and initialize
+                thread::sleep(Duration::from_millis(150));
+                
+                // Display initial statistics
+                Self::display_realtime_stats(pid, &process_name);
+                
+                // Display again after a short delay to show activity
+                thread::sleep(Duration::from_millis(200));
+                Self::display_realtime_stats(pid, &process_name);
+            }
+            
             println!("{} Restarted {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
             log!("process started (id={})", self.id);
         }
