@@ -377,9 +377,12 @@ impl<'i> Internal<'i> {
                 let path = file::make_relative(&item.path, &home).to_string_lossy().into_owned();
                 let children = if item.children.is_empty() { "none".to_string() } else { format!("{:?}", item.children) };
 
-                if let Ok(process) = Process::new(item.pid as u32) {
-                    memory_usage = get_process_memory_with_children(item.pid as i64);
-                    cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, item.pid as i64));
+                // For shell scripts, use shell_pid to capture the entire process tree
+                let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+
+                if let Ok(process) = Process::new(pid_for_monitoring as u32) {
+                    memory_usage = get_process_memory_with_children(pid_for_monitoring);
+                    cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, pid_for_monitoring));
                 }
 
                 let cpu_percent = match cpu_percent {
@@ -688,10 +691,13 @@ impl<'i> Internal<'i> {
                     if internal {
                         let mut usage_internals: (Option<f64>, Option<MemoryInfo>) = (None, None);
 
-                        if let Ok(process) = Process::new(item.pid as u32) {
+                        // For shell scripts, use shell_pid to capture the entire process tree
+                        let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+
+                        if let Ok(process) = Process::new(pid_for_monitoring as u32) {
                             usage_internals = (
-                                Some(get_process_cpu_usage_with_children_from_process(&process, item.pid as i64)),
-                                get_process_memory_with_children(item.pid as i64)
+                                Some(get_process_cpu_usage_with_children_from_process(&process, pid_for_monitoring)),
+                                get_process_memory_with_children(pid_for_monitoring)
                             );
                         }
 
