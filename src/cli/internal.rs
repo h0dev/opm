@@ -30,7 +30,7 @@ use tabled::{
 
 lazy_static! {
     static ref SCRIPT_EXTENSION_PATTERN: Regex =
-        Regex::new(r"^[^\s]+\.(js|ts|py|sh|rb|pl|php)(\s|$)").unwrap();
+        Regex::new(r"^[^\s]+\.(js|ts|mjs|cjs|py|py3|pyw|sh|bash|zsh|rb|pl|php|lua|r|R|go|java|kt|kts|scala|groovy|swift)(\s|$)").unwrap();
     static ref SIMPLE_PATH_PATTERN: Regex = Regex::new(r"^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$").unwrap();
 }
 
@@ -76,12 +76,20 @@ impl<'i> Internal<'i> {
                 if SCRIPT_EXTENSION_PATTERN.is_match(script) {
                     // It's a script file with extension - determine the interpreter
                     let interpreter = match ext {
-                        ".js" | ".ts" => config.runner.node.clone(),
-                        ".py" => "python3".to_string(),
-                        ".sh" => "bash".to_string(),
+                        ".js" | ".ts" | ".mjs" | ".cjs" => config.runner.node.clone(),
+                        ".py" | ".py3" | ".pyw" => "python3".to_string(),
+                        ".sh" | ".bash" | ".zsh" => "bash".to_string(),
                         ".rb" => "ruby".to_string(),
                         ".pl" => "perl".to_string(),
                         ".php" => "php".to_string(),
+                        ".lua" => "lua".to_string(),
+                        ".r" | ".R" => "Rscript".to_string(),
+                        ".go" => "go run".to_string(),
+                        ".java" => "java".to_string(),
+                        ".kt" | ".kts" => "kotlin".to_string(),
+                        ".scala" => "scala".to_string(),
+                        ".groovy" => "groovy".to_string(),
+                        ".swift" => "swift".to_string(),
                         _ => "".to_string(),
                     };
 

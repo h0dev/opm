@@ -63,9 +63,12 @@ pub fn start(
             *helpers::SUCCESS
         );
 
-        let largest = runner.size();
-        match largest {
-            Some(largest) => (0..*largest + 1).for_each(|id| {
+        let process_ids: Vec<usize> = runner.items().keys().copied().collect();
+        
+        if process_ids.is_empty() {
+            println!("{} Cannot start all, no processes found", *helpers::FAIL);
+        } else {
+            for id in process_ids {
                 runner = Internal {
                     id,
                     server_name,
@@ -73,8 +76,7 @@ pub fn start(
                     runner: runner.clone(),
                 }
                 .restart(name, watch, *reset_env, true);
-            }),
-            None => println!("{} Cannot start all, no processes found", *helpers::FAIL),
+            }
         }
     } else {
         match args {
@@ -122,9 +124,12 @@ pub fn stop(items: &Items, server_name: &String) {
     if items.is_all() {
         println!("{} Applying {kind}action stopAllProcess", *helpers::SUCCESS);
 
-        let largest = runner.size();
-        match largest {
-            Some(largest) => (0..*largest + 1).for_each(|id| {
+        let process_ids: Vec<usize> = runner.items().keys().copied().collect();
+        
+        if process_ids.is_empty() {
+            println!("{} Cannot stop all, no processes found", *helpers::FAIL);
+        } else {
+            for id in process_ids {
                 runner = Internal {
                     id,
                     server_name,
@@ -132,8 +137,7 @@ pub fn stop(items: &Items, server_name: &String) {
                     runner: runner.clone(),
                 }
                 .stop(true);
-            }),
-            None => println!("{} Cannot stop all, no processes found", *helpers::FAIL),
+            }
         }
     } else {
         for item in &items.items {
@@ -170,25 +174,45 @@ pub fn remove(items: &Items, server_name: &String) {
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
-    for item in &items.items {
-        match item {
-            Item::Id(id) => Internal {
-                id: *id,
-                runner: runner.clone(),
-                server_name,
-                kind: kind.clone(),
-            }
-            .remove(),
-            Item::Name(name) => match runner.find(&name, server_name) {
-                Some(id) => Internal {
+    if items.is_all() {
+        println!("{} Applying {kind}action removeAllProcess", *helpers::SUCCESS);
+
+        let process_ids: Vec<usize> = runner.items().keys().copied().collect();
+        
+        if process_ids.is_empty() {
+            println!("{} Cannot remove all, no processes found", *helpers::FAIL);
+        } else {
+            for id in process_ids {
+                Internal {
                     id,
                     runner: runner.clone(),
                     server_name,
                     kind: kind.clone(),
                 }
+                .remove();
+            }
+        }
+    } else {
+        for item in &items.items {
+            match item {
+                Item::Id(id) => Internal {
+                    id: *id,
+                    runner: runner.clone(),
+                    server_name,
+                    kind: kind.clone(),
+                }
                 .remove(),
-                None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
-            },
+                Item::Name(name) => match runner.find(&name, server_name) {
+                    Some(id) => Internal {
+                        id,
+                        runner: runner.clone(),
+                        server_name,
+                        kind: kind.clone(),
+                    }
+                    .remove(),
+                    None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
+                },
+            }
         }
     }
 
@@ -314,9 +338,12 @@ pub fn restart(items: &Items, server_name: &String) {
             *helpers::SUCCESS
         );
 
-        let largest = runner.size();
-        match largest {
-            Some(largest) => (0..*largest + 1).for_each(|id| {
+        let process_ids: Vec<usize> = runner.items().keys().copied().collect();
+        
+        if process_ids.is_empty() {
+            println!("{} Cannot restart all, no processes found", *helpers::FAIL);
+        } else {
+            for id in process_ids {
                 runner = Internal {
                     id,
                     server_name,
@@ -324,8 +351,7 @@ pub fn restart(items: &Items, server_name: &String) {
                     runner: runner.clone(),
                 }
                 .restart(&None, &None, false, true);
-            }),
-            None => println!("{} Cannot restart all, no processes found", *helpers::FAIL),
+            }
         }
     } else {
         for item in &items.items {
@@ -370,9 +396,12 @@ pub fn reload(items: &Items, server_name: &String) {
             *helpers::SUCCESS
         );
 
-        let largest = runner.size();
-        match largest {
-            Some(largest) => (0..*largest + 1).for_each(|id| {
+        let process_ids: Vec<usize> = runner.items().keys().copied().collect();
+        
+        if process_ids.is_empty() {
+            println!("{} Cannot reload all, no processes found", *helpers::FAIL);
+        } else {
+            for id in process_ids {
                 runner = Internal {
                     id,
                     server_name,
@@ -380,8 +409,7 @@ pub fn reload(items: &Items, server_name: &String) {
                     runner: runner.clone(),
                 }
                 .reload(true);
-            }),
-            None => println!("{} Cannot reload all, no processes found", *helpers::FAIL),
+            }
         }
     } else {
         for item in &items.items {
