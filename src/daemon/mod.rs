@@ -16,7 +16,7 @@ use std::{process, thread::sleep, time::Duration};
 use opm::{
     config, file,
     helpers::{self, ColoredString},
-    process::{hash, id::Id, Runner, Status, get_process_cpu_usage_with_children, get_process_cpu_usage_with_children_from_process},
+    process::{hash, id::Id, Runner, Status, get_process_cpu_usage_with_children_from_process},
 };
 
 use tabled::{
@@ -57,8 +57,8 @@ fn restart_process() {
         }
 
         // Check if process is marked as running but not actually running
-        if !item.running && pid::running(item.pid as i32) {
-            Runner::new().set_status(*id, Status::Running);
+        if item.running && !pid::running(item.pid as i32) {
+            Runner::new().set_status(*id, Status::Offline);
             log!("[daemon] process fix status", "name" => item.name, "id" => id);
             continue;
         }

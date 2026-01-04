@@ -566,8 +566,11 @@ impl<'i> Internal<'i> {
             }
         }
 
+        let mut running_ids = Vec::new();
+        
         Runner::new().list().for_each(|(id, p)| {
-            if p.running == true {
+            if p.running {
+                running_ids.push(*id);
                 runner = Internal {
                     id: *id,
                     server_name,
@@ -577,6 +580,12 @@ impl<'i> Internal<'i> {
                 .restart(&None, &None, false, true);
             }
         });
+        
+        // Reset restart and crash counters after restore for all running processes
+        for id in running_ids {
+            runner.reset_counters(id);
+        }
+        runner.save();
 
         println!("{} Restored process statuses from dumpfile", *helpers::SUCCESS);
         Internal::list(&string!("default"), &list_name);

@@ -574,6 +574,14 @@ impl Runner {
         return self;
     }
 
+    pub fn reset_counters(&mut self, id: usize) -> &mut Self {
+        let process = self.process(id);
+        process.restarts = 0;
+        process.crash.value = 0;
+        process.crash.crashed = false;
+        return self;
+    }
+
     pub fn find(&self, name: &str, server_name: &String) -> Option<usize> {
         let mut runner = self.clone();
 
@@ -706,6 +714,9 @@ impl ProcessWrapper {
 
     /// Clear environment values of the process item
     pub fn clear_env(&mut self) { lock!(self.runner).clear_env(self.id).save(); }
+
+    /// Reset restart and crash counters of the process item
+    pub fn reset_counters(&mut self) { lock!(self.runner).reset_counters(self.id).save(); }
 
     /// Get a json dump of the process item
     pub fn fetch(&self) -> ItemSingle {
@@ -1146,5 +1157,49 @@ mod tests {
                 panic!("Failed to run test process: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_reset_counters() {
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        
+        let process = Process {
+            id,
+            pid: 12345,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello world'".to_string(),
+            restarts: 5,  // Set to non-zero value
+            running: true,
+            crash: Crash { 
+                crashed: true,  // Set to crashed
+                value: 3  // Set to non-zero crash count
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+        };
+
+        runner.list.insert(id, process);
+        
+        // Verify initial values
+        assert_eq!(runner.info(id).unwrap().restarts, 5);
+        assert_eq!(runner.info(id).unwrap().crash.value, 3);
+        assert_eq!(runner.info(id).unwrap().crash.crashed, true);
+        
+        // Reset counters
+        runner.reset_counters(id);
+        
+        // Verify counters are reset
+        assert_eq!(runner.info(id).unwrap().restarts, 0);
+        assert_eq!(runner.info(id).unwrap().crash.value, 0);
+        assert_eq!(runner.info(id).unwrap().crash.crashed, false);
     }
 }
