@@ -68,6 +68,34 @@ opm daemon health
 
 ### Advanced Features
 
+#### Configuration Import/Export
+Export and import process configurations to HCL files, allowing you to save and restore multiple process configurations easily.
+
+```bash
+# Export a single process
+opm export 0 process.hcl
+opm export myapp myapp.hcl
+
+# Export multiple processes by ID
+opm export 1,4,7 multi_config.hcl
+
+# Export multiple processes by name
+opm export app1,app2,app3 apps.hcl
+
+# Export all processes
+opm export all all_processes.hcl
+
+# Import processes from a configuration file
+opm import config.hcl
+```
+
+The exported configuration includes:
+- Process script/command
+- Environment variables (only those different from system environment)
+- Watch path (if enabled)
+- Memory limits (if set)
+- All metadata needed to recreate the process
+
 #### Watch Mode
 Automatically reload your process when files change:
 ```bash
