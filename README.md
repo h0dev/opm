@@ -1,8 +1,8 @@
-# Process Management Controller (OPM)
+# Open Process Management (OPM)
 
 ## Overview
 
-OPM (Process Management Controller) is a simple PM2 alternative written in Rust. It provides a command-line/api interface to start, stop, restart, and manage fork processes
+OPM (Open Process Management) is a simple PM2 alternative written in Rust. It provides a command-line/api interface to start, stop, restart, and manage fork processes
 
 ## Features
 
