@@ -65,7 +65,9 @@ pub fn parse_memory(mem_str: &str) -> Result<u64, String> {
     
     match re.captures(&mem_str) {
         Some(caps) => {
-            let num: f64 = caps[1].parse().map_err(|_| "Invalid number format")?;
+            let num_str = &caps[1];
+            let num: f64 = num_str.parse()
+                .map_err(|_| format!("Invalid number format: {}", num_str))?;
             let unit = caps.get(2).map_or("", |m| m.as_str());
             
             let multiplier: u64 = match unit {
@@ -77,7 +79,13 @@ pub fn parse_memory(mem_str: &str) -> Result<u64, String> {
                 _ => return Err(format!("Unknown unit: {}", unit)),
             };
             
-            Ok((num * multiplier as f64) as u64)
+            let result = num * multiplier as f64;
+            // Check for overflow before casting to u64
+            if result > u64::MAX as f64 || result < 0.0 {
+                return Err(format!("Memory value too large: {}{}", num, unit));
+            }
+            
+            Ok(result as u64)
         }
         None => Err(format!("Invalid memory format: {}. Use format like '100M', '1G', '500K'", mem_str)),
     }
