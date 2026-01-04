@@ -825,7 +825,7 @@ impl Runner {
             // If shell_pid process has exited, fall back to the actual script pid
             let mut pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
             let mut process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
-            
+
             // If shell_pid fails (process exited), try the actual script pid
             if process_result.is_err() && item.shell_pid.is_some() {
                 pid_for_monitoring = item.pid;
@@ -981,7 +981,7 @@ impl ProcessWrapper {
         // If shell_pid process has exited, fall back to the actual script pid
         let mut pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
         let mut process_result = unix::NativeProcess::new(pid_for_monitoring as u32);
-        
+
         // If shell_pid fails (process exited), try the actual script pid
         if process_result.is_err() && item.shell_pid.is_some() {
             pid_for_monitoring = item.pid;
