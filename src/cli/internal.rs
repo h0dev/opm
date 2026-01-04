@@ -940,7 +940,9 @@ impl<'i> Internal<'i> {
         let mut restored_ids = Vec::new();
 
         Runner::new().list().for_each(|(id, p)| {
-            // Restore processes that were running OR had crashed (to auto-restart them)
+            // Restore processes that were running OR had crashed
+            // Crashed processes are those that exceeded their max crash limit and were stopped by the daemon
+            // Restore gives them a fresh start with reset counters
             if p.running || p.crash.crashed {
                 restored_ids.push(*id);
                 runner = Internal {
