@@ -482,9 +482,7 @@ impl Runner {
                 process.crash.crashed = false;
                 
                 // Merge .env variables into the stored environment (dotenv takes priority)
-                let mut updated_env: Env = env::vars().collect();
-                updated_env.extend(dotenv_vars);
-                process.env.extend(updated_env);
+                process.env.extend(dotenv_vars);
 
                 then!(dead, process.restarts += 1);
                 then!(dead, process.crash.value += 1);
@@ -492,9 +490,9 @@ impl Runner {
 
                 // Now stop the old process after the new one is running
                 kill_children(old_children);
-                process_stop(old_pid).unwrap_or_else(|err| {
+                if let Err(err) = process_stop(old_pid) {
                     log::warn!("Failed to stop old process during reload: {err}");
-                });
+                }
             }
         }
 
