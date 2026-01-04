@@ -1071,6 +1071,8 @@ pub fn get_process_cpu_usage_percentage_fast(pid: i64) -> f64 {
 
 /// Get the total CPU usage percentage of the process and its children
 /// If parent_process is provided, it will be used instead of creating a new one
+/// This function uses the parent's CPU measurement (which may have been timed with delay)
+/// and fast measurements for children to avoid cumulative delays and ensure consistency
 pub fn get_process_cpu_usage_with_children_from_process(
     parent_process: &unix::NativeProcess,
     pid: i64,
@@ -1082,9 +1084,12 @@ pub fn get_process_cpu_usage_with_children_from_process(
 
     let children = process_find_children(pid);
 
+    // Use fast CPU calculation for children to avoid multiple delays
+    // The parent already used a timed measurement, so children should use fast measurements
+    // for consistency and to prevent cumulative delays (N children = N * 100ms)
     let children_cpu: f64 = children
         .iter()
-        .map(|&child_pid| get_process_cpu_usage_percentage(child_pid))
+        .map(|&child_pid| get_process_cpu_usage_percentage_fast(child_pid))
         .sum();
 
     (parent_cpu + children_cpu).min(100.0 * num_cpus::get() as f64)
@@ -1104,13 +1109,18 @@ pub fn get_process_cpu_usage_with_children_fast(pid: i64) -> f64 {
 }
 
 /// Get the total CPU usage percentage of the process and its children
+/// Uses timed measurement for parent and fast measurements for children
+/// to avoid cumulative delays while maintaining accurate parent measurement
 pub fn get_process_cpu_usage_with_children(pid: i64) -> f64 {
     let parent_cpu = get_process_cpu_usage_percentage(pid);
     let children = process_find_children(pid);
 
+    // Use fast CPU calculation for children to avoid multiple delays
+    // The parent already used a timed measurement, so children should use fast measurements
+    // for consistency and to prevent cumulative delays (N children = N * 100ms)
     let children_cpu: f64 = children
         .iter()
-        .map(|&child_pid| get_process_cpu_usage_percentage(child_pid))
+        .map(|&child_pid| get_process_cpu_usage_percentage_fast(child_pid))
         .sum();
 
     (parent_cpu + children_cpu).min(100.0 * num_cpus::get() as f64)
@@ -1484,5 +1494,58 @@ mod tests {
         assert_eq!(runner.info(id).unwrap().restarts, 0);
         assert_eq!(runner.info(id).unwrap().crash.value, 0);
         assert_eq!(runner.info(id).unwrap().crash.crashed, false);
+    }
+
+    #[test]
+    fn test_cpu_usage_with_children_performance() {
+        use std::time::Instant;
+        
+        // Test that measuring CPU with children is reasonably fast
+        // even with multiple children, since we use fast measurements for children
+        let current_pid = std::process::id() as i64;
+        
+        // Simulate finding children (even if empty, the function should be fast)
+        let start = Instant::now();
+        let _cpu_with_children = get_process_cpu_usage_with_children_fast(current_pid);
+        let duration = start.elapsed();
+        
+        // Fast version should complete very quickly (< 50ms even with multiple children)
+        // since it doesn't use delay-based sampling
+        assert!(duration.as_millis() < 50, 
+            "Fast CPU measurement with children took too long: {:?}", duration);
+        
+        // Test that the timed version with a pre-created process is also reasonably fast
+        // It should only have one delay (for parent), not cumulative delays per child
+        if let Ok(process) = unix::NativeProcess::new(current_pid as u32) {
+            let start = Instant::now();
+            let _cpu_with_children = get_process_cpu_usage_with_children_from_process(&process, current_pid);
+            let duration = start.elapsed();
+            
+            // This should complete quickly since the parent measurement was already taken
+            // and children use fast measurements (no additional delays)
+            assert!(duration.as_millis() < 50,
+                "CPU measurement with pre-created process took too long: {:?}", duration);
+        }
+    }
+
+    #[test]
+    fn test_cpu_usage_consistency() {
+        // Test that CPU measurements are consistent and within expected ranges
+        let current_pid = std::process::id() as i64;
+        
+        // Get CPU usage with different methods
+        let fast_cpu = get_process_cpu_usage_percentage_fast(current_pid);
+        let fast_cpu_with_children = get_process_cpu_usage_with_children_fast(current_pid);
+        
+        // Both should be within valid ranges
+        assert!(fast_cpu >= 0.0);
+        assert!(fast_cpu <= 100.0 * num_cpus::get() as f64);
+        assert!(fast_cpu_with_children >= 0.0);
+        assert!(fast_cpu_with_children <= 100.0 * num_cpus::get() as f64);
+        
+        // CPU with children should be >= CPU of parent alone (assuming no negative children)
+        assert!(fast_cpu_with_children >= fast_cpu - 0.1, 
+            "CPU with children ({}) should be >= parent CPU ({})", 
+            fast_cpu_with_children, fast_cpu);
     }
 }
