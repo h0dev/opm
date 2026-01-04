@@ -427,6 +427,80 @@ impl Runner {
         return self;
     }
 
+    pub fn reload(&mut self, id: usize, dead: bool) -> &mut Self {
+        if let Some(remote) = &self.remote {
+            if let Err(err) = http::reload(remote, id) {
+                crashln!("{} Failed to reload process {id}\nError: {:#?}", *helpers::FAIL, err);
+            };
+        } else {
+            let process = self.process(id);
+            let config = config::read().runner;
+            let Process { path, script, name, env, watch: _, max_memory: _, .. } = process.clone();
+
+            if let Err(err) = std::env::set_current_dir(&path) {
+                process.running = false;
+                process.children = vec![];
+                process.crash.crashed = true;
+                println!("{} Failed to set working directory {:?}\nError: {:#?}", *helpers::FAIL, path, err);
+            } else {
+                // Load environment variables from .env file
+                let dotenv_vars = load_dotenv(&path);
+                let system_env = unix::env();
+                
+                // Prepare process environment with dotenv variables having priority
+                let stored_env_vec: Vec<String> = env.iter().map(|(key, value)| format!("{}={}", key, value)).collect();
+                let mut temp_env = Vec::with_capacity(dotenv_vars.len() + stored_env_vec.len() + system_env.len());
+                // Add dotenv variables first (highest priority)
+                for (key, value) in &dotenv_vars {
+                    temp_env.push(format!("{}={}", key, value));
+                }
+                // Then add stored environment
+                temp_env.extend(stored_env_vec);
+                // Finally add system environment
+                temp_env.extend(system_env);
+
+                // Start new process first
+                let result = process_run(ProcessMetadata {
+                    args: config.args,
+                    name: name.clone(),
+                    shell: config.shell,
+                    log_path: config.log_path,
+                    command: script.to_string(),
+                    env: temp_env,
+                }).unwrap_or_else(|err| crashln!("Failed to run process: {err}"));
+
+                // Store old PID before updating
+                let old_pid = process.pid;
+                let old_children = process.children.clone();
+
+                // Update process with new PID
+                process.pid = result.pid;
+                process.shell_pid = result.shell_pid;
+                process.running = true;
+                process.children = vec![];
+                process.started = Utc::now();
+                process.crash.crashed = false;
+                
+                // Merge .env variables into the stored environment (dotenv takes priority)
+                let mut updated_env: Env = env::vars().collect();
+                updated_env.extend(dotenv_vars);
+                process.env.extend(updated_env);
+
+                then!(dead, process.restarts += 1);
+                then!(dead, process.crash.value += 1);
+                then!(!dead, process.crash.value = 0);
+
+                // Now stop the old process after the new one is running
+                kill_children(old_children);
+                if let Err(err) = process_stop(old_pid) {
+                    log::warn!("Failed to stop old process during reload: {err}");
+                }
+            }
+        }
+
+        return self;
+    }
+
     pub fn remove(&mut self, id: usize) {
         if let Some(remote) = &self.remote {
             if let Err(err) = http::remove(remote, id) {
@@ -697,6 +771,9 @@ impl ProcessWrapper {
 
     /// Restart the process item
     pub fn restart(&mut self) { lock!(self.runner).restart(self.id, false).save(); }
+
+    /// Reload the process item (zero-downtime: starts new process before stopping old one)
+    pub fn reload(&mut self) { lock!(self.runner).reload(self.id, false).save(); }
 
     /// Rename the process item
     pub fn rename(&mut self, name: String) { lock!(self.runner).rename(self.id, name).save(); }

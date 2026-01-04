@@ -28,6 +28,7 @@ struct Process {
     watch: Option<Watch>,
     #[serde(default)]
     env: Env,
+    max_memory: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -65,7 +66,7 @@ pub fn read_hcl(path: &String) {
             kind: kind.clone(),
             runner: runner.clone(),
         }
-        .create(&item.script, &Some(name.clone()), &item.get_watch_path(), &None, true);
+        .create(&item.script, &Some(name.clone()), &item.get_watch_path(), &item.max_memory, true);
 
         println!("{} Imported {kind}process {name}", *helpers::SUCCESS);
 
@@ -115,12 +116,20 @@ pub fn export_hcl(item: &Item, path: &Option<String>) {
             }
         }
 
+        // Format max_memory for export (convert bytes to human-readable format)
+        let max_memory_str = if process.max_memory > 0 {
+            Some(helpers::format_memory(process.max_memory))
+        } else {
+            None
+        };
+
         let data = hcl::block! {
             process (process.name.clone()) {
                 script = (process.script.clone())
                 server = ("")
                 watch = (watch_parsed)
                 env = (env_parsed)
+                max_memory = (max_memory_str)
             }
         };
 

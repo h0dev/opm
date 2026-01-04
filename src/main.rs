@@ -253,7 +253,7 @@ fn main() {
         },
 
         Commands::Restart { items, server } => cli::restart(items, &defaults(server)),
-        Commands::Reload { items, server } => cli::restart(items, &defaults(server)),
+        Commands::Reload { items, server } => cli::reload(items, &defaults(server)),
         Commands::GetCommand { item, server } => cli::get_command(item, &defaults(server)),
     };
 

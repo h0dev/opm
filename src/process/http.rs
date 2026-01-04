@@ -81,6 +81,13 @@ pub fn restart(Remote { address, token, .. }: &Remote, id: usize) -> Result<sync
     Ok(client.post(fmtstr!("{address}/process/{id}/action")).json(&content).headers(headers).send()?)
 }
 
+pub fn reload(Remote { address, token, .. }: &Remote, id: usize) -> Result<sync::Response, anyhow::Error> {
+    let (client, headers) = sync::client(token);
+    let content = ActionBody { method: string!("reload") };
+
+    Ok(client.post(fmtstr!("{address}/process/{id}/action")).json(&content).headers(headers).send()?)
+}
+
 pub fn rename(Remote { address, token, .. }: &Remote, id: usize, name: String) -> Result<sync::Response, anyhow::Error> {
     let (client, headers) = sync::client(token);
     Ok(client.post(fmtstr!("{address}/process/{id}/rename")).body(name).headers(headers).send()?)

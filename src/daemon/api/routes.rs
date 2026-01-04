@@ -727,6 +727,11 @@ pub async fn action_handler(id: usize, body: Json<ActionBody>, _t: Token) -> Res
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
+            "reload" => {
+                runner.get(id).reload();
+                timer.observe_duration();
+                Ok(Json(attempt(true, method)))
+            }
             "stop" | "kill" => {
                 runner.get(id).stop();
                 timer.observe_duration();

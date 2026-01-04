@@ -262,6 +262,59 @@ pub fn restart(items: &Items, server_name: &String) {
     Internal::list(&string!("default"), &list_name);
 }
 
+pub fn reload(items: &Items, server_name: &String) {
+    let mut runner: Runner = Runner::new();
+    let (kind, list_name) = format(server_name);
+
+    if items.is_all() {
+        println!("{} Applying {kind}action reloadAllProcess", *helpers::SUCCESS);
+
+        let largest = runner.size();
+        match largest {
+            Some(largest) => (0..*largest + 1).for_each(|id| {
+                runner = Internal {
+                    id,
+                    server_name,
+                    kind: kind.clone(),
+                    runner: runner.clone(),
+                }
+                .reload(true);
+            }),
+            None => println!("{} Cannot reload all, no processes found", *helpers::FAIL),
+        }
+    } else {
+        for item in &items.items {
+            match item {
+                Item::Id(id) => {
+                    runner = Internal {
+                        id: *id,
+                        server_name,
+                        kind: kind.clone(),
+                        runner: runner.clone(),
+                    }
+                    .reload(false);
+                }
+                Item::Name(name) => match runner.find(&name, server_name) {
+                    Some(id) => {
+                        runner = Internal {
+                            id,
+                            server_name,
+                            kind: kind.clone(),
+                            runner: runner.clone(),
+                        }
+                        .reload(false);
+                    }
+                    None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
+                },
+            }
+        }
+    }
+
+    // Allow CPU stats to accumulate before displaying the list
+    thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
+    Internal::list(&string!("default"), &list_name);
+}
+
 pub fn get_command(item: &Item, server_name: &String) {
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);

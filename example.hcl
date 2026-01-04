@@ -8,6 +8,8 @@ process "test_prod" {
   watch {
     path = "./test.js"
   }
+
+  max_memory = "500M"
 }
 
 process "test" {

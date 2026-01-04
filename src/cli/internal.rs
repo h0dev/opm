@@ -161,6 +161,39 @@ impl<'i> Internal<'i> {
         return self.runner;
     }
 
+    pub fn reload(mut self, silent: bool) -> Runner {
+        then!(!silent, println!("{} Applying {}action reloadProcess on ({})", *helpers::SUCCESS, self.kind, self.id));
+
+        if matches!(self.server_name, "internal" | "local") {
+            let mut item = self.runner.get(self.id);
+            item.reload();
+            self.runner = item.get_runner().clone();
+        } else {
+            let Some(servers) = config::servers().servers else {
+                crashln!("{} Failed to read servers", *helpers::FAIL)
+            };
+
+            if let Some(server) = servers.get(self.server_name) {
+                match Runner::connect(self.server_name.into(), server.get(), false) {
+                    Some(remote) => {
+                        let mut item = remote.get(self.id);
+                        item.reload();
+                    }
+                    None => crashln!("{} Failed to connect (name={}, address={})", *helpers::FAIL, self.server_name, server.address),
+                }
+            } else {
+                crashln!("{} Server '{}' does not exist", *helpers::FAIL, self.server_name)
+            };
+        }
+
+        if !silent {
+            println!("{} Reloaded {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
+            log!("process reloaded (id={})", self.id);
+        }
+
+        return self.runner;
+    }
+
     pub fn stop(mut self, silent: bool) -> Runner {
         then!(!silent, println!("{} Applying {}action stopProcess on ({})", *helpers::SUCCESS, self.kind, self.id));
 
