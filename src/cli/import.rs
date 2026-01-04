@@ -65,7 +65,7 @@ pub fn read_hcl(path: &String) {
             kind: kind.clone(),
             runner: runner.clone(),
         }
-        .create(&item.script, &Some(name.clone()), &item.get_watch_path(), true);
+        .create(&item.script, &Some(name.clone()), &item.get_watch_path(), &None, true);
 
         println!("{} Imported {kind}process {name}", *helpers::SUCCESS);
 

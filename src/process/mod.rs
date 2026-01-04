@@ -134,6 +134,9 @@ pub struct Process {
     pub children: Vec<i64>,
     #[serde(with = "ts_milliseconds")]
     pub started: DateTime<Utc>,
+    /// Maximum memory limit in bytes (0 = no limit)
+    #[serde(default)]
+    pub max_memory: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -285,7 +288,7 @@ impl Runner {
         }
     }
 
-    pub fn start(&mut self, name: &String, command: &String, path: PathBuf, watch: &Option<String>) -> &mut Self {
+    pub fn start(&mut self, name: &String, command: &String, path: PathBuf, watch: &Option<String>, max_memory: u64) -> &mut Self {
         if let Some(remote) = &self.remote {
             if let Err(err) = http::create(remote, name, command, path, watch) {
                 crashln!("{} Failed to start create {name}\nError: {:#?}", *helpers::FAIL, err);
@@ -351,6 +354,7 @@ impl Runner {
                     started: Utc::now(),
                     script: command.clone(),
                     env: stored_env,
+                    max_memory,
                 },
             );
         }

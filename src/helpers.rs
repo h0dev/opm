@@ -57,3 +57,28 @@ pub fn format_memory(bytes: u64) -> String {
 
     [result, SUFFIX[base.floor() as usize]].join("")
 }
+
+/// Parse memory string like "100M", "1G", "500K" to bytes
+pub fn parse_memory(mem_str: &str) -> Result<u64, String> {
+    let mem_str = mem_str.trim().to_uppercase();
+    let re = Regex::new(r"^(\d+(?:\.\d+)?)\s*([KMGT]?)B?$").unwrap();
+    
+    match re.captures(&mem_str) {
+        Some(caps) => {
+            let num: f64 = caps[1].parse().map_err(|_| "Invalid number format")?;
+            let unit = caps.get(2).map_or("", |m| m.as_str());
+            
+            let multiplier: u64 = match unit {
+                "" | "B" => 1,
+                "K" => 1024,
+                "M" => 1024 * 1024,
+                "G" => 1024 * 1024 * 1024,
+                "T" => 1024u64 * 1024 * 1024 * 1024,
+                _ => return Err(format!("Unknown unit: {}", unit)),
+            };
+            
+            Ok((num * multiplier as f64) as u64)
+        }
+        None => Err(format!("Invalid memory format: {}. Use format like '100M', '1G', '500K'", mem_str)),
+    }
+}

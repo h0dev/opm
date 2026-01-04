@@ -41,11 +41,23 @@ pub struct Internal<'i> {
 }
 
 impl<'i> Internal<'i> {
-    pub fn create(mut self, script: &String, name: &Option<String>, watch: &Option<String>, silent: bool) -> Runner {
+    pub fn create(mut self, script: &String, name: &Option<String>, watch: &Option<String>, max_memory: &Option<String>, silent: bool) -> Runner {
         let config = config::read();
         let name = match name {
             Some(name) => string!(name),
             None => string!(script.split_whitespace().next().unwrap_or_default()),
+        };
+
+        // Parse max_memory if provided
+        let max_memory_bytes = match max_memory {
+            Some(mem_str) => match helpers::parse_memory(mem_str) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    println!("{} {}", *helpers::FAIL, err);
+                    0
+                }
+            },
+            None => 0,
         };
 
         if matches!(self.server_name, "internal" | "local") {
@@ -82,7 +94,7 @@ impl<'i> Internal<'i> {
                 }
             };
 
-            self.runner.start(&name, &script_to_run, file::cwd(), watch).save();
+            self.runner.start(&name, &script_to_run, file::cwd(), watch, max_memory_bytes).save();
         } else {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -90,7 +102,7 @@ impl<'i> Internal<'i> {
 
             if let Some(server) = servers.get(self.server_name) {
                 match Runner::connect(self.server_name.into(), server.get(), false) {
-                    Some(mut remote) => remote.start(&name, script, file::cwd(), watch),
+                    Some(mut remote) => remote.start(&name, script, file::cwd(), watch, max_memory_bytes),
                     None => crashln!("{} Failed to connect (name={}, address={})", *helpers::FAIL, self.server_name, server.address),
                 };
             } else {
@@ -239,6 +251,8 @@ impl<'i> Internal<'i> {
             cpu_percent: String,
             #[tabled(rename = "memory usage")]
             memory_usage: String,
+            #[tabled(rename = "memory limit")]
+            memory_limit: String,
             #[tabled(rename = "path hash")]
             hash: String,
             #[tabled(rename = "watching")]
@@ -274,6 +288,7 @@ impl<'i> Internal<'i> {
                      "cpu": &self.cpu_percent.trim(),
                      "command": &self.command.trim(),
                      "mem": &self.memory_usage.trim(),
+                     "mem_limit": &self.memory_limit.trim(),
                      "log_error": &self.log_error.trim(),
                 });
 
@@ -343,10 +358,17 @@ impl<'i> Internal<'i> {
                     .bold()
                 };
 
+                let memory_limit = if item.max_memory > 0 {
+                    format!("{}  ", helpers::format_memory(item.max_memory))
+                } else {
+                    string!("none  ")
+                };
+
                 let data = vec![Info {
                     children,
                     cpu_percent,
                     memory_usage,
+                    memory_limit,
                     id: string!(self.id),
                     restarts: item.restarts,
                     name: item.name.clone(),
@@ -410,10 +432,17 @@ impl<'i> Internal<'i> {
                     None => string!("0b"),
                 };
 
+                let memory_limit = if item.max_memory > 0 {
+                    format!("{}  ", helpers::format_memory(item.max_memory))
+                } else {
+                    string!("none  ")
+                };
+
                 let data = vec![Info {
                     children,
                     cpu_percent,
                     memory_usage,
+                    memory_limit,
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
@@ -523,6 +552,33 @@ impl<'i> Internal<'i> {
 
         let item = self.runner.process(self.id);
         item.env.iter().for_each(|(key, value)| println!("{}: {}", key, value.green()));
+    }
+
+    pub fn get_command(mut self) {
+        println!("{}", format!("Showing startup command for {}process {}:\n", self.kind, self.id).bright_yellow());
+
+        if !matches!(self.server_name, "internal" | "local") {
+            let Some(servers) = config::servers().servers else {
+                crashln!("{} Failed to read servers", *helpers::FAIL)
+            };
+
+            if let Some(server) = servers.get(self.server_name) {
+                self.runner = match Runner::connect(self.server_name.into(), server.get(), false) {
+                    Some(remote) => remote,
+                    None => crashln!("{} Failed to connect (name={}, address={})", *helpers::FAIL, self.server_name, server.address),
+                };
+            } else {
+                crashln!("{} Server '{}' does not exist", *helpers::FAIL, self.server_name)
+            };
+        }
+
+        let item = self.runner.process(self.id);
+        let config = config::read().runner;
+        let command = format!("{} {} '{}'", config.shell, config.args.join(" "), item.script);
+        
+        println!("{}", command.green().bold());
+        println!("\n{}", "You can use this command to start the process manually:".dimmed());
+        println!("{}", command.white());
     }
 
     pub fn save(server_name: &String) {

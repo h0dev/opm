@@ -76,6 +76,9 @@ enum Commands {
         /// Watch to reload path
         #[arg(long)]
         watch: Option<String>,
+        /// Maximum memory limit (e.g., 100M, 1G)
+        #[arg(long)]
+        max_memory: Option<String>,
         /// Server
         #[arg(short, long)]
         server: Option<String>,
@@ -192,6 +195,25 @@ enum Commands {
         #[arg(short, long)]
         server: Option<String>,
     },
+
+    /// Reload a process (graceful restart, alias for restart)
+    Reload {
+        #[clap(value_parser = cli::validate_items)]
+        items: Items,
+        /// Server
+        #[arg(short, long)]
+        server: Option<String>,
+    },
+
+    /// Get startup command for a process
+    #[command(visible_alias = "cstart", visible_alias = "startup")]
+    GetCommand {
+        #[clap(value_parser = cli::validate::<Item>)]
+        item: Item,
+        /// Server
+        #[arg(short, long)]
+        server: Option<String>,
+    },
 }
 
 fn main() {
@@ -210,7 +232,7 @@ fn main() {
     match &cli.command {
         Commands::Import { path } => cli::import::read_hcl(path),
         Commands::Export { item, path } => cli::import::export_hcl(item, path),
-        Commands::Start { name, args, watch, server, reset_env } => cli::start(name, args, watch, reset_env, &defaults(server)),
+        Commands::Start { name, args, watch, max_memory, server, reset_env } => cli::start(name, args, watch, max_memory, reset_env, &defaults(server)),
         Commands::Stop { items, server } => cli::stop(items, &defaults(server)),
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => Internal::restore(&defaults(server)),
@@ -231,12 +253,15 @@ fn main() {
         },
 
         Commands::Restart { items, server } => cli::restart(items, &defaults(server)),
+        Commands::Reload { items, server } => cli::restart(items, &defaults(server)),
+        Commands::GetCommand { item, server } => cli::get_command(item, &defaults(server)),
     };
 
     if !matches!(&cli.command, Commands::Daemon { .. })
         && !matches!(&cli.command, Commands::Save { .. })
         && !matches!(&cli.command, Commands::Env { .. })
         && !matches!(&cli.command, Commands::Export { .. })
+        && !matches!(&cli.command, Commands::GetCommand { .. })
     {
         then!(!daemon::pid::exists(), daemon::restart(false));
     }

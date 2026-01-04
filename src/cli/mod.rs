@@ -26,7 +26,7 @@ pub fn get_version(short: bool) -> String {
     };
 }
 
-pub fn start(name: &Option<String>, args: &Args, watch: &Option<String>, reset_env: &bool, server_name: &String) {
+pub fn start(name: &Option<String>, args: &Args, watch: &Option<String>, max_memory: &Option<String>, reset_env: &bool, server_name: &String) {
     let mut runner = Runner::new();
     let (kind, list_name) = format(server_name);
 
@@ -47,7 +47,7 @@ pub fn start(name: &Option<String>, args: &Args, watch: &Option<String>, reset_e
                     kind: kind.clone(),
                     runner: runner.clone(),
                 }
-                .restart(&None, &None, false, true);
+                .restart(name, watch, *reset_env, true);
             }),
             None => println!("{} Cannot start all, no processes found", *helpers::FAIL),
         }
@@ -61,7 +61,7 @@ pub fn start(name: &Option<String>, args: &Args, watch: &Option<String>, reset_e
                     Internal { id, runner, server_name, kind }.restart(name, watch, *reset_env, false);
                 }
                 None => {
-                    Internal { id: 0, runner, server_name, kind }.create(script, name, watch, false);
+                    Internal { id: 0, runner, server_name, kind }.create(script, name, watch, max_memory, false);
                 }
             },
         }
@@ -260,4 +260,17 @@ pub fn restart(items: &Items, server_name: &String) {
     // Allow CPU stats to accumulate before displaying the list
     thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
     Internal::list(&string!("default"), &list_name);
+}
+
+pub fn get_command(item: &Item, server_name: &String) {
+    let runner: Runner = Runner::new();
+    let (kind, _) = format(server_name);
+
+    match item {
+        Item::Id(id) => Internal { id: *id, runner, server_name, kind }.get_command(),
+        Item::Name(name) => match runner.find(&name, server_name) {
+            Some(id) => Internal { id, runner, server_name, kind }.get_command(),
+            None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
+        },
+    }
 }

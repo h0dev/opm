@@ -6,19 +6,25 @@ OPM (Process Management Controller) is a simple PM2 alternative written in Rust.
 
 ## Features
 
-- Start, stop, and restart processes.
+- Start, stop, restart, and reload processes.
+- Watch for file changes and auto-reload processes.
+- Set memory limits for processes.
 - List all running processes with customizable output formats.
 - Retrieve detailed information about a specific process.
+- Get startup commands for processes.
 - Use HTTP/rust api to control processes.
 
 ## Usage
 
 ```bash
 # Start/Restart a process
-opm start <id/name> or <script> [--name <name>]
+opm start <id/name> or <script> [--name <name>] [--watch <path>] [--max-memory <limit>]
 
 # Restart a process
 opm restart <id/name>
+
+# Reload a process (alias for restart)
+opm reload <id/name>
 
 # Stop/Kill a process
 opm stop <id/name>
@@ -31,6 +37,9 @@ opm info <id/name>
 
 # Get process env
 opm env <id/name>
+
+# Get startup command for a process
+opm cstart <id/name>
 
 # Save all processes to dumpfile
 opm save
@@ -55,6 +64,29 @@ opm daemon start
 
 # Check daemon health
 opm daemon health
+```
+
+### Advanced Features
+
+#### Watch Mode
+Automatically reload your process when files change:
+```bash
+opm start app.js --watch .
+```
+
+#### Memory Limits
+Set a maximum memory limit for a process:
+```bash
+opm start app.js --max-memory 500M
+opm start app.py --max-memory 1G
+```
+
+#### Get Startup Command
+Get the exact command used to start a process:
+```bash
+opm cstart 0
+# or
+opm get-command myapp
 ```
 
 For more command information, check out `opm --help`

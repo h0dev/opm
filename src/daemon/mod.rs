@@ -45,6 +45,24 @@ fn restart_process() {
             runner.set_children(*id, children).save();
         }
 
+        // Check memory limit if configured
+        if item.running && item.max_memory > 0 {
+            let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+            if let Some(memory_info) = opm::process::get_process_memory_with_children(pid_for_monitoring) {
+                if memory_info.rss > item.max_memory {
+                    log!("[daemon] memory limit exceeded", "name" => item.name, "id" => id, 
+                         "memory" => memory_info.rss, "limit" => item.max_memory);
+                    runner.stop(item.id);
+                    runner.set_crashed(*id).save();
+                    println!("{} Process ({}) exceeded memory limit: {} > {}", 
+                             *helpers::FAIL, item.name, 
+                             helpers::format_memory(memory_info.rss),
+                             helpers::format_memory(item.max_memory));
+                    continue;
+                }
+            }
+        }
+
         if item.running && item.watch.enabled {
             let path = item.path.join(item.watch.path.clone());
             let hash = hash::create(path);
