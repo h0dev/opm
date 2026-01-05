@@ -553,6 +553,8 @@ impl Runner {
                 process.running = false;
                 process.children = vec![];
                 process.crash.crashed = true;
+                then!(dead, process.restarts += 1);
+                then!(dead, process.crash.value += 1);
                 log::error!("Failed to set working directory {:?} for process {} during reload: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
@@ -560,78 +562,81 @@ impl Runner {
                     path,
                     err
                 );
-            } else {
-                // Load environment variables from .env file
-                let dotenv_vars = load_dotenv(&path);
-                let system_env = unix::env();
+                return self;
+            }
 
-                // Prepare process environment with dotenv variables having priority
-                let stored_env_vec: Vec<String> = env
-                    .iter()
-                    .map(|(key, value)| format!("{}={}", key, value))
-                    .collect();
-                let mut temp_env =
-                    Vec::with_capacity(dotenv_vars.len() + stored_env_vec.len() + system_env.len());
-                // Add dotenv variables first (highest priority)
-                for (key, value) in &dotenv_vars {
-                    temp_env.push(format!("{}={}", key, value));
+            // Load environment variables from .env file
+            let dotenv_vars = load_dotenv(&path);
+            let system_env = unix::env();
+
+            // Prepare process environment with dotenv variables having priority
+            let stored_env_vec: Vec<String> = env
+                .iter()
+                .map(|(key, value)| format!("{}={}", key, value))
+                .collect();
+            let mut temp_env =
+                Vec::with_capacity(dotenv_vars.len() + stored_env_vec.len() + system_env.len());
+            // Add dotenv variables first (highest priority)
+            for (key, value) in &dotenv_vars {
+                temp_env.push(format!("{}={}", key, value));
+            }
+            // Then add stored environment
+            temp_env.extend(stored_env_vec);
+            // Finally add system environment
+            temp_env.extend(system_env);
+
+            // Start new process first
+            let result = match process_run(ProcessMetadata {
+                args: config.args,
+                name: name.clone(),
+                shell: config.shell,
+                log_path: config.log_path,
+                command: script.to_string(),
+                env: temp_env,
+            }) {
+                Ok(result) => result,
+                Err(err) => {
+                    process.running = false;
+                    process.children = vec![];
+                    process.crash.crashed = true;
+                    then!(dead, process.restarts += 1);
+                    then!(dead, process.crash.value += 1);
+                    log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
+                    println!("{} Failed to reload process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
+                    return self;
                 }
-                // Then add stored environment
-                temp_env.extend(stored_env_vec);
-                // Finally add system environment
-                temp_env.extend(system_env);
+            };
 
-                // Start new process first
-                let result = match process_run(ProcessMetadata {
-                    args: config.args,
-                    name: name.clone(),
-                    shell: config.shell,
-                    log_path: config.log_path,
-                    command: script.to_string(),
-                    env: temp_env,
-                }) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        process.running = false;
-                        process.children = vec![];
-                        process.crash.crashed = true;
-                        log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
-                        println!("{} Failed to reload process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
-                        return self;
-                    }
-                };
+            // Store old PID before updating
+            let old_pid = process.pid;
+            let old_children = process.children.clone();
 
-                // Store old PID before updating
-                let old_pid = process.pid;
-                let old_children = process.children.clone();
+            // Update process with new PID
+            process.pid = result.pid;
+            process.shell_pid = result.shell_pid;
+            process.running = true;
+            process.children = vec![];
+            process.started = Utc::now();
+            process.crash.crashed = false;
 
-                // Update process with new PID
-                process.pid = result.pid;
-                process.shell_pid = result.shell_pid;
-                process.running = true;
-                process.children = vec![];
-                process.started = Utc::now();
-                process.crash.crashed = false;
+            // Merge .env variables into the stored environment (dotenv takes priority)
+            let mut updated_env: Env = env::vars().collect();
+            updated_env.extend(dotenv_vars);
+            process.env.extend(updated_env);
 
-                // Merge .env variables into the stored environment (dotenv takes priority)
-                let mut updated_env: Env = env::vars().collect();
-                updated_env.extend(dotenv_vars);
-                process.env.extend(updated_env);
+            then!(dead, process.restarts += 1);
+            then!(dead, process.crash.value += 1);
+            then!(!dead, process.crash.value = 0);
 
-                then!(dead, process.restarts += 1);
-                then!(dead, process.crash.value += 1);
-                then!(!dead, process.crash.value = 0);
+            // Now stop the old process after the new one is running
+            kill_children(old_children);
+            if let Err(err) = process_stop(old_pid) {
+                log::warn!("Failed to stop old process during reload: {err}");
+            }
 
-                // Now stop the old process after the new one is running
-                kill_children(old_children);
-                if let Err(err) = process_stop(old_pid) {
-                    log::warn!("Failed to stop old process during reload: {err}");
-                }
-
-                // Wait for old process to fully terminate to release any held resources
-                if !wait_for_process_termination(old_pid) {
-                    log::warn!("Old process {} did not terminate within timeout during reload", old_pid);
-                }
+            // Wait for old process to fully terminate to release any held resources
+            if !wait_for_process_termination(old_pid) {
+                log::warn!("Old process {} did not terminate within timeout during reload", old_pid);
             }
         }
 
