@@ -1026,8 +1026,8 @@ impl<'i> Internal<'i> {
         }
 
         // Reset restart and crash counters after restore for all restored processes
-        for id in restored_ids {
-            runner.reset_counters(id);
+        for id in &restored_ids {
+            runner.reset_counters(*id);
         }
         runner.save();
 
