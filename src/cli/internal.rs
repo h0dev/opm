@@ -8,6 +8,13 @@ use serde::Serialize;
 use serde_json::json;
 use std::fs;
 
+#[cfg(not(target_os = "linux"))]
+use nix::{
+    errno::Errno,
+    sys::signal::kill,
+    unistd::Pid,
+};
+
 use opm::{
     config, file,
     helpers::{self, ColoredString},
@@ -982,7 +989,26 @@ impl<'i> Internal<'i> {
 
             // Check if the restart was successful
             if let Some(process) = runner.info(id) {
-                if process.running {
+                // Verify the process is actually running by checking if the PID exists in /proc
+                let pid_valid = if process.pid > 0 {
+                    #[cfg(target_os = "linux")]
+                    {
+                        std::path::Path::new(&format!("/proc/{}", process.pid)).exists()
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        // On non-Linux systems, use kill with signal 0
+                        match kill(Pid::from_raw(process.pid as i32), None) {
+                            Ok(_) => true,
+                            Err(Errno::ESRCH) => false,  // Process doesn't exist
+                            Err(_) => true,  // Process exists but we got a permission error or other
+                        }
+                    }
+                } else {
+                    false
+                };
+                
+                if process.running && pid_valid {
                     restored_ids.push(id);
                     log!("Successfully restored process '{}' (id={})", name, id);
                 } else {
@@ -1013,9 +1039,6 @@ impl<'i> Internal<'i> {
         }
         runner.save();
 
-        println!("\nRestore Summary:\n");
-        println!("Successfully restored:\n");
-        println!("{}", restored_ids.len());
         if !failed_ids.is_empty() {
             println!("\nFailed to restore:\n");
             println!("{}", failed_ids.len());
