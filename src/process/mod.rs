@@ -353,15 +353,21 @@ impl Runner {
             // Then add system environment
             process_env.extend(system_env);
 
-            let result = process_run(ProcessMetadata {
+            let result = match process_run(ProcessMetadata {
                 args: config.args,
                 name: name.clone(),
                 shell: config.shell,
                 command: command.clone(),
                 log_path: config.log_path,
                 env: process_env,
-            })
-            .unwrap_or_else(|err| crashln!("Failed to run process: {err}"));
+            }) {
+                Ok(result) => result,
+                Err(err) => {
+                    log::error!("Failed to start process '{}': {}", name, err);
+                    println!("{} Failed to start process '{}': {}", *helpers::FAIL, name, err);
+                    return self;
+                }
+            };
 
             // Merge .env variables into the stored environment (dotenv takes priority)
             let mut stored_env: Env = env::vars().collect();
@@ -409,13 +415,16 @@ impl Runner {
             } = process.clone();
 
             kill_children(process.children.clone());
-            process_stop(process.pid)
-                .unwrap_or_else(|err| crashln!("Failed to stop process: {err}"));
+            if let Err(err) = process_stop(process.pid) {
+                log::warn!("Failed to stop process {} during restart: {}", process.pid, err);
+                // Continue with restart even if stop fails - process may already be dead
+            }
 
             if let Err(err) = std::env::set_current_dir(&path) {
                 process.running = false;
                 process.children = vec![];
                 process.crash.crashed = true;
+                log::error!("Failed to set working directory {:?} for process {} during restart: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
                     *helpers::FAIL,
@@ -444,15 +453,24 @@ impl Runner {
                 // Finally add system environment
                 temp_env.extend(system_env);
 
-                let result = process_run(ProcessMetadata {
+                let result = match process_run(ProcessMetadata {
                     args: config.args,
                     name: name.clone(),
                     shell: config.shell,
                     log_path: config.log_path,
                     command: script.to_string(),
                     env: temp_env,
-                })
-                .unwrap_or_else(|err| crashln!("Failed to run process: {err}"));
+                }) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        process.running = false;
+                        process.children = vec![];
+                        process.crash.crashed = true;
+                        log::error!("Failed to restart process '{}' (id={}): {}", name, id, err);
+                        println!("{} Failed to restart process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
+                        return self;
+                    }
+                };
 
                 process.pid = result.pid;
                 process.shell_pid = result.shell_pid;
@@ -501,6 +519,7 @@ impl Runner {
                 process.running = false;
                 process.children = vec![];
                 process.crash.crashed = true;
+                log::error!("Failed to set working directory {:?} for process {} during reload: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
                     *helpers::FAIL,
@@ -529,15 +548,24 @@ impl Runner {
                 temp_env.extend(system_env);
 
                 // Start new process first
-                let result = process_run(ProcessMetadata {
+                let result = match process_run(ProcessMetadata {
                     args: config.args,
                     name: name.clone(),
                     shell: config.shell,
                     log_path: config.log_path,
                     command: script.to_string(),
                     env: temp_env,
-                })
-                .unwrap_or_else(|err| crashln!("Failed to run process: {err}"));
+                }) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        process.running = false;
+                        process.children = vec![];
+                        process.crash.crashed = true;
+                        log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
+                        println!("{} Failed to reload process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
+                        return self;
+                    }
+                };
 
                 // Store old PID before updating
                 let old_pid = process.pid;

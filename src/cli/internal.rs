@@ -913,6 +913,9 @@ impl<'i> Internal<'i> {
             crashln!("{} Cannot restore on remote servers", *helpers::FAIL)
         }
 
+        println!("{} Starting restore process...", *helpers::SUCCESS);
+        log!("Starting restore process");
+
         // Clear log folder before restoring processes
         let config = config::read();
         let log_path = &config.runner.log_path;
@@ -938,33 +941,110 @@ impl<'i> Internal<'i> {
         }
 
         let mut restored_ids = Vec::new();
+        let mut failed_ids = Vec::new();
 
-        Runner::new().list().for_each(|(id, p)| {
-            // Restore processes that were running OR had crashed
-            // Crashed processes are those that exceeded their max crash limit and were stopped by the daemon
-            // Restore gives them a fresh start with reset counters
-            if p.running || p.crash.crashed {
-                restored_ids.push(*id);
-                runner = Internal {
-                    id: *id,
-                    server_name,
-                    kind: kind.clone(),
-                    runner: runner.clone(),
+        let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
+            .list()
+            .filter_map(|(id, p)| {
+                if p.running || p.crash.crashed {
+                    Some((*id, p.name.clone(), p.running, p.crash.crashed))
+                } else {
+                    None
                 }
-                .restart(&None, &None, false, true);
+            })
+            .collect();
+
+        if processes_to_restore.is_empty() {
+            println!("{} No processes to restore", *helpers::SUCCESS);
+            log!("No processes to restore");
+            return;
+        }
+
+        println!(
+            "{} Found {} process(es) to restore",
+            *helpers::SUCCESS,
+            processes_to_restore.len()
+        );
+        log!("Found {} process(es) to restore", processes_to_restore.len());
+
+        for (id, name, was_running, was_crashed) in processes_to_restore {
+            let status_str = if was_crashed {
+                "crashed"
+            } else if was_running {
+                "running"
+            } else {
+                "stopped"
+            };
+            println!(
+                "{} Restoring process '{}' (id={}, status={})",
+                *helpers::SUCCESS,
+                name,
+                id,
+                status_str
+            );
+            log!("Restoring process '{}' (id={}, status={})", name, id, status_str);
+
+            runner = Internal {
+                id,
+                server_name,
+                kind: kind.clone(),
+                runner: runner.clone(),
             }
-        });
+            .restart(&None, &None, false, true);
+
+            // Check if the restart was successful
+            if let Some(process) = runner.info(id) {
+                if process.running {
+                    restored_ids.push(id);
+                    println!(
+                        "{} Successfully restored process '{}' (id={})",
+                        *helpers::SUCCESS,
+                        name,
+                        id
+                    );
+                    log!("Successfully restored process '{}' (id={})", name, id);
+                } else {
+                    failed_ids.push((id, name.clone()));
+                    println!(
+                        "{} Failed to restore process '{}' (id={}) - process is not running",
+                        *helpers::FAIL,
+                        name,
+                        id
+                    );
+                    log!("Failed to restore process '{}' (id={}) - process is not running", name, id);
+                }
+            } else {
+                failed_ids.push((id, name.clone()));
+                println!(
+                    "{} Failed to restore process '{}' (id={}) - process not found",
+                    *helpers::FAIL,
+                    name,
+                    id
+                );
+                log!("Failed to restore process '{}' (id={}) - process not found", name, id);
+            }
+        }
 
         // Reset restart and crash counters after restore for all restored processes
-        for id in restored_ids {
-            runner.reset_counters(id);
+        for id in &restored_ids {
+            runner.reset_counters(*id);
         }
         runner.save();
 
-        println!(
-            "{} Restored process statuses from dumpfile",
-            *helpers::SUCCESS
+        println!("\n{} Restore Summary:", *helpers::SUCCESS);
+        println!("  - Successfully restored: {}", restored_ids.len());
+        if !failed_ids.is_empty() {
+            println!("  - Failed to restore: {}", failed_ids.len());
+            for (id, name) in &failed_ids {
+                println!("    • '{}' (id={})", name, id);
+            }
+        }
+        log!(
+            "Restore complete: {} successful, {} failed",
+            restored_ids.len(),
+            failed_ids.len()
         );
+
         Internal::list(&string!("default"), &list_name);
     }
 

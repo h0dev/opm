@@ -16,7 +16,7 @@ use std::{process, thread::sleep, time::Duration};
 use opm::{
     config, file,
     helpers::{self, ColoredString},
-    process::{Runner, Status, get_process_cpu_usage_with_children_from_process, hash, id::Id},
+    process::{Runner, get_process_cpu_usage_with_children_from_process, hash, id::Id},
 };
 
 use tabled::{
@@ -74,8 +74,10 @@ fn restart_process() {
             let hash = hash::create(path);
 
             if hash != item.watch.hash {
+                log!("[daemon] watch triggered reload", "name" => item.name, "id" => id);
                 runner.restart(item.id, false);
-                log!("[daemon] watch reload", "name" => item.name, "hash" => "hash");
+                runner.save();
+                log!("[daemon] watch reload complete", "name" => item.name, "id" => id);
                 continue;
             }
         }
@@ -88,6 +90,13 @@ fn restart_process() {
 
         if item.crash.value >= max_restarts {
             log!("[daemon] process exceeded max crashes", "name" => item.name, "id" => id, "crashes" => item.crash.value);
+            println!(
+                "{} Process '{}' (id={}) exceeded max crash limit ({}) - stopping",
+                *helpers::FAIL,
+                item.name,
+                id,
+                max_restarts
+            );
             runner.stop(item.id);
             runner.set_crashed(*id).save();
             continue;
@@ -95,8 +104,38 @@ fn restart_process() {
 
         // Attempt to restart the crashed process
         log!("[daemon] attempting restart", "name" => item.name, "id" => id, "crashes" => item.crash.value);
+        println!(
+            "{} Process '{}' (id={}) crashed - attempting restart (attempt {}/{})",
+            *helpers::FAIL,
+            item.name,
+            id,
+            item.crash.value + 1,
+            max_restarts
+        );
+        
         runner.get(item.id).crashed();
-        log!("[daemon] restarted", "name" => item.name, "id" => id, "crashes" => item.crash.value + 1);
+        
+        // Verify the restart was successful
+        let restarted_runner = Runner::new();
+        if let Some(restarted_process) = restarted_runner.info(*id) {
+            if restarted_process.running {
+                log!("[daemon] restarted successfully", "name" => item.name, "id" => id, "crashes" => item.crash.value + 1);
+                println!(
+                    "{} Successfully restarted process '{}' (id={})",
+                    *helpers::SUCCESS,
+                    item.name,
+                    id
+                );
+            } else {
+                log!("[daemon] restart failed - process not running", "name" => item.name, "id" => id);
+                println!(
+                    "{} Failed to restart process '{}' (id={}) - process not running",
+                    *helpers::FAIL,
+                    item.name,
+                    id
+                );
+            }
+        }
     }
 }
 
