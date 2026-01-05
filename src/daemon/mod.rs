@@ -83,12 +83,15 @@ fn restart_process() {
         }
 
         // Determine if we should attempt to restart this process
+        let process_running = pid::running(item.pid as i32);
+        
         // We should restart if:
-        // 1. Process is marked as running but the PID is not actually running (crashed)
-        // 2. OR process is marked as crashed and should be retried (failed previous restart attempt)
-        let pid_alive = pid::running(item.pid as i32);
-        let should_restart = (item.running && !pid_alive) 
-            || (item.crash.crashed && !item.running);
+        // 1. Process is marked as running but the PID is not actually alive (fresh crash)
+        let fresh_crash = item.running && !process_running;
+        // 2. OR process is marked as crashed and not running (failed previous restart attempt that should be retried)
+        let failed_restart = item.crash.crashed && !item.running;
+        
+        let should_restart = fresh_crash || failed_restart;
         
         // Skip if process doesn't need restarting
         if !should_restart {

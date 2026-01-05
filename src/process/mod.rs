@@ -33,15 +33,20 @@ const MAX_TERMINATION_WAIT_ATTEMPTS: u32 = 50;
 const TERMINATION_CHECK_INTERVAL_MS: u64 = 100;
 
 /// Wait for a process to terminate gracefully
+/// Uses libc::kill(pid, 0) to check if process exists, which is more reliable than
+/// trying to create a process handle that could fail for other reasons (permissions, etc.)
 /// Returns true if process terminated, false if timeout reached
 fn wait_for_process_termination(pid: i64) -> bool {
     for _ in 0..MAX_TERMINATION_WAIT_ATTEMPTS {
-        match unix::NativeProcess::new(pid as u32) {
-            Ok(_) => thread::sleep(Duration::from_millis(TERMINATION_CHECK_INTERVAL_MS)),
-            Err(_) => return true, // Process has terminated
+        // Check if process is still running using libc::kill with signal 0
+        // This is the same method used by pid::running() and is reliable
+        let process_exists = unsafe { libc::kill(pid as i32, 0) == 0 };
+        if !process_exists {
+            return true; // Process has terminated
         }
+        thread::sleep(Duration::from_millis(TERMINATION_CHECK_INTERVAL_MS));
     }
-    false // Timeout reached, process may still be running
+    false // Timeout reached, process is still running
 }
 
 #[derive(Serialize, Deserialize, ToSchema)]
