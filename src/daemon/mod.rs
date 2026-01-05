@@ -82,8 +82,18 @@ fn restart_process() {
             }
         }
 
-        // Skip if process is not running or is actually still running
-        then!(!item.running || pid::running(item.pid as i32), continue);
+        // Determine if we should attempt to restart this process
+        // We should restart if:
+        // 1. Process is marked as running but the PID is not actually running (crashed)
+        // 2. OR process is marked as crashed and should be retried (failed previous restart attempt)
+        let pid_alive = pid::running(item.pid as i32);
+        let should_restart = (item.running && !pid_alive) 
+            || (item.crash.crashed && !item.running);
+        
+        // Skip if process doesn't need restarting
+        if !should_restart {
+            continue;
+        }
 
         // Process crashed - handle restart logic
         let max_restarts = config::read().daemon.restarts;
