@@ -113,15 +113,28 @@ fn restart_process() {
         }
 
         // Attempt to restart the crashed process
-        log!("[daemon] attempting restart", "name" => item.name, "id" => id, "crashes" => item.crash.value);
-        println!(
-            "{} Process '{}' (id={}) crashed - attempting restart (attempt {}/{})",
-            *helpers::FAIL,
-            item.name,
-            id,
-            item.crash.value + 1,
-            max_restarts
-        );
+        let is_retry = item.crash.crashed && !item.running;
+        if is_retry {
+            log!("[daemon] retrying failed restart", "name" => item.name, "id" => id, "crashes" => item.crash.value);
+            println!(
+                "{} Retrying restart for process '{}' (id={}) (attempt {}/{})",
+                *helpers::FAIL,
+                item.name,
+                id,
+                item.crash.value + 1,
+                max_restarts
+            );
+        } else {
+            log!("[daemon] attempting restart", "name" => item.name, "id" => id, "crashes" => item.crash.value);
+            println!(
+                "{} Process '{}' (id={}) crashed - attempting restart (attempt {}/{})",
+                *helpers::FAIL,
+                item.name,
+                id,
+                item.crash.value + 1,
+                max_restarts
+            );
+        }
         
         // This calls restart and saves to disk, consuming runner
         runner.get(item.id).crashed();
