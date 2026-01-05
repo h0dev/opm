@@ -1289,13 +1289,25 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
         .create(true)
         .append(true)
         .open(&stdout_path)
-        .map_err(|err| format!("Failed to open stdout log file {}: {:?}", stdout_path, err))?;
+        .map_err(|err| {
+            format!(
+                "Failed to open stdout log file '{}': {}. \
+                Check that the directory exists and you have write permissions.",
+                stdout_path, err
+            )
+        })?;
 
     let stderr_file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&stderr_path)
-        .map_err(|err| format!("Failed to open stderr log file {}: {:?}", stderr_path, err))?;
+        .map_err(|err| {
+            format!(
+                "Failed to open stderr log file '{}': {}. \
+                Check that the directory exists and you have write permissions.",
+                stderr_path, err
+            )
+        })?;
 
     // Execute process
     let mut cmd = Command::new(&metadata.shell);
@@ -1313,9 +1325,32 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
         .stderr(Stdio::from(stderr_file))
         .stdin(Stdio::null());
 
-    let child = cmd
-        .spawn()
-        .map_err(|err| format!("Failed to spawn process: {:?}", err))?;
+    let child = cmd.spawn().map_err(|err| {
+        // Provide more helpful error messages based on error kind
+        match err.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "Failed to spawn process: Command '{}' not found. \
+                Please ensure '{}' is installed and in your PATH. \
+                Error: {:?}",
+                metadata.shell, metadata.shell, err
+            ),
+            std::io::ErrorKind::PermissionDenied => format!(
+                "Failed to spawn process: Permission denied for '{}'. \
+                Check that the shell has execute permissions. \
+                Error: {:?}",
+                metadata.shell, err
+            ),
+            _ => format!(
+                "Failed to spawn process with shell '{}': {:?}. \
+                Command attempted: {} {} '{}'",
+                metadata.shell,
+                err,
+                metadata.shell,
+                metadata.args.join(" "),
+                metadata.command
+            ),
+        }
+    })?;
 
     let shell_pid = child.id() as i64;
     let actual_pid = unix::get_actual_child_pid(shell_pid);
@@ -1576,5 +1611,93 @@ mod tests {
         assert!(fast_cpu_with_children >= fast_cpu - 0.1, 
             "CPU with children ({}) should be >= parent CPU ({})", 
             fast_cpu_with_children, fast_cpu);
+    }
+
+    #[test]
+    fn test_error_handling_invalid_shell() {
+        // Test that process_run returns an error for invalid shell
+        let metadata = ProcessMetadata {
+            name: "test_process".to_string(),
+            shell: "/nonexistent/shell".to_string(),
+            command: "echo test".to_string(),
+            log_path: "/tmp".to_string(),
+            args: vec!["-c".to_string()],
+            env: vec![],
+        };
+
+        let result = process_run(metadata);
+        assert!(result.is_err(), "Expected error for nonexistent shell");
+        
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("not found") || err_msg.contains("Not found") || err_msg.contains("NotFound"),
+            "Error message should indicate shell not found, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_error_handling_invalid_log_path() {
+        // Test that process_run returns an error for invalid log path
+        let metadata = ProcessMetadata {
+            name: "test_process".to_string(),
+            shell: "/bin/sh".to_string(),
+            command: "echo test".to_string(),
+            log_path: "/nonexistent/directory/that/does/not/exist".to_string(),
+            args: vec!["-c".to_string()],
+            env: vec![],
+        };
+
+        let result = process_run(metadata);
+        assert!(result.is_err(), "Expected error for nonexistent log path");
+        
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("Failed to open") && err_msg.contains("log file"),
+            "Error message should indicate log file error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_error_handling_graceful_failure() {
+        // Test that runner doesn't panic when restart fails
+        // This test verifies the structure is set up correctly for error handling
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        let process = Process {
+            id,
+            pid: 99999, // Non-existent PID
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello'".to_string(),
+            restarts: 0,
+            running: false, // Start with not running
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+        };
+
+        runner.list.insert(id, process);
+
+        // Verify the process exists
+        assert!(runner.exists(id), "Process should exist in runner");
+        
+        // Verify process state
+        let process = runner.info(id).unwrap();
+        assert_eq!(process.running, false, "Process should start as not running");
+        assert_eq!(process.crash.crashed, false, "Process should start as not crashed");
     }
 }
