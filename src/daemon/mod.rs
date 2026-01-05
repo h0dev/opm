@@ -191,14 +191,20 @@ pub fn health(format: &String) {
             // Check if the process is actually running before trying to get its information
             if pid::running(process_id.get::<i32>()) {
                 daemon_running = true;
-                if let Ok(process) = Process::new(process_id.get::<u32>()) {
-                    pid = Some(process.pid() as i32);
-                    uptime = Some(pid::uptime().unwrap());
-                    memory_usage = process.memory_info().ok().map(MemoryInfo::from);
-                    cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
-                        &process,
-                        process_id.get::<i64>(),
-                    ));
+                // Always set PID and uptime if daemon is running
+                pid = Some(process_id.get::<i32>());
+                uptime = pid::uptime().ok();
+                
+                // Try to get process stats (may fail for detached processes)
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                {
+                    if let Ok(process) = Process::new(process_id.get::<u32>()) {
+                        memory_usage = process.memory_info().ok().map(MemoryInfo::from);
+                        cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
+                            &process,
+                            process_id.get::<i64>(),
+                        ));
+                    }
                 }
             } else {
                 // Process is not running, remove stale PID file
