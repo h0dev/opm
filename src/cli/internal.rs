@@ -960,11 +960,6 @@ impl<'i> Internal<'i> {
             return;
         }
 
-        println!(
-            "{} Found {} process(es) to restore",
-            *helpers::SUCCESS,
-            processes_to_restore.len()
-        );
         log!("Found {} process(es) to restore", processes_to_restore.len());
 
         for (id, name, was_running, was_crashed) in processes_to_restore {
@@ -975,13 +970,6 @@ impl<'i> Internal<'i> {
             } else {
                 "stopped"
             };
-            println!(
-                "{} Restoring process '{}' (id={}, status={})",
-                *helpers::SUCCESS,
-                name,
-                id,
-                status_str
-            );
             log!("Restoring process '{}' (id={}, status={})", name, id, status_str);
 
             runner = Internal {
@@ -996,12 +984,6 @@ impl<'i> Internal<'i> {
             if let Some(process) = runner.info(id) {
                 if process.running {
                     restored_ids.push(id);
-                    println!(
-                        "{} Successfully restored process '{}' (id={})",
-                        *helpers::SUCCESS,
-                        name,
-                        id
-                    );
                     log!("Successfully restored process '{}' (id={})", name, id);
                 } else {
                     failed_ids.push((id, name.clone()));
@@ -1031,14 +1013,9 @@ impl<'i> Internal<'i> {
         }
         runner.save();
 
-        println!("\n{} Restore Summary:", *helpers::SUCCESS);
-        println!("  - Successfully restored: {}", restored_ids.len());
-        if !failed_ids.is_empty() {
-            println!("  - Failed to restore: {}", failed_ids.len());
-            for (id, name) in &failed_ids {
-                println!("    • '{}' (id={})", name, id);
-            }
-        }
+        println!("\nRestore Summary:\n");
+        println!("Successfully restored:\n");
+        println!("{}", restored_ids.len());
         log!(
             "Restore complete: {} successful, {} failed",
             restored_ids.len(),
