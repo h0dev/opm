@@ -83,24 +83,7 @@ fn restart_process() {
         }
 
         // Skip if process is not running or is actually still running
-        // For shell-wrapped processes, check both shell_pid and actual pid
-        if !item.running {
-            continue;
-        }
-        
-        // Check if the actual process is still running
-        let mut process_still_running = pid::running(item.pid as i32);
-        
-        // If shell_pid exists and is different, also check if shell is still running
-        if let Some(shell_pid) = item.shell_pid {
-            if shell_pid != item.pid {
-                process_still_running = process_still_running || pid::running(shell_pid as i32);
-            }
-        }
-        
-        if process_still_running {
-            continue;
-        }
+        then!(!item.running || pid::running(item.pid as i32), continue);
 
         // Process crashed - handle restart logic
         let max_restarts = config::read().daemon.restarts;
