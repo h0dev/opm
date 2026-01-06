@@ -996,37 +996,37 @@ impl Process {
 impl ProcessWrapper {
     /// Stop the process item
     pub fn stop(&mut self) {
-        lock!(self.runner).stop(self.id).save();
+        lock!(self.runner).stop(self.id);
     }
 
     /// Restart the process item
     pub fn restart(&mut self) {
-        lock!(self.runner).restart(self.id, false).save();
+        lock!(self.runner).restart(self.id, false);
     }
 
     /// Reload the process item (zero-downtime: starts new process before stopping old one)
     pub fn reload(&mut self) {
-        lock!(self.runner).reload(self.id, false).save();
+        lock!(self.runner).reload(self.id, false);
     }
 
     /// Rename the process item
     pub fn rename(&mut self, name: String) {
-        lock!(self.runner).rename(self.id, name).save();
+        lock!(self.runner).rename(self.id, name);
     }
 
     /// Enable watching a path on the process item
     pub fn watch(&mut self, path: &str) {
-        lock!(self.runner).watch(self.id, path, true).save();
+        lock!(self.runner).watch(self.id, path, true);
     }
 
     /// Disable watching on the process item
     pub fn disable_watch(&mut self) {
-        lock!(self.runner).watch(self.id, "", false).save();
+        lock!(self.runner).watch(self.id, "", false);
     }
 
     /// Set the process item as crashed
     pub fn crashed(&mut self) {
-        lock!(self.runner).restart(self.id, true).save();
+        lock!(self.runner).restart(self.id, true);
     }
 
     /// Get the borrowed runner reference (lives till program end)
@@ -1036,17 +1036,17 @@ impl ProcessWrapper {
 
     /// Append new environment values to the process item
     pub fn set_env(&mut self, env: Env) {
-        lock!(self.runner).set_env(self.id, env).save();
+        lock!(self.runner).set_env(self.id, env);
     }
 
     /// Clear environment values of the process item
     pub fn clear_env(&mut self) {
-        lock!(self.runner).clear_env(self.id).save();
+        lock!(self.runner).clear_env(self.id);
     }
 
     /// Reset restart and crash counters of the process item
     pub fn reset_counters(&mut self) {
-        lock!(self.runner).reset_counters(self.id).save();
+        lock!(self.runner).reset_counters(self.id);
     }
 
     /// Get a json dump of the process item

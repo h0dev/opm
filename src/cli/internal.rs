@@ -194,6 +194,7 @@ impl<'i> Internal<'i> {
             item.restart();
 
             self.runner = item.get_runner().clone();
+            self.runner.save();
         } else {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -254,6 +255,7 @@ impl<'i> Internal<'i> {
             let mut item = self.runner.get(self.id);
             item.reload();
             self.runner = item.get_runner().clone();
+            self.runner.save();
         } else {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -332,6 +334,7 @@ impl<'i> Internal<'i> {
         let mut item = self.runner.get(self.id);
         item.stop();
         self.runner = item.get_runner().clone();
+        self.runner.save();
 
         if !silent {
             println!("{} Stopped {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
