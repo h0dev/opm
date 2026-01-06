@@ -115,10 +115,18 @@ fn restart_process() {
             let cpu = opm::process::get_process_cpu_usage_with_children_fast(pid_for_monitoring);
             let memory = opm::process::get_process_memory_with_children(pid_for_monitoring);
             
-            // Process has 0% CPU and either no memory info or 0b memory
-            let zero_stats = cpu == 0.0 && memory.map_or(true, |m| m.rss == 0);
+            // Process has 0% CPU and 0b memory (or memory info cannot be retrieved)
+            // Both cases are problematic: actual 0 memory or inability to read memory
+            // indicate the process is in a bad state (zombie, PID reused, etc.)
+            let has_zero_memory = memory.as_ref().map_or(true, |m| m.rss == 0);
+            let zero_stats = cpu == 0.0 && has_zero_memory;
             if zero_stats {
-                log!("[daemon] detected 0% CPU and 0b memory", "name" => item.name, "id" => id, "pid" => pid_for_monitoring);
+                let mem_str = match memory {
+                    Some(m) if m.rss == 0 => "0b",
+                    None => "unreadable",
+                    _ => "non-zero",
+                };
+                log!("[daemon] detected 0% CPU and 0b memory", "name" => item.name, "id" => id, "pid" => pid_for_monitoring, "memory" => mem_str);
             }
             zero_stats
         } else {
