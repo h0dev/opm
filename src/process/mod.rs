@@ -445,7 +445,8 @@ impl Runner {
 
             // Increment restart counter at the beginning of restart attempt
             // This ensures the counter reflects that a restart was attempted,
-            // even if the restart fails partway through
+            // even if the restart fails partway through.
+            // Note: This only increments when dead=true (crash restart), not for manual restarts.
             then!(dead, process.restarts += 1);
 
             kill_children(process.children.clone());
@@ -529,6 +530,8 @@ impl Runner {
             process.env.extend(updated_env);
 
             // Update crash counter based on restart type
+            // For crash restarts (dead=true): increment crash counter
+            // For manual restarts (dead=false): reset crash counter to give process a fresh start
             then!(dead, process.crash.value += 1);
             then!(!dead, process.crash.value = 0);
         }
@@ -556,11 +559,13 @@ impl Runner {
                 watch: _,
                 max_memory: _,
                 ..
-            } = process.clone();
+            }  = process.clone();
 
             // Increment restart counter at the beginning of reload attempt
             // This ensures the counter reflects that a reload was attempted,
-            // even if the reload fails partway through
+            // even if the reload fails partway through.
+            // Note: This only increments when dead=true (crash reload), not for manual reloads.
+            // In practice, reload() is always called with dead=false, so this won't increment.
             then!(dead, process.restarts += 1);
 
             if let Err(err) = std::env::set_current_dir(&path) {
@@ -637,6 +642,9 @@ impl Runner {
             process.env.extend(updated_env);
 
             // Update crash counter based on reload type
+            // For crash reloads (dead=true): increment crash counter  
+            // For manual reloads (dead=false): reset crash counter to give process a fresh start
+            // In practice, reload() is always called with dead=false, so this resets the counter
             then!(dead, process.crash.value += 1);
             then!(!dead, process.crash.value = 0);
 
