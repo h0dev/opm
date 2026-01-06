@@ -34,3 +34,5 @@ pnpm-debug.log*
 .idea
 .fleet
 test
+# Test files  
+~/.opm/
