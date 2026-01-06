@@ -105,27 +105,23 @@ fn restart_process() {
         // even if pid::running() returns true (e.g., zombie, PID reused, permission issue)
         // Use the same PID selection logic as memory monitoring (line 58)
         let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-        let process_readable = process_running && Process::new_fast(pid_for_monitoring as u32).is_ok();
+        let mut process_readable = process_running && Process::new_fast(pid_for_monitoring as u32).is_ok();
         
         // Additional check: detect zombie processes or PIDs that were reused
         // by checking if memory info is completely unreadable (not just zero, but truly unreadable).
         // We specifically check if memory_info() fails, which indicates the process is in a bad state.
         // Note: We do NOT check CPU usage here, as 0% CPU is legitimate for idle processes.
         // Only check this for processes marked as running and outside the grace period.
-        let has_unreadable_stats = if item.running && process_readable && !recently_started {
+        if item.running && process_readable && !recently_started {
             // Try to read memory info - if this fails, the process is likely a zombie or PID was reused
+            // We know Process::new_fast succeeded from the check above, so we can safely unwrap
             if let Ok(process) = Process::new_fast(pid_for_monitoring as u32) {
-                // If memory_info() fails, the process is in a bad state
-                process.memory_info().is_err()
-            } else {
-                // Process::new_fast failed, which we already caught in process_readable
-                false
+                // If memory_info() fails, mark the process as unreadable (indicating bad state)
+                if process.memory_info().is_err() {
+                    process_readable = false;
+                }
             }
-        } else {
-            false
-        };
-        
-        let process_readable = process_readable && !has_unreadable_stats;
+        }
         
         // For processes started through a shell (e.g., /bin/sh -c 'command'), we need to check
         // if the actual child process is still alive, not just the shell wrapper.
