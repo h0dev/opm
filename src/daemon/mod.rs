@@ -143,16 +143,10 @@ fn restart_process() {
         } else if item.shell_pid.is_some() {
             // This is a shell-spawned process - check if the shell still has children
             // If the shell has no children, the actual process has crashed
-            // During grace period, be lenient: only crash if PID is actually dead
-            // After grace period, also crash if shell has no children
-            if recently_started {
-                // During grace period: only consider crashed if PID is actually dead
-                // We already know process_running and process_readable are true from above
-                true
-            } else {
-                // After grace period: consider crashed if shell has no children
-                !children.is_empty()
-            }
+            // Note: We allow one daemon check cycle (typically 1s) for the shell to spawn children
+            // on the very first start to avoid false positives
+            let very_early_start = is_initial_start && seconds_since_start < 1;
+            !children.is_empty() || very_early_start
         } else {
             // Not a shell-spawned process (or shell_pid wasn't detected)
             // If the stored PID is actually a shell that lost its child, it would have no children
@@ -165,8 +159,9 @@ fn restart_process() {
             // 
             // To distinguish: if we've never seen this process with children, it's probably case 1.
             // If item.children was previously populated, it's probably case 2.
-            // Also apply grace period to avoid false positives immediately after start
-            if children.is_empty() && !item.children.is_empty() && !recently_started {
+            // Apply the same 1-second grace period to avoid false positives immediately after start
+            let very_early_start = is_initial_start && seconds_since_start < 1;
+            if children.is_empty() && !item.children.is_empty() && !very_early_start {
                 // Process previously had children but now doesn't - likely crashed
                 false
             } else {
@@ -229,11 +224,9 @@ fn restart_process() {
             );
         }
         
-        // This calls restart and saves to disk, consuming runner
-        let mut process_wrapper = runner.get(item.id);
-        process_wrapper.crashed();
-        let final_runner = process_wrapper.get_runner().clone();
-        final_runner.save();
+        // Attempt to restart the crashed process
+        runner.restart(item.id, true);
+        runner.save();
         
         // Reload runner from disk to get the updated state after restart
         // This is necessary because we're iterating over a snapshot and the restart
