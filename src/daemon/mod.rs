@@ -29,6 +29,10 @@ use tabled::{
     },
 };
 
+// Grace period in seconds to wait after process start before checking for crashes
+// This prevents false crash detection when shell processes haven't spawned children yet
+const STARTUP_GRACE_PERIOD_SECS: i64 = 3;
+
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     pid::remove();
     log!("[daemon] killed", "pid" => process::id());
@@ -42,7 +46,11 @@ fn restart_process() {
 
         if !children.is_empty() && children != item.children {
             log!("[daemon] added", "children" => format!("{children:?}"));
+            // Clone once for saving to disk via set_children
             runner.set_children(*id, children.clone()).save();
+            // Clone again to update the snapshot's item.children, so later logic uses fresh data
+            // Both clones are necessary because children is borrowed later in this iteration
+            item.children = children.clone();
         }
 
         // Check memory limit if configured
@@ -85,6 +93,12 @@ fn restart_process() {
         // Determine if we should attempt to restart this process
         let process_running = pid::running(item.pid as i32);
         
+        // Check if process was recently started (within grace period)
+        // This prevents false crash detection when shell processes haven't spawned children yet
+        let now = Utc::now();
+        let seconds_since_start = (now - item.started).num_seconds();
+        let recently_started = seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
+        
         // For processes started through a shell (e.g., /bin/sh -c 'command'), we need to check
         // if the actual child process is still alive, not just the shell wrapper.
         // When a child process crashes immediately, get_actual_child_pid may fall back to returning 
@@ -95,7 +109,8 @@ fn restart_process() {
         let child_process_alive = if item.shell_pid.is_some() && process_running {
             // This is a shell-spawned process - check if the shell still has children
             // If the shell has no children, the actual process has crashed
-            !children.is_empty()
+            // UNLESS it was just started and needs time to spawn children
+            !children.is_empty() || recently_started
         } else if process_running {
             // Not a shell-spawned process (or shell_pid wasn't detected)
             // If the stored PID is actually a shell that lost its child, it would have no children
@@ -109,7 +124,8 @@ fn restart_process() {
             // To distinguish: if we've never seen this process with children, it's probably case 1.
             // If item.children was previously populated, it's probably case 2.
             // For now, conservatively assume no children = crashed only if we previously had children
-            if children.is_empty() && !item.children.is_empty() {
+            // Also apply grace period to avoid false positives immediately after start
+            if children.is_empty() && !item.children.is_empty() && !recently_started {
                 // Process previously had children but now doesn't - likely crashed
                 false
             } else {
