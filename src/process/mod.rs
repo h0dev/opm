@@ -526,8 +526,10 @@ impl Runner {
             process.env.extend(updated_env);
 
             then!(dead, process.restarts += 1);
-            // Reset crash counter after successful restart to allow continued monitoring
-            // Counter is only incremented on failure (directory change or process start failure)
+            // Always reset crash counter to 0 after successful restart, whether it's:
+            // - Crash recovery (dead=true): Process is now stable, reset consecutive crash count
+            // - Manual/watch restart (dead=false): User/watch triggered restart gets fresh monitoring
+            // Note: Failure paths only increment when dead=true (crash recovery failure)
             process.crash.value = 0;
         }
 
@@ -632,8 +634,10 @@ impl Runner {
             process.env.extend(updated_env);
 
             then!(dead, process.restarts += 1);
-            // Reset crash counter after successful reload to allow continued monitoring
-            // Counter is only incremented on failure (directory change or process start failure)
+            // Always reset crash counter to 0 after successful reload, whether it's:
+            // - Crash recovery (dead=true): Process is now stable, reset consecutive crash count
+            // - Manual/watch reload (dead=false): User/watch triggered reload gets fresh monitoring
+            // Note: Failure paths only increment when dead=true (crash recovery failure)
             process.crash.value = 0;
 
             // Now stop the old process after the new one is running
