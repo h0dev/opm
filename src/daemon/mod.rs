@@ -99,6 +99,8 @@ fn restart_process() {
         // Only apply grace period on initial start (not restarts) to avoid blocking crash detection
         let now = Utc::now();
         let seconds_since_start = (now - item.started).num_seconds();
+        // Note: crash.value tracks failed restarts, restarts tracks all restart attempts
+        // Both should be 0 only on the very first start before any crashes
         let is_initial_start = item.crash.value == 0 && item.restarts == 0;
         let recently_started = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
         
