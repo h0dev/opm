@@ -157,15 +157,27 @@ fn restart_process() {
             // 1. A simple process that doesn't spawn children (normal) - stays alive
             // 2. A shell whose child crashed (problem) - shell stays alive but orphaned
             // 
-            // To distinguish: if we've never seen this process with children, it's probably case 1.
-            // If item.children was previously populated, it's probably case 2.
-            // Apply the same grace period to avoid false positives immediately after start
+            // To distinguish between these cases:
+            // - If we previously saw children but now there are none: definitely crashed
+            // - If we never saw children and we're past the grace period on initial start: 
+            //   treat as crashed to catch immediately-crashing shell processes
+            // - Otherwise (has children, or within grace period, or not initial start): alive
             let very_early_start = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
-            if children.is_empty() && !item.children.is_empty() && !very_early_start {
-                // Process previously had children but now doesn't - likely crashed
-                false
+            if children.is_empty() {
+                if !item.children.is_empty() {
+                    // Process previously had children but now doesn't - definitely crashed
+                    false
+                } else if is_initial_start && !very_early_start {
+                    // Never had children, past grace period, and initial start
+                    // Treat as potentially crashed to catch immediately-crashing processes
+                    // If it's legitimate, it will be detected as alive on next cycle
+                    false
+                } else {
+                    // Within grace period or not initial start - assume alive
+                    true
+                }
             } else {
-                // Process is running (either with children or never had them)
+                // Has children - definitely alive
                 true
             }
         };
