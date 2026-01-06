@@ -70,7 +70,7 @@ fn restart_process() {
                         helpers::format_memory(memory_info.rss),
                         helpers::format_memory(item.max_memory)
                     );
-                    runner.stop(item.id);
+                    runner.stop(*id);
                     // Don't mark as crashed since this is intentional enforcement
                     runner.save();
                     continue;
@@ -84,7 +84,7 @@ fn restart_process() {
 
             if hash != item.watch.hash {
                 log!("[daemon] watch triggered reload", "name" => item.name, "id" => id);
-                runner.restart(item.id, false);
+                runner.restart(*id, false);
                 runner.save();
                 log!("[daemon] watch reload complete", "name" => item.name, "id" => id);
                 continue;
@@ -195,7 +195,7 @@ fn restart_process() {
                 id,
                 max_restarts
             );
-            runner.stop(item.id);
+            runner.stop(*id);
             runner.set_crashed(*id).save();
             continue;
         }
@@ -225,7 +225,7 @@ fn restart_process() {
         }
         
         // Attempt to restart the crashed process
-        runner.restart(item.id, true);
+        runner.restart(*id, true);
         runner.save();
         
         // Reload runner from disk to get the updated state after restart
