@@ -31,8 +31,8 @@ use tabled::{
 
 // Grace period in seconds to wait after process start before checking for crashes
 // This prevents false crash detection when shell processes haven't spawned children yet
-// Increased to 5 seconds to accommodate slower-starting services like Cloudflare tunnels
-const STARTUP_GRACE_PERIOD_SECS: i64 = 5;
+// Reduced to 1 second to allow faster detection of immediately-crashing processes
+const STARTUP_GRACE_PERIOD_SECS: i64 = 1;
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     pid::remove();
@@ -136,16 +136,16 @@ fn restart_process() {
         // the shell PID. The shell remains alive even after its child exits, so we need to 
         // verify that it still has children.
         // 
-        // We already computed current children at line 46, so reuse that value.
+        // We already computed current children above with process_find_children()
         let child_process_alive = if !process_running || !process_readable {
             // Process itself is dead (PID not running or not readable) - definitely crashed
             false
         } else if item.shell_pid.is_some() {
             // This is a shell-spawned process - check if the shell still has children
             // If the shell has no children, the actual process has crashed
-            // Note: We allow one daemon check cycle (typically 1s) for the shell to spawn children
+            // Note: We allow one daemon check cycle for the shell to spawn children
             // on the very first start to avoid false positives
-            let very_early_start = is_initial_start && seconds_since_start < 1;
+            let very_early_start = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
             !children.is_empty() || very_early_start
         } else {
             // Not a shell-spawned process (or shell_pid wasn't detected)
@@ -159,8 +159,8 @@ fn restart_process() {
             // 
             // To distinguish: if we've never seen this process with children, it's probably case 1.
             // If item.children was previously populated, it's probably case 2.
-            // Apply the same 1-second grace period to avoid false positives immediately after start
-            let very_early_start = is_initial_start && seconds_since_start < 1;
+            // Apply the same grace period to avoid false positives immediately after start
+            let very_early_start = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
             if children.is_empty() && !item.children.is_empty() && !very_early_start {
                 // Process previously had children but now doesn't - likely crashed
                 false
