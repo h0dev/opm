@@ -527,7 +527,7 @@ impl Runner {
 
             then!(dead, process.restarts += 1);
             // Reset crash counter after successful restart to allow continued monitoring
-            // Only increment on failure (lines 463 and 509)
+            // Counter is only incremented on failure (directory change or process start failure)
             process.crash.value = 0;
         }
 
@@ -633,7 +633,7 @@ impl Runner {
 
             then!(dead, process.restarts += 1);
             // Reset crash counter after successful reload to allow continued monitoring
-            // Only increment on failure (lines 563 and 609)
+            // Counter is only incremented on failure (directory change or process start failure)
             process.crash.value = 0;
 
             // Now stop the old process after the new one is running
