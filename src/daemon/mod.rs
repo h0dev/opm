@@ -93,6 +93,12 @@ fn restart_process() {
         // Determine if we should attempt to restart this process
         let process_running = pid::running(item.pid as i32);
         
+        // Check if process was recently started (within grace period)
+        // This prevents false crash detection when shell processes haven't spawned children yet
+        let now = Utc::now();
+        let seconds_since_start = (now - item.started).num_seconds();
+        let recently_started = seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
+        
         // Check if we can actually read process stats (CPU, memory, etc.)
         // If Process::new_fast() fails, it means the process is dead/inaccessible
         // even if pid::running() returns true (e.g., zombie, PID reused, permission issue)
@@ -101,11 +107,25 @@ fn restart_process() {
         let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
         let process_readable = process_running && Process::new_fast(pid_for_monitoring as u32).is_ok();
         
-        // Check if process was recently started (within grace period)
-        // This prevents false crash detection when shell processes haven't spawned children yet
-        let now = Utc::now();
-        let seconds_since_start = (now - item.started).num_seconds();
-        let recently_started = seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
+        // Additional check: if process is marked as running (online) but shows 0% CPU and 0b memory,
+        // treat it as an error and restart it. This catches zombie processes or PIDs that were reused.
+        // Only check this for processes marked as running - ignore stopped processes.
+        // Skip this check for recently started processes to avoid false positives.
+        let has_zero_stats = if item.running && process_readable && !recently_started {
+            let cpu = opm::process::get_process_cpu_usage_with_children_fast(pid_for_monitoring);
+            let memory = opm::process::get_process_memory_with_children(pid_for_monitoring);
+            
+            // Process has 0% CPU and either no memory info or 0b memory
+            let zero_stats = cpu == 0.0 && memory.map_or(true, |m| m.rss == 0);
+            if zero_stats {
+                log!("[daemon] detected 0% CPU and 0b memory", "name" => item.name, "id" => id, "pid" => pid_for_monitoring);
+            }
+            zero_stats
+        } else {
+            false
+        };
+        
+        let process_readable = process_readable && !has_zero_stats;
         
         // For processes started through a shell (e.g., /bin/sh -c 'command'), we need to check
         // if the actual child process is still alive, not just the shell wrapper.
