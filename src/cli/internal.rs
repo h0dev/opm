@@ -660,7 +660,8 @@ impl<'i> Internal<'i> {
             };
 
             if let Ok(info) = info {
-                let stats = info.json::<ItemSingle>().unwrap().stats;
+                let item_single = info.json::<ItemSingle>().unwrap();
+                let stats = item_single.stats;
                 let children = if item.children.is_empty() {
                     "none".to_string()
                 } else {
@@ -716,11 +717,8 @@ impl<'i> Internal<'i> {
                         format!("{path}/{}  ", item.watch.path),
                         string!("disabled  ")
                     ),
-                    uptime: ternary!(
-                        item.running,
-                        format!("{}", helpers::format_duration(item.started)),
-                        string!("none")
-                    ),
+                    // Use uptime from API response which already has the fix applied
+                    uptime: item_single.info.uptime,
                 }];
 
                 render_info(data)
