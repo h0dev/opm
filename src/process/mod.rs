@@ -529,11 +529,11 @@ impl Runner {
             updated_env.extend(dotenv_vars);
             process.env.extend(updated_env);
 
-            // Update crash counter based on restart type
-            // For crash restarts (dead=true): increment crash counter
+            // Reset crash counter after successful restart
             // For manual restarts (dead=false): reset crash counter to give process a fresh start
-            then!(dead, process.crash.value += 1);
-            then!(!dead, process.crash.value = 0);
+            // For crash restarts (dead=true): also reset because the restart succeeded
+            // The crash counter is only incremented in error paths (lines 468, 513) when restart fails
+            process.crash.value = 0;
         }
 
         return self;
@@ -641,12 +641,10 @@ impl Runner {
             updated_env.extend(dotenv_vars);
             process.env.extend(updated_env);
 
-            // Update crash counter based on reload type
-            // For crash reloads (dead=true): increment crash counter
-            // For manual reloads (dead=false): reset crash counter to give process a fresh start
-            // In practice, reload() is always called with dead=false, so this resets the counter
-            then!(dead, process.crash.value += 1);
-            then!(!dead, process.crash.value = 0);
+            // Reset crash counter after successful reload
+            // A successful reload means the process is running again, so reset the crash counter
+            // The crash counter is only incremented in error paths (lines 575, 620) when reload fails
+            process.crash.value = 0;
 
             // Now stop the old process after the new one is running
             kill_children(old_children);
