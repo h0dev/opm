@@ -579,6 +579,14 @@ impl<'i> Internal<'i> {
                     string!("none  ")
                 };
 
+                // Only count uptime when the process is actually running
+                // Crashed or stopped processes should show "none" uptime
+                let uptime = if process_actually_running {
+                    format!("{}", helpers::format_duration(item.started))
+                } else {
+                    string!("none")
+                };
+
                 let data = vec![Info {
                     children,
                     cpu_percent,
@@ -608,11 +616,7 @@ impl<'i> Internal<'i> {
                         format!("{path}/{}  ", item.watch.path),
                         string!("disabled  ")
                     ),
-                    uptime: ternary!(
-                        item.running,
-                        format!("{}", helpers::format_duration(item.started)),
-                        string!("none")
-                    ),
+                    uptime,
                 }];
 
                 render_info(data)
@@ -657,6 +661,15 @@ impl<'i> Internal<'i> {
                 }
                 .red()
                 .bold()
+            };
+
+            // Only count uptime when the process is actually running (not crashed or stopped)
+            // For remote processes, we can't check is_pid_alive() since the PID is on a different machine,
+            // so we trust the server's running and crashed flags instead of checking the PID directly
+            let uptime_value = if item.running && !item.crash.crashed {
+                format!("{}", helpers::format_duration(item.started))
+            } else {
+                string!("none")
             };
 
             if let Ok(info) = info {
@@ -716,11 +729,7 @@ impl<'i> Internal<'i> {
                         format!("{path}/{}  ", item.watch.path),
                         string!("disabled  ")
                     ),
-                    uptime: ternary!(
-                        item.running,
-                        format!("{}", helpers::format_duration(item.started)),
-                        string!("none")
-                    ),
+                    uptime: uptime_value,
                 }];
 
                 render_info(data)
@@ -1169,6 +1178,14 @@ impl<'i> Internal<'i> {
                         .bold()
                     };
 
+                    // Only count uptime when the process is actually running
+                    // Crashed or stopped processes should show "none" uptime
+                    let uptime = if process_actually_running {
+                        format!("{}  ", helpers::format_duration(item.started))
+                    } else {
+                        string!("none  ")
+                    };
+
                     processes.push(ProcessItem {
                         status: status.into(),
                         cpu: format!("{cpu_percent}   "),
@@ -1182,11 +1199,7 @@ impl<'i> Internal<'i> {
                             format!("{}  ", item.watch.path),
                             string!("disabled  ")
                         ),
-                        uptime: ternary!(
-                            item.running,
-                            format!("{}  ", helpers::format_duration(item.started)),
-                            string!("none  ")
-                        ),
+                        uptime,
                     });
                 }
 

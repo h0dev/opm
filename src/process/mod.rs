@@ -955,6 +955,14 @@ impl Runner {
                 }
             };
 
+            // Only count uptime when the process is actually running
+            // Crashed or stopped processes should show "0s" uptime
+            let uptime = if process_actually_running {
+                helpers::format_duration(item.started)
+            } else {
+                string!("0s")
+            };
+
             processes.push(ProcessItem {
                 id,
                 status,
@@ -965,7 +973,7 @@ impl Runner {
                 name: item.name.clone(),
                 start_time: item.started,
                 watch_path: item.watch.path.clone(),
-                uptime: helpers::format_duration(item.started),
+                uptime,
             });
         }
 
@@ -1110,6 +1118,14 @@ impl ProcessWrapper {
             }
         };
 
+        // Only count uptime when the process is actually running
+        // Crashed or stopped processes should show "0s" uptime
+        let uptime = if process_actually_running {
+            helpers::format_duration(item.started)
+        } else {
+            string!("0s")
+        };
+
         ItemSingle {
             info: Info {
                 status,
@@ -1118,7 +1134,7 @@ impl ProcessWrapper {
                 name: item.name.clone(),
                 path: item.path.clone(),
                 children: item.children.clone(),
-                uptime: helpers::format_duration(item.started),
+                uptime,
                 command: format!(
                     "{} {} '{}'",
                     config.shell,
@@ -1454,6 +1470,9 @@ mod tests {
         }
     }
 
+    // Use a PID value that's unlikely to exist in the test environment
+    const UNLIKELY_PID: i64 = i32::MAX as i64 - 1000;
+
     #[test]
     fn test_environment_variables() {
         let mut runner = setup_test_runner();
@@ -1742,13 +1761,10 @@ mod tests {
         // This test verifies the structure is set up correctly for error handling
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-
-        // Use a very high PID that's unlikely to exist
-        let unlikely_pid = i32::MAX as i64 - 1000;
         
         let process = Process {
             id,
-            pid: unlikely_pid,
+            pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
             name: "test_process".to_string(),
@@ -1786,13 +1802,10 @@ mod tests {
         // Test that processes marked as running but with dead PIDs show as crashed
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-
-        // Use a very high PID that's unlikely to exist
-        let unlikely_pid = i32::MAX as i64 - 1000;
         
         let process = Process {
             id,
-            pid: unlikely_pid,
+            pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
             name: "test_process".to_string(),
@@ -1824,5 +1837,101 @@ mod tests {
         // So status should be "crashed", not "online"
         assert_eq!(processes[0].status, "crashed", 
             "Process with dead PID should show as crashed, not online");
+    }
+
+    #[test]
+    fn test_uptime_not_counted_for_crashed_process() {
+        // Test that crashed processes show "0s" uptime, not accumulated time
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        
+        // Create a process with a start time in the past
+        let past_time = Utc::now() - chrono::Duration::seconds(300); // 5 minutes ago
+        
+        let process = Process {
+            id,
+            pid: UNLIKELY_PID,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_crashed_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello'".to_string(),
+            restarts: 0,
+            running: true, // Marked as running but PID doesn't exist
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: past_time, // Started 5 minutes ago
+            max_memory: 0,
+        };
+
+        runner.list.insert(id, process);
+
+        // Fetch the process list
+        let processes = runner.fetch();
+        assert_eq!(processes.len(), 1, "Should have one process");
+        
+        // The process is marked as running but the PID doesn't exist - it's crashed
+        assert_eq!(processes[0].status, "crashed", 
+            "Process with dead PID should show as crashed");
+        
+        // Uptime should be "0s", not "5m" or similar
+        assert_eq!(processes[0].uptime, "0s",
+            "Crashed process should show 0s uptime, not accumulated time");
+    }
+
+    #[test]
+    fn test_uptime_not_counted_for_stopped_process() {
+        // Test that stopped processes also show "0s" uptime
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        
+        // Create a process with a start time in the past
+        let past_time = Utc::now() - chrono::Duration::seconds(600); // 10 minutes ago
+        
+        let process = Process {
+            id,
+            pid: UNLIKELY_PID,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_stopped_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello'".to_string(),
+            restarts: 0,
+            running: false, // Explicitly stopped
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: past_time, // Started 10 minutes ago
+            max_memory: 0,
+        };
+
+        runner.list.insert(id, process);
+
+        // Fetch the process list
+        let processes = runner.fetch();
+        assert_eq!(processes.len(), 1, "Should have one process");
+        
+        // The process is stopped
+        assert_eq!(processes[0].status, "stopped", 
+            "Process should show as stopped");
+        
+        // Uptime should be "0s", not "10m" or similar
+        assert_eq!(processes[0].uptime, "0s",
+            "Stopped process should show 0s uptime, not accumulated time");
     }
 }
