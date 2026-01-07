@@ -120,8 +120,9 @@ fn restart_process() {
                 let current_crash_value = process.crash.value;
                 let max_restarts = config::read().daemon.restarts;
                 
-                // Check if we should retry (crash.value < max) or give up (crash.value >= max)
-                if current_crash_value < max_restarts {
+                // Check if we should retry (crash.value <= max) or give up (crash.value > max)
+                // Using <= to allow exactly max_restarts attempts (e.g., 10 attempts for max_restarts=10)
+                if current_crash_value <= max_restarts {
                     // RETRY: Attempt restart
                     log!("[daemon] attempting restart", "name" => item.name, "id" => id, 
                          "crashes" => current_crash_value, "max" => max_restarts);
