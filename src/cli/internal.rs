@@ -599,7 +599,7 @@ impl<'i> Internal<'i> {
                     path: format!("{} ", path),
                     log_error: item.logs().error,
                     status: ColoredString(status),
-                    pid: ternary!(item.running, format!("{}", item.pid), string!("n/a")),
+                    pid: ternary!(process_actually_running, format!("{}", item.pid), string!("n/a")),
                     command: format!(
                         "{} {} '{}'",
                         config.shell,
@@ -707,7 +707,7 @@ impl<'i> Internal<'i> {
                     restarts: item.restarts,
                     name: item.name.clone(),
                     pid: ternary!(
-                        item.running,
+                        item.running && !item.crash.crashed,
                         format!("{pid}", pid = item.pid),
                         string!("n/a")
                     ),
@@ -1201,7 +1201,7 @@ impl<'i> Internal<'i> {
                         id: id.to_string().cyan().bold().into(),
                         restarts: format!("{}  ", item.restarts),
                         name: format!("{}   ", item.name.clone()),
-                        pid: ternary!(item.running, format!("{}  ", item.pid), string!("n/a  ")),
+                        pid: ternary!(process_actually_running, format!("{}  ", item.pid), string!("n/a  ")),
                         watch: ternary!(
                             item.watch.enabled,
                             format!("{}  ", item.watch.path),
