@@ -1028,16 +1028,18 @@ impl<'i> Internal<'i> {
 
             // Check if the restart was successful
             if let Some(process) = runner.info(id) {
-                // Verify the process is actually running by checking if the PID exists in /proc
-                let pid_valid = if process.pid > 0 {
+                // Verify the process is actually running by checking if the PID exists
+                // Use the same PID selection logic as the daemon for consistency
+                let pid_to_check = process.shell_pid.unwrap_or(process.pid);
+                let pid_valid = if pid_to_check > 0 {
                     #[cfg(target_os = "linux")]
                     {
-                        std::path::Path::new(&format!("/proc/{}", process.pid)).exists()
+                        std::path::Path::new(&format!("/proc/{}", pid_to_check)).exists()
                     }
                     #[cfg(not(target_os = "linux"))]
                     {
                         // On non-Linux systems, use kill with signal 0
-                        match kill(Pid::from_raw(process.pid as i32), None) {
+                        match kill(Pid::from_raw(pid_to_check as i32), None) {
                             Ok(_) => true,
                             Err(Errno::ESRCH) => false,  // Process doesn't exist
                             Err(_) => true,  // Process exists but we got a permission error or other
