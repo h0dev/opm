@@ -204,8 +204,27 @@ fn restart_process() {
         // Process crashed - handle restart logic
         let max_restarts = config::read().daemon.restarts;
 
-        if item.crash.value >= max_restarts {
-            log!("[daemon] process exceeded max crashes", "name" => item.name, "id" => id, "crashes" => item.crash.value);
+        // Increment crash counter BEFORE checking max_restarts
+        // This is critical: the counter must reflect this crash detection, not just failed restart attempts.
+        // Previously, crash.value was only incremented inside restart() when the restart failed,
+        // and was reset to 0 when restart succeeded. This caused the counter to never accumulate
+        // for processes that crashed immediately after a "successful" restart.
+        // 
+        // For fresh crashes, we need to increment here. For failed_restart (retrying), the counter
+        // was already incremented when the crash was first detected.
+        let current_crash_value = if fresh_crash {
+            runner.new_crash(*id);
+            runner.save();
+            // Get the updated crash value after increment
+            runner.info(*id).map(|p| p.crash.value).unwrap_or(item.crash.value + 1)
+        } else {
+            // For failed_restart retry, use the existing crash value from the snapshot
+            item.crash.value
+        };
+        
+        // Check if we've exceeded max restarts
+        if current_crash_value > max_restarts {
+            log!("[daemon] process exceeded max crashes", "name" => item.name, "id" => id, "crashes" => current_crash_value);
             println!(
                 "{} Process '{}' (id={}) exceeded max crash limit ({}) - stopping",
                 *helpers::FAIL,
@@ -217,27 +236,26 @@ fn restart_process() {
             runner.set_crashed(*id).save();
             continue;
         }
-
-        // Attempt to restart the crashed process
-        // Use the already-computed failed_restart variable to determine if this is a retry
-        if failed_restart {
-            log!("[daemon] retrying failed restart", "name" => item.name, "id" => id, "crashes" => item.crash.value);
-            println!(
-                "{} Retrying restart for process '{}' (id={}) (attempt {}/{})",
-                *helpers::FAIL,
-                item.name,
-                id,
-                item.crash.value + 1,
-                max_restarts
-            );
-        } else {
-            log!("[daemon] attempting restart", "name" => item.name, "id" => id, "crashes" => item.crash.value);
+        
+        // Log the restart attempt
+        if fresh_crash {
+            log!("[daemon] attempting restart", "name" => item.name, "id" => id, "crashes" => current_crash_value);
             println!(
                 "{} Process '{}' (id={}) crashed - attempting restart (attempt {}/{})",
                 *helpers::FAIL,
                 item.name,
                 id,
-                item.crash.value + 1,
+                current_crash_value,
+                max_restarts
+            );
+        } else {
+            log!("[daemon] retrying failed restart", "name" => item.name, "id" => id, "crashes" => current_crash_value);
+            println!(
+                "{} Retrying restart for process '{}' (id={}) (attempt {}/{})",
+                *helpers::FAIL,
+                item.name,
+                id,
+                current_crash_value,
                 max_restarts
             );
         }

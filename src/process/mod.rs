@@ -529,12 +529,15 @@ impl Runner {
             updated_env.extend(dotenv_vars);
             process.env.extend(updated_env);
 
-            // Reset crash counter after successful restart
-            // For manual restarts (dead=false): reset crash counter to give process a fresh start
-            // For crash restarts (dead=true): also reset because the restart succeeded
-            // The crash counter is only incremented in error paths (when directory change fails
-            // or when process_run fails) when restart fails
-            process.crash.value = 0;
+            // Reset crash counter only for manual restarts (dead=false).
+            // For crash restarts (dead=true), keep the counter - it's managed by the daemon
+            // which increments it when a crash is detected and only resets it when the
+            // process runs successfully for some time.
+            // This prevents the counter from being reset prematurely when a process
+            // crashes immediately after a "successful" restart.
+            if !dead {
+                process.crash.value = 0;
+            }
         }
 
         return self;
@@ -642,11 +645,12 @@ impl Runner {
             updated_env.extend(dotenv_vars);
             process.env.extend(updated_env);
 
-            // Reset crash counter after successful reload
-            // A successful reload means the process is running again, so reset the crash counter
-            // The crash counter is only incremented in error paths (when directory change fails
-            // or when process_run fails) when reload fails
-            process.crash.value = 0;
+            // Reset crash counter only for manual reloads (dead=false).
+            // For crash reloads (dead=true), keep the counter - it's managed by the daemon.
+            // Note: In practice, reload() is always called with dead=false.
+            if !dead {
+                process.crash.value = 0;
+            }
 
             // Now stop the old process after the new one is running
             kill_children(old_children);
