@@ -289,7 +289,10 @@ fn load_dotenv(path: &PathBuf) -> BTreeMap<String, String> {
 
 /// Check if a process with the given PID is alive
 /// Uses libc::kill with signal 0 to check process existence without sending a signal
-/// PID 0 is never considered alive as it's used to indicate "no valid PID"
+/// PID <= 0 is never considered alive:
+/// - PID 0 signals all processes in the current process group
+/// - Negative PIDs signal process groups
+/// - These are not valid individual process IDs
 pub fn is_pid_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
@@ -1284,7 +1287,8 @@ pub fn get_process_memory_with_children(pid: i64) -> Option<MemoryInfo> {
 /// Stop the process
 pub fn process_stop(pid: i64) -> Result<(), String> {
     // Don't attempt to stop invalid PIDs
-    // PID 0 has special meaning (process group) and would kill the daemon
+    // PID 0 sends signal to all processes in current process group (would kill daemon)
+    // Negative PIDs send signal to process groups
     if pid <= 0 {
         return Ok(());
     }
