@@ -216,13 +216,23 @@ fn restart_process() {
             runner.new_crash(*id);
             runner.save();
             // Get the updated crash value after increment
-            runner.info(*id).map(|p| p.crash.value).unwrap_or(item.crash.value + 1)
+            // If runner.info fails (unlikely but possible edge case), fall back to estimated value
+            match runner.info(*id) {
+                Some(p) => p.crash.value,
+                None => {
+                    log!("[daemon] warning: could not read updated crash value", "id" => id);
+                    item.crash.value + 1
+                }
+            }
         } else {
             // For failed_restart retry, use the existing crash value from the snapshot
             item.crash.value
         };
         
         // Check if we've exceeded max restarts
+        // We use > because current_crash_value was just incremented for this crash.
+        // If max_restarts=10: crashes 1-10 give values 1-10 which pass (1-10 > 10 is false),
+        // crash 11 gives value 11 which fails (11 > 10 is true), so we get exactly 10 restart attempts.
         if current_crash_value > max_restarts {
             log!("[daemon] process exceeded max crashes", "name" => item.name, "id" => id, "crashes" => current_crash_value);
             println!(
