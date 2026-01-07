@@ -18,16 +18,20 @@ impl Logger {
 
     pub fn write(&mut self, message: &str) {
         log::info!("{message}");
-        writeln!(
+        // Ignore write errors to prevent daemon crashes when log file is inaccessible
+        let _ = writeln!(
             &mut self.file,
             "[{}] {}",
             Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
             message
-        )
-        .unwrap()
+        );
     }
 }
 
 #[macro_export]
-macro_rules! log {($($arg:tt)*) =>
-    { log::Logger::new().unwrap().write(format!($($arg)*).as_str()) }}
+macro_rules! log {($($arg:tt)*) => {
+    // Ignore logging errors to prevent daemon crashes when log file is inaccessible
+    if let Ok(mut logger) = log::Logger::new() {
+        logger.write(format!($($arg)*).as_str())
+    }
+}}

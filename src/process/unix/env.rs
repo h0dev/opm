@@ -8,7 +8,9 @@ pub struct Vars {
 impl Iterator for Vars {
     type Item = String;
     fn next(&mut self) -> Option<String> {
-        self.inner.next().map(|var| var.into_string().unwrap())
+        // Handle invalid UTF-8 in environment variables gracefully
+        // to prevent daemon crashes in daemonized environments
+        self.inner.next().and_then(|var| var.into_string().ok())
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.inner.size_hint()
