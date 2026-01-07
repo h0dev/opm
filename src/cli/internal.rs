@@ -1055,6 +1055,9 @@ impl<'i> Internal<'i> {
                     id
                 );
                 log!("Failed to restore process '{}' (id={}) - process not found", name, id);
+                // Mark process as crashed so daemon can pick it up for auto-restart
+                runner.set_crashed(id);
+                runner.save();
             }
         }
 
