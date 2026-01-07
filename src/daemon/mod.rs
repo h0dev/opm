@@ -96,18 +96,19 @@ fn restart_process() {
             }
         }
 
-        // Skip processes with invalid PID (0 or negative)
-        if item.pid <= 0 {
-            continue;
-        }
+        // Check if process is alive
+        // - If PID <= 0, the process is definitively not alive (no valid PID)
+        // - Otherwise, check using is_pid_alive()
+        let process_alive = item.pid > 0 && opm::process::is_pid_alive(item.pid);
         
-        // Simple check if process is alive using the PID
-        let process_alive = opm::process::is_pid_alive(item.pid);
-        
-        // If process is dead, reset PID immediately (CRITICAL per requirements)
+        // If process is dead, handle crash/restart logic
         if !process_alive {
             let process = runner.process(*id);
-            process.pid = 0;  // Set to 0 to indicate no valid PID
+            
+            // Reset PID to 0 if it wasn't already
+            if item.pid > 0 {
+                process.pid = 0;  // Set to 0 to indicate no valid PID
+            }
             
             // Only handle crash/restart logic if process was supposed to be running
             if item.running {
