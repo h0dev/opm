@@ -972,10 +972,12 @@ impl<'i> Internal<'i> {
         let mut restored_ids = Vec::new();
         let mut failed_ids = Vec::new();
 
+        // Only restore processes that were marked as running in the dump file
+        // Do NOT restore processes that were stopped (running == false)
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
             .filter_map(|(id, p)| {
-                if p.running || p.crash.crashed {
+                if p.running {
                     Some((*id, p.name.clone(), p.running, p.crash.crashed))
                 } else {
                     None

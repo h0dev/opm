@@ -96,217 +96,114 @@ fn restart_process() {
             }
         }
 
-        // Determine if we should attempt to restart this process
-        let process_running = pid::running(item.pid as i32);
-        
-        // Check if process was recently started (within grace period)
-        // This prevents false crash detection when shell processes haven't spawned children yet
-        // Only apply grace period on initial start (not restarts) to avoid blocking crash detection
-        let now = Utc::now();
-        let seconds_since_start = (now - item.started).num_seconds();
-        // Note: crash.value tracks failed restarts, restarts tracks all restart attempts
-        // Both should be 0 only on the very first start before any crashes
-        let is_initial_start = item.crash.value == 0 && item.restarts == 0;
-        let recently_started = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
-        
-        // Check if we can actually read process stats (CPU, memory, etc.)
-        // If Process::new_fast() fails, it means the process is dead/inaccessible
-        // even if pid::running() returns true (e.g., zombie, PID reused, permission issue)
-        // Use the same PID selection logic as memory monitoring (line 58)
-        let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-        let mut process_readable = false;
-        
-        if process_running {
-            // Try to create a process handle and check its readability
-            if let Ok(process) = Process::new_fast(pid_for_monitoring as u32) {
-                // Process handle created successfully
-                // Additional check: detect zombie processes or PIDs that were reused
-                // by checking if memory info is completely unreadable (not just zero, but truly unreadable).
-                // Note: We do NOT check CPU usage here, as 0% CPU is legitimate for idle processes.
-                // Only check memory readability for processes marked as running and outside the grace period.
-                if item.running && !recently_started {
-                    // If memory_info() fails, the process is likely a zombie or PID was reused
-                    process_readable = process.memory_info().is_ok();
-                } else {
-                    // Within grace period or not marked as running - assume readable
-                    process_readable = true;
-                }
-            }
+        // Skip processes with invalid PID (0 or negative)
+        if item.pid <= 0 {
+            continue;
         }
         
-        // Determine if the child process is alive
-        // For processes started through a shell (e.g., /bin/sh -c 'command'), we need to check
-        // if the actual child process is still alive, not just the shell wrapper.
-        // When a child process crashes immediately, get_actual_child_pid may fall back to returning 
-        // the shell PID. The shell remains alive even after its child exits, so we need to 
-        // verify that it still has children.
-        // 
-        // We already computed current children above with process_find_children()
-        let child_process_alive = if !process_running || !process_readable {
-            // Process itself is dead (PID not running or not readable) - definitely crashed
-            false
-        } else if item.shell_pid.is_some() {
-            // This is a shell-spawned process - check if the shell still has children
-            // If the shell has no children, the actual process has crashed
-            // Note: We allow one daemon check cycle for the shell to spawn children
-            // on the very first start to avoid false positives
-            let very_early_start = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
-            !children.is_empty() || very_early_start
-        } else {
-            // Not a shell-spawned process (or shell_pid wasn't detected)
-            // If the stored PID is actually a shell that lost its child, it would have no children
-            // We need to detect this case to catch immediately-crashing processes where
-            // get_actual_child_pid fell back to the shell PID but didn't set shell_pid
-            //
-            // If process has no children, it might be:
-            // 1. A simple process that doesn't spawn children (normal) - stays alive
-            // 2. A shell whose child crashed (problem) - shell stays alive but orphaned
-            // 
-            // To distinguish between these cases:
-            // - If we previously saw children but now there are none: definitely crashed
-            // - If we never saw children and we're past the grace period on initial start: 
-            //   treat as crashed to catch immediately-crashing shell processes
-            // - Otherwise (has children, or within grace period, or not initial start): alive
-            let very_early_start = is_initial_start && seconds_since_start < STARTUP_GRACE_PERIOD_SECS;
-            if children.is_empty() {
-                if !item.children.is_empty() {
-                    // Process previously had children but now doesn't - definitely crashed
-                    false
-                } else if !very_early_start {
-                    // Never had children and past grace period
-                    // Treat as crashed to catch immediately-crashing processes
-                    // This applies both to initial starts and restarts
-                    // Legitimate processes that don't spawn children are caught by process_running check
-                    false
+        // Simple check if process is alive using the PID
+        let process_alive = opm::process::is_pid_alive(item.pid);
+        
+        // If process is dead, reset PID immediately (CRITICAL per requirements)
+        if !process_alive {
+            let process = runner.process(*id);
+            process.pid = 0;  // Set to 0 to indicate no valid PID
+            
+            // Only handle crash/restart logic if process was supposed to be running
+            if item.running {
+                // Process was supposed to be running but is dead - this is a crash
+                log!("[daemon] detected crash", "name" => item.name, "id" => id, "pid" => item.pid);
+                
+                // Increment consecutive crash counter immediately
+                process.crash.value += 1;
+                
+                let current_crash_value = process.crash.value;
+                let max_restarts = config::read().daemon.restarts;
+                
+                // Check if we should retry (crash.value < max) or give up (crash.value >= max)
+                if current_crash_value < max_restarts {
+                    // RETRY: Attempt restart
+                    log!("[daemon] attempting restart", "name" => item.name, "id" => id, 
+                         "crashes" => current_crash_value, "max" => max_restarts);
+                    println!(
+                        "{} Process '{}' (id={}) crashed - attempting restart (attempt {}/{})",
+                        *helpers::FAIL,
+                        item.name,
+                        id,
+                        current_crash_value,
+                        max_restarts
+                    );
+                    
+                    // Save state with updated crash counter
+                    runner.save();
+                    
+                    // Attempt to restart the crashed process
+                    // Wrap in catch_unwind to prevent daemon crashes from panics in restart logic
+                    // Pass dead=true so restart() knows this is a crash restart
+                    // restart() will increment restarts counter and handle the restart logic
+                    let restart_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                        runner.restart(*id, true);
+                        runner.save();
+                    }));
+                    
+                    if let Err(panic_info) = restart_result {
+                        log!("[daemon] restart panicked", "name" => item.name, "id" => id);
+                        eprintln!("{} Restart panicked for process '{}' (id={}): {:?}", 
+                                  *helpers::FAIL, item.name, id, panic_info);
+                        // Mark as crashed for retry on next cycle
+                        let mut runner = Runner::new();
+                        runner.set_crashed(*id).save();
+                        continue;
+                    }
+                    
+                    // Check if restart succeeded
+                    let restarted_runner = Runner::new();
+                    if let Some(restarted_process) = restarted_runner.info(*id) {
+                        if restarted_process.running && opm::process::is_pid_alive(restarted_process.pid) {
+                            log!("[daemon] restarted successfully", "name" => item.name, "id" => id, 
+                                 "new_pid" => restarted_process.pid);
+                            println!(
+                                "{} Successfully restarted process '{}' (id={})",
+                                *helpers::SUCCESS,
+                                item.name,
+                                id
+                            );
+                        } else {
+                            log!("[daemon] restart failed - process not running", "name" => item.name, "id" => id);
+                            println!(
+                                "{} Failed to restart process '{}' (id={}) - process not running",
+                                *helpers::FAIL,
+                                item.name,
+                                id
+                            );
+                            // Mark as crashed for retry on next cycle
+                            let mut runner = Runner::new();
+                            runner.set_crashed(*id).save();
+                        }
+                    }
                 } else {
-                    // Within grace period on initial start - give process time to spawn children
-                    true
+                    // GIVE UP: Max restarts reached
+                    log!("[daemon] max restarts reached", "name" => item.name, "id" => id, 
+                         "crashes" => current_crash_value);
+                    println!(
+                        "{} Process '{}' (id={}) exceeded max crash limit ({}) - stopping",
+                        *helpers::FAIL,
+                        item.name,
+                        id,
+                        max_restarts
+                    );
+                    
+                    // Set running to false and mark as crashed
+                    process.running = false;
+                    process.crash.crashed = true;
+                    // Reset crash counter for next manual start (as per requirements)
+                    process.crash.value = 0;
+                    
+                    runner.save();
                 }
             } else {
-                // Has children - definitely alive
-                true
-            }
-        };
-        
-        // We should restart if:
-        // 1. Process is marked as running but the actual process is not alive (fresh crash)
-        let fresh_crash = item.running && !child_process_alive;
-        // 2. OR process is marked as crashed and not running (failed previous restart attempt that should be retried)
-        let failed_restart = item.crash.crashed && !item.running;
-        
-        let should_restart = fresh_crash || failed_restart;
-        
-        // Skip if process doesn't need restarting
-        if !should_restart {
-            continue;
-        }
-
-        // Process crashed - handle restart logic
-        let max_restarts = config::read().daemon.restarts;
-
-        // Increment crash counter BEFORE checking max_restarts
-        // This is critical: the counter must reflect this crash detection, not just failed restart attempts.
-        // Previously, crash.value was only incremented inside restart() when the restart failed,
-        // and was reset to 0 when restart succeeded. This caused the counter to never accumulate
-        // for processes that crashed immediately after a "successful" restart.
-        // 
-        // For fresh crashes, we need to increment here. For failed_restart (retrying), the counter
-        // was already incremented when the crash was first detected.
-        let current_crash_value = if fresh_crash {
-            runner.new_crash(*id);
-            runner.save();
-            // Get the updated crash value after increment
-            // If runner.info fails (unlikely but possible edge case), fall back to estimated value
-            match runner.info(*id) {
-                Some(p) => p.crash.value,
-                None => {
-                    log!("[daemon] warning: could not read updated crash value", "id" => id);
-                    item.crash.value + 1
-                }
-            }
-        } else {
-            // For failed_restart retry, use the existing crash value from the snapshot
-            item.crash.value
-        };
-        
-        // Check if we've exceeded max restarts
-        // We use > because current_crash_value was just incremented for this crash.
-        // If max_restarts=10: crashes 1-10 give values 1-10 which pass (1-10 > 10 is false),
-        // crash 11 gives value 11 which fails (11 > 10 is true), so we get exactly 10 restart attempts.
-        if current_crash_value > max_restarts {
-            log!("[daemon] process exceeded max crashes", "name" => item.name, "id" => id, "crashes" => current_crash_value);
-            println!(
-                "{} Process '{}' (id={}) exceeded max crash limit ({}) - stopping",
-                *helpers::FAIL,
-                item.name,
-                id,
-                max_restarts
-            );
-            runner.stop(*id);
-            runner.set_crashed(*id).save();
-            continue;
-        }
-        
-        // Log the restart attempt
-        if fresh_crash {
-            log!("[daemon] attempting restart", "name" => item.name, "id" => id, "crashes" => current_crash_value);
-            println!(
-                "{} Process '{}' (id={}) crashed - attempting restart (attempt {}/{})",
-                *helpers::FAIL,
-                item.name,
-                id,
-                current_crash_value,
-                max_restarts
-            );
-        } else {
-            log!("[daemon] retrying failed restart", "name" => item.name, "id" => id, "crashes" => current_crash_value);
-            println!(
-                "{} Retrying restart for process '{}' (id={}) (attempt {}/{})",
-                *helpers::FAIL,
-                item.name,
-                id,
-                current_crash_value,
-                max_restarts
-            );
-        }
-        
-        // Attempt to restart the crashed process
-        // Wrap in catch_unwind to prevent daemon crashes from panics in restart logic
-        let restart_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            runner.restart(*id, true);
-            runner.save();
-        }));
-        
-        if let Err(panic_info) = restart_result {
-            log!("[daemon] restart panicked", "name" => item.name, "id" => id);
-            eprintln!("{} Restart panicked for process '{}' (id={}): {:?}", *helpers::FAIL, item.name, id, panic_info);
-            // Mark the process as crashed so it can be retried on the next daemon cycle
-            let mut runner = Runner::new();
-            runner.set_crashed(*id).save();
-            continue;
-        }
-        
-        // Reload runner from disk to get the updated state after restart
-        // This is necessary because we're iterating over a snapshot and the restart
-        // operation updates the saved state on disk
-        let restarted_runner = Runner::new();
-        if let Some(restarted_process) = restarted_runner.info(*id) {
-            if restarted_process.running {
-                log!("[daemon] restarted successfully", "name" => item.name, "id" => id, "crashes" => item.crash.value + 1);
-                println!(
-                    "{} Successfully restarted process '{}' (id={})",
-                    *helpers::SUCCESS,
-                    item.name,
-                    id
-                );
-            } else {
-                log!("[daemon] restart failed - process not running", "name" => item.name, "id" => id);
-                println!(
-                    "{} Failed to restart process '{}' (id={}) - process not running",
-                    *helpers::FAIL,
-                    item.name,
-                    id
-                );
+                // Process was already stopped, just update PID
+                runner.save();
             }
         }
     }
