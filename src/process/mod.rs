@@ -753,7 +753,9 @@ impl Runner {
     }
 
     pub fn set_crashed(&mut self, id: usize) -> &mut Self {
-        self.process(id).crash.crashed = true;
+        let process = self.process(id);
+        process.crash.crashed = true;
+        process.running = false;
         return self;
     }
 
@@ -1933,5 +1935,52 @@ mod tests {
         // Uptime should be "0s", not "10m" or similar
         assert_eq!(processes[0].uptime, "0s",
             "Stopped process should show 0s uptime, not accumulated time");
+    }
+
+    #[test]
+    fn test_set_crashed_marks_process_not_running() {
+        // Test that set_crashed sets both crashed=true and running=false
+        // This is critical for daemon auto-restart to work properly
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        
+        let process = Process {
+            id,
+            pid: 12345,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello'".to_string(),
+            restarts: 0,
+            running: true, // Start as running
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+        };
+
+        runner.list.insert(id, process);
+        
+        // Verify initial state
+        let process = runner.info(id).unwrap();
+        assert_eq!(process.running, true, "Process should start as running");
+        assert_eq!(process.crash.crashed, false, "Process should start as not crashed");
+
+        // Call set_crashed
+        runner.set_crashed(id);
+
+        // Verify that both running and crashed are set correctly
+        let process = runner.info(id).unwrap();
+        assert_eq!(process.crash.crashed, true, "Process should be marked as crashed");
+        assert_eq!(process.running, false, "Process should be marked as not running");
     }
 }
