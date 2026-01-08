@@ -2204,4 +2204,58 @@ mod tests {
         assert_eq!(runner.info(id).unwrap().restarts, 6, 
             "Reload should increment counter from 5 to 6");
     }
+
+    #[test]
+    fn test_process_marked_as_crashed_immediately() {
+        // Test that when a process crashes, it's marked as crashed immediately
+        // without automatic restart attempts (the fix for auto-restart logic)
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        
+        let process = Process {
+            id,
+            pid: UNLIKELY_PID,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_immediate_crash".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'test'".to_string(),
+            restarts: 0, // No restarts yet
+            running: true, // Process was running
+            crash: Crash {
+                crashed: false, // Not yet marked as crashed
+                value: 0, // No crashes yet
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+        };
+        
+        runner.list.insert(id, process);
+        
+        // Simulate what the daemon does when it detects a crash
+        // (without automatic restart)
+        let proc = runner.process(id);
+        proc.crash.value += 1; // Increment crash counter
+        proc.running = false; // Mark as not running
+        proc.crash.crashed = true; // Mark as crashed
+        
+        // Verify the process is now marked as crashed
+        let info = runner.info(id).unwrap();
+        assert_eq!(info.crash.crashed, true, "Process should be marked as crashed");
+        assert_eq!(info.running, false, "Process should not be running");
+        assert_eq!(info.crash.value, 1, "Crash counter should be 1");
+        assert_eq!(info.restarts, 0, "No automatic restarts should have occurred");
+        
+        // Verify status shows as "crashed"
+        let processes = runner.fetch();
+        let crashed_process = processes.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(crashed_process.status, "crashed", 
+            "Status should be 'crashed' for process with crash.crashed=true");
+    }
 }
