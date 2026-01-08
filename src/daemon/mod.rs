@@ -286,27 +286,34 @@ pub fn health(format: &String) {
     }
 
     if pid::exists() {
-        if let Ok(process_id) = pid::read() {
-            // Check if the process is actually running before trying to get its information
-            if pid::running(process_id.get::<i32>()) {
-                daemon_running = true;
-                // Always set PID and uptime if daemon is running
-                pid = Some(process_id.get::<i32>());
-                uptime = pid::uptime().ok();
-                
-                // Try to get process stats (may fail for detached processes)
-                #[cfg(any(target_os = "linux", target_os = "macos"))]
-                {
-                    if let Ok(process) = Process::new(process_id.get::<u32>()) {
-                        memory_usage = process.memory_info().ok().map(MemoryInfo::from);
-                        cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
-                            &process,
-                            process_id.get::<i64>(),
-                        ));
+        match pid::read() {
+            Ok(process_id) => {
+                // Check if the process is actually running before trying to get its information
+                if pid::running(process_id.get::<i32>()) {
+                    daemon_running = true;
+                    // Always set PID and uptime if daemon is running
+                    pid = Some(process_id.get::<i32>());
+                    uptime = pid::uptime().ok();
+                    
+                    // Try to get process stats (may fail for detached processes)
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    {
+                        if let Ok(process) = Process::new(process_id.get::<u32>()) {
+                            memory_usage = process.memory_info().ok().map(MemoryInfo::from);
+                            cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
+                                &process,
+                                process_id.get::<i64>(),
+                            ));
+                        }
                     }
+                } else {
+                    // Process is not running, remove stale PID file
+                    pid::remove();
                 }
-            } else {
-                // Process is not running, remove stale PID file
+            }
+            Err(err) => {
+                // PID file exists but can't be read (corrupted or invalid)
+                log!("[daemon] health check found corrupted PID file, removing", "error" => err);
                 pid::remove();
             }
         }
@@ -391,7 +398,13 @@ pub fn stop() {
                 log!("[daemon] stopped", "pid" => pid);
                 println!("{} OPM daemon stopped", *helpers::SUCCESS);
             }
-            Err(err) => crashln!("{} Failed to read PID file: {}", *helpers::FAIL, err),
+            Err(err) => {
+                // PID file exists but can't be read (corrupted or invalid)
+                log!("[daemon] removing corrupted PID file", "error" => err);
+                println!("{} PID file is corrupted, removing it", *helpers::SUCCESS);
+                pid::remove();
+                println!("{} OPM daemon stopped", *helpers::SUCCESS);
+            }
         }
     } else {
         crashln!("{} The daemon is not running", *helpers::FAIL)
@@ -407,8 +420,22 @@ pub fn start(verbose: bool) {
 
     if pid::exists() {
         match pid::read() {
-            Ok(pid) => then!(!pid::running(pid.get()), pid::remove()),
-            Err(_) => crashln!("{} The daemon is already running", *helpers::FAIL),
+            Ok(pid) => {
+                if pid::running(pid.get()) {
+                    // Daemon is actually running
+                    crashln!("{} The daemon is already running", *helpers::FAIL);
+                } else {
+                    // Stale PID file - process not running
+                    log!("[daemon] removing stale PID file", "pid" => pid.get::<i32>());
+                    pid::remove();
+                }
+            }
+            Err(err) => {
+                // PID file exists but can't be read (corrupted or invalid)
+                log!("[daemon] removing corrupted PID file", "error" => err);
+                println!("{} Removing corrupted PID file", *helpers::SUCCESS);
+                pid::remove();
+            }
         }
     }
 
