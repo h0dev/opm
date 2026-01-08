@@ -101,6 +101,24 @@ fn restart_process() {
         // - Otherwise, check using is_pid_alive()
         let process_alive = item.pid > 0 && opm::process::is_pid_alive(item.pid);
         
+        // If process is alive and has been running successfully, reset crash counter
+        // This allows processes to recover from previous crashes if they stay online
+        if process_alive && item.running && item.crash.value > 0 {
+            // Check if process has been running for at least the grace period
+            let uptime_secs = (Utc::now() - item.started).num_seconds();
+            if uptime_secs >= STARTUP_GRACE_PERIOD_SECS {
+                // Process has been stable - reset crash counter
+                log!("[daemon] process stable - resetting crash counter", 
+                     "name" => item.name, "id" => id, "uptime_secs" => uptime_secs);
+                if runner.exists(*id) {
+                    let process = runner.process(*id);
+                    process.crash.value = 0;
+                    process.crash.crashed = false;
+                    runner.save();
+                }
+            }
+        }
+        
         // If process is dead, handle crash/restart logic
         if !process_alive {
             let process = runner.process(*id);
@@ -152,9 +170,8 @@ fn restart_process() {
                         log!("[daemon] restart panicked", "name" => item.name, "id" => id);
                         eprintln!("{} Restart panicked for process '{}' (id={}): {:?}", 
                                   *helpers::FAIL, item.name, id, panic_info);
-                        // Mark as crashed for retry on next cycle
-                        let mut runner = Runner::new();
-                        runner.set_crashed(*id).save();
+                        // Don't call set_crashed() - keep running=true so daemon retries on next cycle
+                        // The crash counter was already incremented above, so it will eventually hit max
                         continue;
                     }
                     
@@ -178,9 +195,8 @@ fn restart_process() {
                                 item.name,
                                 id
                             );
-                            // Mark as crashed for retry on next cycle
-                            let mut runner = Runner::new();
-                            runner.set_crashed(*id).save();
+                            // Don't call set_crashed() - keep running=true so daemon retries on next cycle
+                            // The crash counter was already incremented above, so it will eventually hit max
                         }
                     }
                 } else {

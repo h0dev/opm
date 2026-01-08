@@ -450,6 +450,11 @@ impl Runner {
                 path, script, name, ..
             } = process.clone();
 
+            // Save the current working directory so we can restore it after restart
+            // This is critical for the daemon - changing the working directory affects the daemon process
+            // and can cause it to crash when trying to access its own files
+            let original_dir = std::env::current_dir().ok();
+
             // Increment restart counter at the beginning of restart attempt
             // This ensures the counter reflects that a restart was attempted,
             // even if the restart fails partway through.
@@ -469,10 +474,19 @@ impl Runner {
             }
 
             if let Err(err) = std::env::set_current_dir(&path) {
-                process.running = false;
+                // Restore working directory before returning
+                if let Some(ref dir) = original_dir {
+                    let _ = std::env::set_current_dir(dir);
+                }
+                
+                // When dead=true (crash restart), keep running=true so daemon will retry on next cycle
+                // When dead=false (manual restart), set running=false to stop retrying until user manually restarts
+                if !dead {
+                    process.running = false;
+                }
                 process.children = vec![];
                 process.crash.crashed = true;
-                then!(dead, process.crash.value += 1);
+                // Don't increment crash.value here - the daemon already incremented it before calling restart
                 log::error!("Failed to set working directory {:?} for process {} during restart: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
@@ -514,10 +528,19 @@ impl Runner {
             }) {
                 Ok(result) => result,
                 Err(err) => {
-                    process.running = false;
+                    // Restore working directory before returning
+                    if let Some(ref dir) = original_dir {
+                        let _ = std::env::set_current_dir(dir);
+                    }
+                    
+                    // When dead=true (crash restart), keep running=true so daemon will retry on next cycle
+                    // When dead=false (manual restart), set running=false to stop retrying until user manually restarts
+                    if !dead {
+                        process.running = false;
+                    }
                     process.children = vec![];
                     process.crash.crashed = true;
-                    then!(dead, process.crash.value += 1);
+                    // Don't increment crash.value here - the daemon already incremented it before calling restart
                     log::error!("Failed to restart process '{}' (id={}): {}", name, id, err);
                     println!("{} Failed to restart process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
                     return self;
@@ -544,6 +567,13 @@ impl Runner {
             // crashes immediately after a "successful" restart.
             if !dead {
                 process.crash.value = 0;
+            }
+            
+            // Restore the original working directory to avoid affecting the daemon
+            if let Some(dir) = original_dir {
+                if let Err(err) = std::env::set_current_dir(&dir) {
+                    log::warn!("Failed to restore working directory after restart: {}", err);
+                }
             }
         }
 
@@ -572,6 +602,9 @@ impl Runner {
                 ..
             } = process.clone();
 
+            // Save the current working directory so we can restore it after reload
+            let original_dir = std::env::current_dir().ok();
+
             // Increment restart counter at the beginning of reload attempt
             // This ensures the counter reflects that a reload was attempted,
             // even if the reload fails partway through.
@@ -579,10 +612,19 @@ impl Runner {
             process.restarts += 1;
 
             if let Err(err) = std::env::set_current_dir(&path) {
-                process.running = false;
+                // Restore working directory before returning
+                if let Some(ref dir) = original_dir {
+                    let _ = std::env::set_current_dir(dir);
+                }
+                
+                // When dead=true (crash reload), keep running=true so daemon will retry on next cycle
+                // When dead=false (manual reload), set running=false to stop retrying until user manually reloads
+                if !dead {
+                    process.running = false;
+                }
                 process.children = vec![];
                 process.crash.crashed = true;
-                then!(dead, process.crash.value += 1);
+                // Don't increment crash.value here - the daemon already incremented it before calling reload
                 log::error!("Failed to set working directory {:?} for process {} during reload: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
@@ -624,10 +666,19 @@ impl Runner {
             }) {
                 Ok(result) => result,
                 Err(err) => {
-                    process.running = false;
+                    // Restore working directory before returning
+                    if let Some(ref dir) = original_dir {
+                        let _ = std::env::set_current_dir(dir);
+                    }
+                    
+                    // When dead=true (crash reload), keep running=true so daemon will retry on next cycle
+                    // When dead=false (manual reload), set running=false to stop retrying until user manually reloads
+                    if !dead {
+                        process.running = false;
+                    }
                     process.children = vec![];
                     process.crash.crashed = true;
-                    then!(dead, process.crash.value += 1);
+                    // Don't increment crash.value here - the daemon already incremented it before calling reload
                     log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
                     println!("{} Failed to reload process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
                     return self;
@@ -667,6 +718,13 @@ impl Runner {
             // Wait for old process to fully terminate to release any held resources
             if !wait_for_process_termination(old_pid) {
                 log::warn!("Old process {} did not terminate within timeout during reload", old_pid);
+            }
+            
+            // Restore the original working directory
+            if let Some(dir) = original_dir {
+                if let Err(err) = std::env::set_current_dir(&dir) {
+                    log::warn!("Failed to restore working directory after reload: {}", err);
+                }
             }
         }
 
