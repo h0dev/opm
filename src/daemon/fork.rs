@@ -47,7 +47,7 @@ pub fn close_fd() -> Result<i32, i32> {
 
 pub fn daemon(nochdir: bool, noclose: bool) -> Result<Fork, i32> {
     match fork() {
-        Ok(Fork::Parent(_)) => exit(0),
+        Ok(Fork::Parent(pid)) => Ok(Fork::Parent(pid)),
         Ok(Fork::Child) => setsid().and_then(|_| {
             if !nochdir {
                 chdir()?;
@@ -55,7 +55,11 @@ pub fn daemon(nochdir: bool, noclose: bool) -> Result<Fork, i32> {
             if !noclose {
                 close_fd()?;
             }
-            fork()
+            match fork() {
+                Ok(Fork::Parent(_)) => exit(0),
+                Ok(Fork::Child) => Ok(Fork::Child),
+                Err(n) => Err(n),
+            }
         }),
         Err(n) => Err(n),
     }
