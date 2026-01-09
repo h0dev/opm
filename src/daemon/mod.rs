@@ -122,38 +122,39 @@ fn restart_process() {
         
         // If process is dead, handle crash/restart logic
         if !process_alive {
-            let process = runner.process(*id);
-            
             // Reset PID to 0 if it wasn't already
             if item.pid > 0 {
+                let process = runner.process(*id);
                 process.pid = 0;  // Set to 0 to indicate no valid PID
             }
             
             // Only handle crash/restart logic if process was supposed to be running
             if item.running {
                 // Process was supposed to be running but is dead - this is a crash
-                log!("[daemon] detected crash - stopping daemon", "name" => item.name, "id" => id, "pid" => item.pid);
+                log!("[daemon] detected crash", "name" => item.name, "id" => id, "pid" => item.pid);
                 
-                // Increment consecutive crash counter
-                process.crash.value += 1;
-                process.crash.crashed = true;
-                process.running = false;
+                // Get crash count before modifying
+                let crash_count = {
+                    let process = runner.process(*id);
+                    // Increment consecutive crash counter
+                    process.crash.value += 1;
+                    process.crash.crashed = true;
+                    process.running = false;
+                    process.crash.value
+                };
                 
                 // Save state with updated crash information
                 runner.save();
                 
                 println!(
-                    "{} Process '{}' (id={}) crashed - stopping daemon",
+                    "{} Process '{}' (id={}) crashed (crash count: {})",
                     *helpers::FAIL,
                     item.name,
-                    id
+                    id,
+                    crash_count
                 );
                 
-                // Stop the daemon by removing PID file and exiting
-                pid::remove();
-                log!("[daemon] stopped due to process crash", "pid" => process::id());
-                // Use standard exit to allow proper cleanup and destructors to run
-                process::exit(1);
+                log!("[daemon] process crashed, continuing to monitor other processes", "name" => item.name, "id" => id, "crash_count" => crash_count);
             } else {
                 // Process was already stopped (running=false), just update PID
                 // This can happen if:
