@@ -409,7 +409,7 @@ pub fn start(verbose: bool) {
             global!("opm.daemon.kind")
         );
     }
-    match daemon(false, verbose) {
+    match daemon(false, false) {
         Ok(Fork::Parent(_)) => {
             // Wait for the daemon child to write its PID file and start running
             // This prevents race conditions where health checks immediately after start show "stopped"
