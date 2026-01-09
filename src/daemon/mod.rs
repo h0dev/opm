@@ -46,6 +46,10 @@ extern "C" fn handle_sigpipe(_: libc::c_int) {
 }
 
 fn restart_process() {
+    // Read config once per cycle for efficiency
+    let config = config::read();
+    let max_restarts = config.daemon.restarts;
+    
     for (id, item) in Runner::new().items_mut() {
         let mut runner = Runner::new();
         let children = opm::process::process_find_children(item.pid);
@@ -130,9 +134,6 @@ fn restart_process() {
             
             // Only handle crash/restart logic if process was supposed to be running
             if item.running {
-                let config = config::read().daemon;
-                let max_restarts = config.restarts;
-                
                 // Get crash count before modifying
                 let crash_count = {
                     let process = runner.process(*id);
@@ -148,8 +149,8 @@ fn restart_process() {
                     log!("[daemon] process crashed - attempting restart", "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => max_restarts);
                     
                     // Keep running=true so the process can be restarted
-                    // Call restart with dead=true to indicate this is a crash restart
-                    runner.restart(*id, true, true);
+                    // Call restart with dead=true (crash restart) and increment_counter=true (count this restart)
+                    runner.restart(*id, /* dead= */ true, /* increment_counter= */ true);
                     runner.save();
                     
                     log!("[daemon] restart attempt complete", "name" => item.name, "id" => id);
