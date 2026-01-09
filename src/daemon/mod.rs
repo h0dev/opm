@@ -102,7 +102,7 @@ fn restart_process() {
                 opm::process::get_process_memory_with_children(pid_for_monitoring)
             {
                 if memory_info.rss > item.max_memory {
-                    log!("[daemon] memory limit exceeded", "name" => &item.name, "id" => id, 
+                    log!("[daemon] memory limit exceeded", "name" => item.name, "id" => id, 
                          "memory" => memory_info.rss, "limit" => item.max_memory);
                     println!(
                         "{} Process ({}) exceeded memory limit: {} > {} - stopping process",
@@ -124,10 +124,10 @@ fn restart_process() {
             let hash = hash::create(path);
 
             if hash != item.watch.hash {
-                log!("[daemon] watch triggered reload", "name" => &item.name, "id" => id);
+                log!("[daemon] watch triggered reload", "name" => item.name, "id" => id);
                 runner.restart(id, false, true);  // Watch reload should increment counter
                 runner.save();
-                log!("[daemon] watch reload complete", "name" => &item.name, "id" => id);
+                log!("[daemon] watch reload complete", "name" => item.name, "id" => id);
                 continue;
             }
         }
@@ -188,23 +188,23 @@ fn restart_process() {
                         let process = runner.process(id);
                         process.running = false;
                         log!("[daemon] process exceeded max crash limit", 
-                             "name" => &item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
+                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
                     } else {
                         // Still within crash limit - mark as crashed and save
                         // Next daemon cycle will restart it
                         log!("[daemon] process crashed", 
-                             "name" => &item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
+                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
                     }
                 } else {
                     // Process is already marked as crashed - attempt restart now
                     log!("[daemon] restarting crashed process", 
-                         "name" => &item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
+                         "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
                     runner.restart(id, true, true);
                     runner.save();
                     log!("[daemon] restart complete", 
-                         "name" => &item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
+                         "name" => item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
                 }
             } else {
                 // Process was already stopped (running=false), just update PID
