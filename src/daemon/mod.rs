@@ -99,10 +99,9 @@ fn restart_process() {
             }
         }
 
-        // Check if process is alive
-        // - If PID <= 0, the process is definitively not alive (no valid PID)
-        // - Otherwise, check using is_pid_alive()
-        let process_alive = item.pid > 0 && opm::process::is_pid_alive(item.pid);
+        // Check if process is alive based on PID
+        // is_pid_alive() handles all PID validation (including PID <= 0)
+        let process_alive = opm::process::is_pid_alive(item.pid);
         
         // If process is alive and has been running successfully, keep monitoring
         // Note: We no longer auto-reset crash counter here - it persists to show
@@ -111,9 +110,7 @@ fn restart_process() {
             // Check if process has been running for at least the grace period
             let uptime_secs = (Utc::now() - item.started).num_seconds();
             if uptime_secs >= STARTUP_GRACE_PERIOD_SECS {
-                // Process has been stable - mark as not crashed but keep crash count
-                log!("[daemon] process stable - clearing crashed flag", 
-                     "name" => item.name, "id" => id, "uptime_secs" => uptime_secs, "crash_count" => item.crash.value);
+                // Process has been stable - clear crashed flag but keep crash count
                 if runner.exists(*id) {
                     let process = runner.process(*id);
                     // Clear crashed flag but keep crash.value to preserve history
@@ -157,21 +154,18 @@ fn restart_process() {
                         // Exceeded max restarts - give up and set running=false
                         let process = runner.process(*id);
                         process.running = false;
-                        log!("[daemon] process exceeded max crash limit, giving up", 
+                        log!("[daemon] process exceeded max crash limit", 
                              "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
                     } else {
                         // Still within crash limit - mark as crashed and save
                         // Next daemon cycle will restart it
-                        log!("[daemon] process crashed, will restart next cycle", 
-                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
+                        log!("[daemon] process crashed", 
+                             "name" => item.name, "id" => id, "crash_count" => crash_count);
                         runner.save();
                     }
                 } else {
                     // Process is already marked as crashed - attempt restart now
-                    let crash_count = item.crash.value;
-                    log!("[daemon] attempting restart for crashed process", 
-                         "name" => item.name, "id" => id, "crash_count" => crash_count);
                     runner.restart(*id, true, true);
                     runner.save();
                 }
@@ -180,11 +174,7 @@ fn restart_process() {
                 // This can happen if:
                 // 1. User manually stopped the process
                 // 2. Process previously hit max crash limit and running was set to false
-                if item.crash.crashed {
-                    log!("[daemon] skipping crashed process - running=false", "name" => item.name, "id" => id, 
-                         "crashed" => item.crash.crashed, "crash_value" => item.crash.value);
-                    // Don't print anything to avoid spam - user already knows it's crashed
-                }
+                // Don't log anything to avoid spam - user already knows it's stopped
                 runner.save();
             }
         }
