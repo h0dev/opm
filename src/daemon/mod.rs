@@ -49,17 +49,26 @@ fn restart_process() {
     // Load daemon config once at the start to avoid repeated I/O operations
     let daemon_config = config::read().daemon;
     
-    for (id, item) in Runner::new().items_mut() {
-        let mut runner = Runner::new();
+    // Use a single Runner instance to avoid state synchronization issues
+    let mut runner = Runner::new();
+    // Collect IDs first to avoid borrowing issues during iteration
+    let process_ids: Vec<usize> = runner.items().keys().copied().collect();
+    
+    for id in process_ids {
+        // Reload runner to get fresh state for this process
+        // This ensures we see any changes made by previous iterations
+        runner = Runner::new();
+        
+        let item = match runner.info(id) {
+            Some(item) => item.clone(),
+            None => continue, // Process was removed, skip it
+        };
+        
         let children = opm::process::process_find_children(item.pid);
 
         if !children.is_empty() && children != item.children {
             log!("[daemon] added", "children" => format!("{children:?}"));
-            // Clone once for saving to disk via set_children
-            runner.set_children(*id, children.clone()).save();
-            // Clone again to update the snapshot's item.children, so later logic uses fresh data
-            // Both clones are necessary because children is borrowed later in this iteration
-            item.children = children.clone();
+            runner.set_children(id, children.clone()).save();
         }
 
         // Check memory limit if configured
@@ -69,7 +78,7 @@ fn restart_process() {
                 opm::process::get_process_memory_with_children(pid_for_monitoring)
             {
                 if memory_info.rss > item.max_memory {
-                    log!("[daemon] memory limit exceeded", "name" => item.name, "id" => id, 
+                    log!("[daemon] memory limit exceeded", "name" => &item.name, "id" => id, 
                          "memory" => memory_info.rss, "limit" => item.max_memory);
                     println!(
                         "{} Process ({}) exceeded memory limit: {} > {} - stopping process",
@@ -78,7 +87,7 @@ fn restart_process() {
                         helpers::format_memory(memory_info.rss),
                         helpers::format_memory(item.max_memory)
                     );
-                    runner.stop(*id);
+                    runner.stop(id);
                     // Don't mark as crashed since this is intentional enforcement
                     runner.save();
                     continue;
@@ -91,10 +100,10 @@ fn restart_process() {
             let hash = hash::create(path);
 
             if hash != item.watch.hash {
-                log!("[daemon] watch triggered reload", "name" => item.name, "id" => id);
-                runner.restart(*id, false, true);  // Watch reload should increment counter
+                log!("[daemon] watch triggered reload", "name" => &item.name, "id" => id);
+                runner.restart(id, false, true);  // Watch reload should increment counter
                 runner.save();
-                log!("[daemon] watch reload complete", "name" => item.name, "id" => id);
+                log!("[daemon] watch reload complete", "name" => &item.name, "id" => id);
                 continue;
             }
         }
@@ -111,8 +120,8 @@ fn restart_process() {
             let uptime_secs = (Utc::now() - item.started).num_seconds();
             if uptime_secs >= STARTUP_GRACE_PERIOD_SECS {
                 // Process has been stable - clear crashed flag but keep crash count
-                if runner.exists(*id) {
-                    let process = runner.process(*id);
+                if runner.exists(id) {
+                    let process = runner.process(id);
                     // Clear crashed flag but keep crash.value to preserve history
                     process.crash.crashed = false;
                     runner.save();
@@ -124,7 +133,7 @@ fn restart_process() {
         if !process_alive {
             // Reset PID to 0 if it wasn't already
             if item.pid > 0 {
-                let process = runner.process(*id);
+                let process = runner.process(id);
                 process.pid = 0;  // Set to 0 to indicate no valid PID
             }
             
@@ -136,7 +145,7 @@ fn restart_process() {
                 if !item.crash.crashed {
                     // Get crash count before modifying
                     let crash_count = {
-                        let process = runner.process(*id);
+                        let process = runner.process(id);
                         // Increment consecutive crash counter
                         process.crash.value += 1;
                         process.crash.crashed = true;
@@ -152,22 +161,26 @@ fn restart_process() {
                     // This means "restarts: 10" allows exactly 10 restart attempts
                     if crash_count > daemon_config.restarts {
                         // Exceeded max restarts - give up and set running=false
-                        let process = runner.process(*id);
+                        let process = runner.process(id);
                         process.running = false;
                         log!("[daemon] process exceeded max crash limit", 
-                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
+                             "name" => &item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
                     } else {
                         // Still within crash limit - mark as crashed and save
                         // Next daemon cycle will restart it
                         log!("[daemon] process crashed", 
-                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
+                             "name" => &item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
                     }
                 } else {
                     // Process is already marked as crashed - attempt restart now
-                    runner.restart(*id, true, true);
+                    log!("[daemon] restarting crashed process", 
+                         "name" => &item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
+                    runner.restart(id, true, true);
                     runner.save();
+                    log!("[daemon] restart complete", 
+                         "name" => &item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
                 }
             } else {
                 // Process was already stopped (running=false), just update PID
