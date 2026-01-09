@@ -497,7 +497,13 @@ impl Runner {
                 }
                 process.children = vec![];
                 process.crash.crashed = true;
-                // Don't increment crash.value here - the daemon already incremented it before calling restart
+                
+                // Increment crash counter for restart failures to count against restart limit
+                // This prevents infinite retry loops when restart repeatedly fails
+                if dead {
+                    self.handle_restart_failure(id, &name);
+                }
+                
                 log::error!("Failed to set working directory {:?} for process {} during restart: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
@@ -551,7 +557,13 @@ impl Runner {
                     }
                     process.children = vec![];
                     process.crash.crashed = true;
-                    // Don't increment crash.value here - the daemon already incremented it before calling restart
+                    
+                    // Increment crash counter for restart failures to count against restart limit
+                    // This prevents infinite retry loops when restart repeatedly fails
+                    if dead {
+                        self.handle_restart_failure(id, &name);
+                    }
+                    
                     log::error!("Failed to restart process '{}' (id={}): {}", name, id, err);
                     println!("{} Failed to restart process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
                     return self;
@@ -632,7 +644,13 @@ impl Runner {
                 }
                 process.children = vec![];
                 process.crash.crashed = true;
-                // Don't increment crash.value here - the daemon already incremented it before calling reload
+                
+                // Increment crash counter for reload failures to count against restart limit
+                // This prevents infinite retry loops when reload repeatedly fails
+                if dead {
+                    self.handle_restart_failure(id, &name);
+                }
+                
                 log::error!("Failed to set working directory {:?} for process {} during reload: {}", path, name, err);
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
@@ -686,7 +704,13 @@ impl Runner {
                     }
                     process.children = vec![];
                     process.crash.crashed = true;
-                    // Don't increment crash.value here - the daemon already incremented it before calling reload
+                    
+                    // Increment crash counter for reload failures to count against restart limit
+                    // This prevents infinite retry loops when reload repeatedly fails
+                    if dead {
+                        self.handle_restart_failure(id, &name);
+                    }
+                    
                     log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
                     println!("{} Failed to reload process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
                     return self;
@@ -862,6 +886,20 @@ impl Runner {
     pub fn new_crash(&mut self, id: usize) -> &mut Self {
         self.process(id).crash.value += 1;
         return self;
+    }
+
+    /// Handle restart/reload failure by incrementing crash counter and checking limit
+    /// Sets running=false if the limit is exceeded
+    fn handle_restart_failure(&mut self, id: usize, process_name: &str) {
+        let process = self.process(id);
+        process.crash.value += 1;
+        
+        // Check if we've exceeded max restart limit
+        let daemon_config = config::read().daemon;
+        if process.crash.value > daemon_config.restarts {
+            process.running = false;
+            log::error!("Process {} exceeded max restart attempts due to repeated failures", process_name);
+        }
     }
 
     pub fn stop(&mut self, id: usize) -> &mut Self {
@@ -2390,5 +2428,76 @@ mod tests {
             "wait_for_process_termination should return true for non-existent PID");
         assert!(duration.as_millis() < 200, 
             "wait_for_process_termination(non-existent) should return quickly, took {:?}", duration);
+    }
+
+    #[test]
+    fn test_restart_failure_increments_crash_counter() {
+        // Test that when restart() fails repeatedly, the crash counter is incremented
+        // and eventually the process is stopped after exceeding max_restarts.
+        // This prevents infinite retry loops when restart repeatedly fails.
+        
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        
+        // Create a process with a non-existent working directory
+        // This will cause restart() to fail at the set_current_dir step
+        let process = Process {
+            id,
+            pid: 0, // Dead process
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_restart_failure".to_string(),
+            path: PathBuf::from("/nonexistent/directory/that/does/not/exist"),
+            script: "echo 'test'".to_string(),
+            restarts: 0,
+            running: true,
+            crash: Crash {
+                crashed: true, // Already marked as crashed, so restart will be attempted
+                value: 1, // First crash detected
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+        };
+        
+        runner.list.insert(id, process);
+        
+        // Simulate daemon calling restart with dead=true (auto-restart)
+        // This should fail due to invalid working directory
+        runner.restart(id, true, true);
+        
+        // Verify that crash.value was incremented due to restart failure
+        let process = runner.info(id).unwrap();
+        assert_eq!(process.crash.value, 2, 
+            "Restart failure should increment crash counter from 1 to 2");
+        assert_eq!(process.crash.crashed, true, 
+            "Restart failure should keep crashed flag set");
+        assert_eq!(process.running, true, 
+            "Restart failure should keep running=true so daemon will retry (not yet at limit)");
+        
+        // Simulate multiple restart failures up to the limit (default is 10)
+        for expected_crash_value in 3..=10 {
+            runner.restart(id, true, true);
+            let process = runner.info(id).unwrap();
+            assert_eq!(process.crash.value, expected_crash_value, 
+                "Crash counter should increment with each restart failure");
+            assert_eq!(process.running, true, 
+                "Process should still be running (within restart limit)");
+        }
+        
+        // One more restart failure should exceed the limit
+        runner.restart(id, true, true);
+        let process = runner.info(id).unwrap();
+        assert_eq!(process.crash.value, 11, 
+            "Crash counter should be 11 after exceeding limit");
+        assert_eq!(process.running, false, 
+            "Process should be stopped after exceeding max restart limit");
+        assert_eq!(process.crash.crashed, true, 
+            "Process should still be marked as crashed");
     }
 }
