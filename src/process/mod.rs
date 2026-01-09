@@ -889,8 +889,8 @@ impl Runner {
     }
 
     /// Handle restart/reload failure by incrementing crash counter and checking limit
-    /// Returns true if the process should continue running (within limit), false if limit exceeded
-    fn handle_restart_failure(&mut self, id: usize, process_name: &str) -> bool {
+    /// Sets running=false if the limit is exceeded
+    fn handle_restart_failure(&mut self, id: usize, process_name: &str) {
         let process = self.process(id);
         process.crash.value += 1;
         
@@ -899,9 +899,6 @@ impl Runner {
         if process.crash.value > daemon_config.restarts {
             process.running = false;
             log::error!("Process {} exceeded max restart attempts due to repeated failures", process_name);
-            false
-        } else {
-            true
         }
     }
 
