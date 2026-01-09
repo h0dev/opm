@@ -130,21 +130,38 @@ fn restart_process() {
             
             // Only handle crash/restart logic if process was supposed to be running
             if item.running {
+                let config = config::read().daemon;
+                let max_restarts = config.restarts;
+                
                 // Get crash count before modifying
                 let crash_count = {
                     let process = runner.process(*id);
                     // Increment consecutive crash counter
                     process.crash.value += 1;
                     process.crash.crashed = true;
-                    process.running = false;
                     process.crash.value
                 };
                 
-                // Log the crash - don't use println! to avoid potential SIGPIPE issues
-                log!("[daemon] process crashed, continuing to monitor other processes", "name" => item.name, "id" => id, "crash_count" => crash_count);
-                
-                // Save state with updated crash information
-                runner.save();
+                // Check if we should attempt restart or give up
+                if crash_count <= max_restarts {
+                    // Within restart limit - attempt to restart
+                    log!("[daemon] process crashed - attempting restart", "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => max_restarts);
+                    
+                    // Keep running=true so the process can be restarted
+                    // Call restart with dead=true to indicate this is a crash restart
+                    runner.restart(*id, true, true);
+                    runner.save();
+                    
+                    log!("[daemon] restart attempt complete", "name" => item.name, "id" => id);
+                } else {
+                    // Exceeded restart limit - give up
+                    log!("[daemon] process exceeded max restarts - giving up", "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => max_restarts);
+                    
+                    // Set running=false to stop further restart attempts
+                    let process = runner.process(*id);
+                    process.running = false;
+                    runner.save();
+                }
             } else {
                 // Process was already stopped (running=false), just update PID
                 // This can happen if:
