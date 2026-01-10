@@ -926,6 +926,81 @@ impl<'i> Internal<'i> {
         println!("{}", command.white());
     }
 
+    pub fn adjust(mut self, command: &Option<String>, name: &Option<String>) {
+        println!(
+            "{} Adjusting {}process ({})",
+            *helpers::SUCCESS,
+            self.kind,
+            self.id
+        );
+
+        if !matches!(self.server_name, "internal" | "local") {
+            let Some(servers) = config::servers().servers else {
+                crashln!("{} Failed to read servers", *helpers::FAIL)
+            };
+
+            if let Some(server) = servers.get(self.server_name) {
+                self.runner = match Runner::connect(self.server_name.into(), server.get(), false) {
+                    Some(remote) => remote,
+                    None => crashln!(
+                        "{} Failed to connect (name={}, address={})",
+                        *helpers::FAIL,
+                        self.server_name,
+                        server.address
+                    ),
+                };
+            } else {
+                crashln!(
+                    "{} Server '{}' does not exist",
+                    *helpers::FAIL,
+                    self.server_name
+                )
+            };
+        }
+
+        // Check if at least one parameter is provided
+        if command.is_none() && name.is_none() {
+            crashln!(
+                "{} At least one of --command or --name must be provided",
+                *helpers::FAIL
+            );
+        }
+
+        let process = self.runner.process(self.id);
+
+        // Update command if provided
+        if let Some(new_command) = command {
+            println!(
+                "  {} Updating command from '{}' to '{}'",
+                *helpers::SUCCESS,
+                process.script,
+                new_command
+            );
+            process.script = new_command.clone();
+        }
+
+        // Update name if provided
+        if let Some(new_name) = name {
+            println!(
+                "  {} Updating name from '{}' to '{}'",
+                *helpers::SUCCESS,
+                process.name,
+                new_name
+            );
+            process.name = new_name.clone();
+        }
+
+        self.runner.save();
+
+        println!(
+            "{} Adjusted {}({}) ✓",
+            *helpers::SUCCESS,
+            self.kind,
+            self.id
+        );
+        log!("process adjusted (id={})", self.id);
+    }
+
     pub fn save(server_name: &String) {
         if !matches!(&**server_name, "internal" | "local") {
             crashln!("{} Cannot force save on remote servers", *helpers::FAIL)
@@ -1062,14 +1137,13 @@ impl<'i> Internal<'i> {
             }
         }
 
-        // Reset restart and crash counters after restore for ALL processes
+        // Reset restart and crash counters after restore for ALL processes in the system
         // This gives each process a fresh start after system restore/reboot
-        // Both successful and failed processes get their counters reset so they have
-        // full restart attempts available for daemon auto-restart
-        for (id, _, _, _) in &processes_to_restore {
-            if runner.exists(*id) {
-                runner.reset_counters(*id);
-            }
+        // Both running and stopped processes get their counters reset so they have
+        // full restart attempts available
+        let all_process_ids: Vec<usize> = runner.items().keys().copied().collect();
+        for id in all_process_ids {
+            runner.reset_counters(id);
         }
         runner.save();
 

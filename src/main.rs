@@ -88,6 +88,12 @@ enum Commands {
         /// Reset environment values
         #[arg(short, long)]
         reset_env: bool,
+        /// Number of worker instances to spawn (for load balancing)
+        #[arg(short = 'w', long)]
+        workers: Option<usize>,
+        /// Port range for workers (e.g., "3000-3010" or just "3000" for SO_REUSEPORT)
+        #[arg(short = 'p', long)]
+        port_range: Option<String>,
     },
     /// Stop/Kill a process
     #[command(visible_alias = "kill")]
@@ -221,6 +227,22 @@ enum Commands {
         #[arg(short, long)]
         server: Option<String>,
     },
+
+    /// Adjust process command and/or name
+    #[command(visible_alias = "update", visible_alias = "modify")]
+    Adjust {
+        #[clap(value_parser = cli::validate::<Item>)]
+        item: Item,
+        /// New execution command/script
+        #[arg(long)]
+        command: Option<String>,
+        /// New process name
+        #[arg(long)]
+        name: Option<String>,
+        /// Server
+        #[arg(short, long)]
+        server: Option<String>,
+    },
 }
 
 fn main() {
@@ -249,7 +271,9 @@ fn main() {
             max_memory,
             server,
             reset_env,
-        } => cli::start(name, args, watch, max_memory, reset_env, &defaults(server)),
+            workers,
+            port_range,
+        } => cli::start(name, args, watch, max_memory, reset_env, &defaults(server), workers, port_range),
         Commands::Stop { items, server } => cli::stop(items, &defaults(server)),
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => {
@@ -312,6 +336,12 @@ fn main() {
         Commands::Restart { items, server } => cli::restart(items, &defaults(server)),
         Commands::Reload { items, server } => cli::reload(items, &defaults(server)),
         Commands::GetCommand { item, server } => cli::get_command(item, &defaults(server)),
+        Commands::Adjust {
+            item,
+            command,
+            name,
+            server,
+        } => cli::adjust(item, command, name, &defaults(server)),
     };
 
     if !matches!(&cli.command, Commands::Daemon { .. })
@@ -319,6 +349,7 @@ fn main() {
         && !matches!(&cli.command, Commands::Env { .. })
         && !matches!(&cli.command, Commands::Export { .. })
         && !matches!(&cli.command, Commands::GetCommand { .. })
+        && !matches!(&cli.command, Commands::Adjust { .. })
     {
         then!(!daemon::pid::exists(), daemon::restart(false));
     }
