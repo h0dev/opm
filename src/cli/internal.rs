@@ -989,17 +989,18 @@ impl<'i> Internal<'i> {
             return;
         }
 
-        for (id, name, was_running, was_crashed) in processes_to_restore {
-            let status_str = if was_crashed {
+        for (id, name, was_running, was_crashed) in &processes_to_restore {
+            // status_str is currently unused but kept for potential future logging
+            let _status_str = if *was_crashed {
                 "crashed"
-            } else if was_running {
+            } else if *was_running {
                 "running"
             } else {
                 "stopped"
             };
 
             runner = Internal {
-                id,
+                id: *id,
                 server_name,
                 kind: kind.clone(),
                 runner: runner.clone(),
@@ -1007,7 +1008,7 @@ impl<'i> Internal<'i> {
             .restart(&None, &None, false, true, false);
 
             // Check if the restart was successful
-            if let Some(process) = runner.info(id) {
+            if let Some(process) = runner.info(*id) {
                 // Verify the process is actually running by checking if the PID exists
                 // Use the same PID selection logic as the daemon for consistency
                 let pid_to_check = process.shell_pid.unwrap_or(process.pid);
@@ -1030,9 +1031,9 @@ impl<'i> Internal<'i> {
                 };
                 
                 if process.running && pid_valid {
-                    restored_ids.push(id);
+                    restored_ids.push(*id);
                 } else {
-                    failed_ids.push((id, name.clone()));
+                    failed_ids.push((*id, name.clone()));
                     println!(
                         "{} Failed to restore process '{}' (id={}) - process is not running",
                         *helpers::FAIL,
@@ -1042,11 +1043,11 @@ impl<'i> Internal<'i> {
                     // Mark process as crashed so daemon can pick it up for auto-restart
                     // Keep running=true (set_crashed doesn't change it) so daemon will attempt restart
                     // Don't increment crash counter here - let the daemon do it when it detects the crash
-                    runner.set_crashed(id);
+                    runner.set_crashed(*id);
                     runner.save();
                 }
             } else {
-                failed_ids.push((id, name.clone()));
+                failed_ids.push((*id, name.clone()));
                 println!(
                     "{} Failed to restore process '{}' (id={}) - process not found",
                     *helpers::FAIL,
@@ -1056,14 +1057,19 @@ impl<'i> Internal<'i> {
                 // Mark process as crashed so daemon can pick it up for auto-restart
                 // Keep running=true (set_crashed doesn't change it) so daemon will attempt restart
                 // Don't increment crash counter here - let the daemon do it when it detects the crash
-                runner.set_crashed(id);
+                runner.set_crashed(*id);
                 runner.save();
             }
         }
 
-        // Reset restart and crash counters after restore for all restored processes
-        for id in &restored_ids {
-            runner.reset_counters(*id);
+        // Reset restart and crash counters after restore for ALL processes
+        // This gives each process a fresh start after system restore/reboot
+        // Both successful and failed processes get their counters reset so they have
+        // full restart attempts available for daemon auto-restart
+        for (id, _, _, _) in &processes_to_restore {
+            if runner.exists(*id) {
+                runner.reset_counters(*id);
+            }
         }
         runner.save();
 

@@ -47,6 +47,9 @@ enum Daemon {
         #[arg(long, default_value_t = string!("default"))]
         format: String,
     },
+    /// Setup systemd service to start OPM daemon automatically
+    #[command(visible_alias = "install")]
+    Setup,
 }
 
 // add opm restore command
@@ -303,6 +306,7 @@ fn main() {
             Daemon::Reset => daemon::reset(),
             Daemon::Health { format } => daemon::health(format),
             Daemon::Restore => daemon::restart(level.as_str() != "OFF"),
+            Daemon::Setup => daemon::setup(),
         },
 
         Commands::Restart { items, server } => cli::restart(items, &defaults(server)),

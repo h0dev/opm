@@ -64,6 +64,9 @@ opm daemon start
 
 # Check daemon health
 opm daemon health
+
+# Setup systemd service (autostart with system)
+opm daemon setup
 ```
 
 ### Advanced Features
@@ -182,6 +185,32 @@ OPM automatically loads `.env` files from the process working directory. If envi
 - Check daemon health: `opm daemon health`
 - View all processes: `opm list`
 - Check logs with errors only: `opm logs <id> --errors-only`
+
+### System Integration
+
+OPM can be configured to automatically start with your system using systemd:
+
+```bash
+# Setup systemd service (run as root for system-wide, or as user for user service)
+opm daemon setup
+
+# After setup, enable and start the service:
+# For system-wide (root):
+sudo systemctl daemon-reload
+sudo systemctl enable opm.service
+sudo systemctl start opm.service
+
+# For user service:
+systemctl --user daemon-reload
+systemctl --user enable opm.service
+systemctl --user start opm.service
+loginctl enable-linger $USER  # Enable starting at boot even when not logged in
+```
+
+This ensures that:
+- The OPM daemon starts automatically when your system boots
+- All processes configured to run are automatically restored after system restart
+- Process restart counters are reset on restore, giving each process a fresh start
 
 ## Installation
 

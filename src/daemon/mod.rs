@@ -532,4 +532,159 @@ pub fn reset() {
     );
 }
 
+pub fn setup() {
+    use std::env;
+    use std::fs;
+    use std::path::Path;
+
+    println!("{} Setting up OPM systemd service...", *helpers::SUCCESS);
+
+    // Get the current user's home directory
+    let home_dir = match home::home_dir() {
+        Some(dir) => dir,
+        None => crashln!("{} Unable to determine home directory", *helpers::FAIL),
+    };
+
+    // Get the path to the opm binary
+    let opm_binary = match env::current_exe() {
+        Ok(path) => path,
+        Err(err) => crashln!("{} Unable to determine opm binary path: {}", *helpers::FAIL, err),
+    };
+
+    let opm_binary_str = opm_binary.to_string_lossy();
+
+    // Determine systemd service directory
+    // For user services: ~/.config/systemd/user/
+    // For system services: /etc/systemd/system/ (requires root)
+    let is_root = unsafe { libc::geteuid() == 0 };
+
+    let (service_dir_path, install_target) = if is_root {
+        (
+            Path::new("/etc/systemd/system").to_path_buf(),
+            "multi-user.target",
+        )
+    } else {
+        (
+            home_dir.join(".config/systemd/user"),
+            "default.target",
+        )
+    };
+
+    let service_dir = service_dir_path.as_path();
+
+    // Create service directory if it doesn't exist
+    if !service_dir.exists() {
+        if let Err(err) = fs::create_dir_all(service_dir) {
+            crashln!(
+                "{} Failed to create service directory {:?}: {}",
+                *helpers::FAIL,
+                service_dir,
+                err
+            );
+        }
+    }
+
+    let service_file_path = service_dir.join("opm.service");
+    let opm_dir = global!("opm.base");
+    let pid_file = global!("opm.pid");
+
+    // Generate service file content
+    let service_content = if is_root {
+        format!(
+            r#"# OPM Daemon systemd service file (system-wide)
+
+[Unit]
+Description=OPM Process Manager Daemon
+After=network.target
+
+[Service]
+Type=forking
+WorkingDirectory={}
+PIDFile={}
+ExecStart={} daemon start
+ExecStop={} daemon stop
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy={}
+"#,
+            opm_dir,
+            pid_file,
+            opm_binary_str,
+            opm_binary_str,
+            install_target
+        )
+    } else {
+        format!(
+            r#"# OPM Daemon systemd service file (user service)
+
+[Unit]
+Description=OPM Process Manager Daemon
+After=network.target
+
+[Service]
+Type=forking
+WorkingDirectory={}
+PIDFile={}
+ExecStart={} daemon start
+ExecStop={} daemon stop
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy={}
+"#,
+            opm_dir,
+            pid_file,
+            opm_binary_str,
+            opm_binary_str,
+            install_target
+        )
+    };
+
+    // Write service file
+    if let Err(err) = fs::write(&service_file_path, service_content) {
+        crashln!(
+            "{} Failed to write service file to {:?}: {}",
+            *helpers::FAIL,
+            service_file_path,
+            err
+        );
+    }
+
+    println!(
+        "{} Service file created at: {}",
+        *helpers::SUCCESS,
+        service_file_path.display()
+    );
+
+    // Provide instructions for enabling the service
+    if is_root {
+        println!("\n{} To enable and start the OPM daemon:", *helpers::SUCCESS);
+        println!("  sudo systemctl daemon-reload");
+        println!("  sudo systemctl enable opm.service");
+        println!("  sudo systemctl start opm.service");
+        println!("\n{} To check daemon status:", *helpers::SUCCESS);
+        println!("  sudo systemctl status opm.service");
+    } else {
+        println!("\n{} To enable and start the OPM daemon:", *helpers::SUCCESS);
+        println!("  systemctl --user daemon-reload");
+        println!("  systemctl --user enable opm.service");
+        println!("  systemctl --user start opm.service");
+        println!("\n{} To enable lingering (start daemon at boot):", *helpers::SUCCESS);
+        println!("  loginctl enable-linger $USER");
+        println!("\n{} To check daemon status:", *helpers::SUCCESS);
+        println!("  systemctl --user status opm.service");
+    }
+
+    println!(
+        "\n{} Setup complete! The OPM daemon will now start automatically with the system.",
+        *helpers::SUCCESS
+    );
+}
+
 pub mod pid;
