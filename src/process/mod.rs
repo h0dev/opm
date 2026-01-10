@@ -299,6 +299,14 @@ fn load_dotenv(path: &PathBuf) -> BTreeMap<String, String> {
 /// Check if a process with the given PID is alive
 /// Uses libc::kill with signal 0 to check process existence without sending a signal
 /// Also checks if the process is a zombie (defunct), which should be treated as dead
+/// 
+/// Why zombie detection matters:
+/// When a process crashes immediately after starting, it can become a zombie (defunct) process
+/// that still exists in the process table. The parent shell hasn't yet read its exit status via wait().
+/// Without zombie detection, libc::kill(pid, 0) returns success for zombies, causing the daemon to
+/// incorrectly report them as "online" and stop attempting restarts. By detecting zombies and treating
+/// them as dead, we ensure the daemon continues restart attempts until the max threshold is reached.
+/// 
 /// PID <= 0 is never considered alive:
 /// - PID 0 signals all processes in the current process group
 /// - Negative PIDs signal process groups

@@ -306,7 +306,9 @@ mod tests {
 
     #[test]
     fn test_get_parent_pid_invalid() {
-        let invalid_pid = 999999;
+        // Use i32::MAX which is extremely unlikely to be a valid PID on any system
+        // PIDs are typically limited to much smaller values (e.g., 32768 on many Linux systems)
+        let invalid_pid = i32::MAX;
         let result = get_parent_pid(invalid_pid);
         assert!(result.is_err());
     }
@@ -331,8 +333,8 @@ mod tests {
 
     #[test]
     fn test_is_process_zombie_nonexistent() {
-        // Non-existent process should not be detected as zombie (function returns false)
-        let invalid_pid = 999999;
+        // Use i32::MAX which is extremely unlikely to be a valid PID on any system
+        let invalid_pid = i32::MAX;
         assert!(!is_process_zombie(invalid_pid), 
             "Non-existent process should return false for is_process_zombie");
     }
