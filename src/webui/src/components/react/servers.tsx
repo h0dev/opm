@@ -4,8 +4,6 @@ import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
 import { version } from '../../../package.json';
 import { useArray, classNames, isVersionTooFar, startDuration } from '@/helpers';
-import { Menu, MenuItem, MenuItems, MenuButton, Transition } from '@headlessui/react';
-import { EllipsisVerticalIcon } from '@heroicons/react/20/solid';
 
 const getStatus = (remote: string, status: string): string => {
 	const badge = {

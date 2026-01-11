@@ -8,6 +8,7 @@ use prometheus::{Encoder, TextEncoder};
 use opm::process::unix::NativeProcess as Process;
 use reqwest::header::HeaderValue;
 use tera::Context;
+use toml;
 use utoipa::ToSchema;
 
 use rocket::{
