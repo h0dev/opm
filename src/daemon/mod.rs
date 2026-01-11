@@ -449,9 +449,9 @@ pub fn start(verbose: bool) {
 
         if api_enabled {
             log!(
-                "[daemon] API server started (address={}, webui={})",
-                config::read().fmt_address(),
-                ui_enabled
+                "[daemon] API server started",
+                "address" => config::read().fmt_address(),
+                "webui" => ui_enabled
             );
             tokio::spawn(async move { api::start(ui_enabled).await });
         }

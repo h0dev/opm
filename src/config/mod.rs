@@ -54,6 +54,7 @@ pub fn read() -> Config {
                         restarts: 10,
                         interval: 1000,
                         kind: string!("default"),
+                        web: structs::default_web(),
                     },
                 };
 
@@ -139,5 +140,26 @@ impl Config {
     pub fn set_default(mut self, name: String) -> Self {
         self.default = string!(name);
         self
+    }
+
+    pub fn get_path(&self) -> String {
+        self.daemon.web.path.clone().unwrap_or_else(|| string!("/"))
+    }
+
+    pub fn get_address(&self) -> rocket::Config {
+        use std::net::{IpAddr, Ipv4Addr};
+        
+        let address = self.daemon.web.address.parse::<IpAddr>()
+            .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        
+        rocket::Config {
+            address,
+            port: self.daemon.web.port as u16,
+            ..rocket::Config::default()
+        }
+    }
+
+    pub fn fmt_address(&self) -> String {
+        format!("{}:{}", self.daemon.web.address, self.daemon.web.port)
     }
 }

@@ -226,10 +226,17 @@ async fn render(name: &str, state: &State<TeraState>, ctx: &mut Context) -> Resu
 
 #[rocket::get("/assets/<name>")]
 async fn dynamic_assets(name: String) -> Option<NamedFile> {
-    static DIR: Dir = include_dir!("src/webui/dist/assets");
-    let file = DIR.get_file(&name)?;
-
-    NamedFile::send(name, file.contents_utf8()).await.ok()
+    #[cfg(not(debug_assertions))]
+    {
+        static DIR: Dir = include_dir!("src/webui/dist/assets");
+        let file = DIR.get_file(&name)?;
+        NamedFile::send(name, file.contents_utf8()).await.ok()
+    }
+    
+    #[cfg(debug_assertions)]
+    {
+        None
+    }
 }
 
 #[rocket::get("/static/<name>")]

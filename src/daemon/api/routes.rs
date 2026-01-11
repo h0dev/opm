@@ -660,7 +660,7 @@ pub async fn create_handler(body: Json<CreateBody>, _t: Token) -> Result<Json<Ac
         None => string!(body.script.split_whitespace().next().unwrap_or_default()),
     };
 
-    runner.start(&name, &body.script, body.path.clone(), &body.watch).save();
+    runner.start(&name, &body.script, body.path.clone(), &body.watch, 0).save();
     timer.observe_duration();
 
     Ok(Json(attempt(true, "create")))
