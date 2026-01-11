@@ -1,5 +1,5 @@
 use super::types::AgentInfo;
-use opm::notifications::{NotificationManager, NotificationEvent};
+use crate::notifications::{NotificationManager, NotificationEvent};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 

@@ -2,7 +2,6 @@ mod cli;
 mod daemon;
 mod globals;
 mod webui;
-mod agent;
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{LogLevel, Verbosity};
@@ -431,8 +430,8 @@ fn server_remove(name: &str) {
 
 fn agent_connect(server_url: String, name: Option<String>, token: Option<String>) {
     use opm::helpers;
-    use agent::types::AgentConfig;
-    use agent::connection::AgentConnection;
+    use opm::agent::types::AgentConfig;
+    use opm::agent::connection::AgentConnection;
     
     println!("{} Starting OPM Agent...", *helpers::SUCCESS);
     
@@ -498,7 +497,7 @@ fn agent_status() {
     }
 }
 
-fn save_agent_config(config: &agent::types::AgentConfig) -> Result<(), std::io::Error> {
+fn save_agent_config(config: &opm::agent::types::AgentConfig) -> Result<(), std::io::Error> {
     use std::fs;
     
     let path = home::home_dir()
@@ -512,7 +511,7 @@ fn save_agent_config(config: &agent::types::AgentConfig) -> Result<(), std::io::
     Ok(())
 }
 
-fn load_agent_config() -> Result<agent::types::AgentConfig, std::io::Error> {
+fn load_agent_config() -> Result<opm::agent::types::AgentConfig, std::io::Error> {
     use std::fs;
     
     let path = home::home_dir()
@@ -520,7 +519,7 @@ fn load_agent_config() -> Result<agent::types::AgentConfig, std::io::Error> {
     let config_path = path.join(".opm").join("agent.toml");
     
     let contents = fs::read_to_string(config_path)?;
-    let config: agent::types::AgentConfig = toml::from_str(&contents)
+    let config: opm::agent::types::AgentConfig = toml::from_str(&contents)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     
     Ok(config)
