@@ -284,7 +284,7 @@ enum ServerCommand {
     },
 }
 
-fn server_connect(name: &String, address: &String, token: &Option<String>) {
+fn server_connect(name: &str, address: &str, token: &Option<String>) {
     use opm::{config, helpers};
     use std::collections::BTreeMap;
     use std::fs;
@@ -300,7 +300,7 @@ fn server_connect(name: &String, address: &String, token: &Option<String>) {
     }
     
     if let Some(ref mut server_map) = servers.servers {
-        server_map.insert(name.clone(), server);
+        server_map.insert(name.to_string(), server);
     }
     
     // Save to file
@@ -366,7 +366,7 @@ fn server_list() {
     }
 }
 
-fn server_remove(name: &String) {
+fn server_remove(name: &str) {
     use opm::{config, helpers};
     use std::fs;
     
