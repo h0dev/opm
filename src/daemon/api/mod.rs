@@ -169,6 +169,7 @@ pub async fn start() {
         health,
         docs_json,
         static_assets,
+        app_ui,
         routes::action_handler,
         routes::env_handler,
         routes::info_handler,
@@ -221,3 +222,12 @@ async fn embed() -> (ContentType, String) { (ContentType::HTML, docs::Docs::new(
 
 #[rocket::get("/health")]
 async fn health() -> Value { json!({"healthy": true}) }
+
+#[rocket::get("/app")]
+async fn app_ui() -> Option<(ContentType, String)> {
+    static DIR: Dir = include_dir!("src/daemon/static");
+    let file = DIR.get_file("app.html")?;
+    let s_path = config::read().get_path().trim_end_matches('/');
+    let content = file.contents_utf8()?.replace("$s_path", s_path);
+    Some((ContentType::HTML, content))
+}

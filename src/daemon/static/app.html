@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OPM - Process Manager</title>
+    <link rel="stylesheet" href="$s_path/static/app.css">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <div class="header-content">
+                <h1 class="header-title">OPM Process Manager</h1>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="refresh-btn">
+                        <span>⟳</span> Refresh
+                    </button>
+                    <button class="btn btn-primary" id="new-process-btn">
+                        <span>+</span> New Process
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Process List -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Running Processes</h2>
+                </div>
+                <div class="card-body">
+                    <div id="process-list" class="process-list">
+                        <div class="loading">Loading processes...</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- New Process Modal -->
+    <div id="new-process-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Start New Process</h3>
+                <button class="modal-close" id="close-modal-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="new-process-form">
+                    <div class="form-group">
+                        <label for="process-name">Process Name (optional)</label>
+                        <input type="text" id="process-name" name="name" placeholder="my-app">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="process-script">Script/Command *</label>
+                        <input type="text" id="process-script" name="script" required 
+                               placeholder="node index.js or python app.py">
+                        <small>Enter the command to execute</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="process-path">Working Directory</label>
+                        <input type="text" id="process-path" name="path" 
+                               placeholder="/path/to/project">
+                        <small>Leave empty to use current directory</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="process-watch">Watch Path (optional)</label>
+                        <input type="text" id="process-watch" name="watch" 
+                               placeholder="src or . for all files">
+                        <small>Auto-reload process when files change</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="process-memory">Max Memory (optional)</label>
+                        <input type="text" id="process-memory" name="max_memory" 
+                               placeholder="500M or 1G">
+                        <small>Maximum memory limit (e.g., 100M, 1G)</small>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Start Process</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs Modal -->
+    <div id="logs-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3 id="logs-title">Process Logs</h3>
+                <button class="modal-close" id="close-logs-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="logs-controls">
+                    <button class="btn btn-sm" id="logs-follow-btn">Follow Logs</button>
+                    <button class="btn btn-sm" id="logs-refresh-btn">Refresh</button>
+                    <select id="logs-type" class="logs-select">
+                        <option value="out">Output</option>
+                        <option value="error">Errors</option>
+                    </select>
+                </div>
+                <pre id="logs-content" class="logs-content"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="$s_path/static/app.js"></script>
+</body>
+</html>
