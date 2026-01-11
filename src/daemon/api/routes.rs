@@ -11,6 +11,7 @@ use tera::Context;
 use utoipa::ToSchema;
 
 use rocket::{
+    delete,
     get,
     http::{ContentType, Status},
     post,
@@ -45,6 +46,8 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+
+use home;
 
 pub(crate) struct Token;
 type EnvList = Json<BTreeMap<String, String>>;
@@ -232,6 +235,105 @@ pub async fn servers_handler(_t: Token) -> Result<Json<Vec<String>>, GenericErro
         Err(generic_error(Status::BadRequest, string!("No servers have been added")))
     }
 }
+
+#[derive(Deserialize, ToSchema)]
+pub struct AddServerBody {
+    pub name: String,
+    pub address: String,
+    pub token: Option<String>,
+}
+
+#[post("/daemon/servers/add", format = "json", data = "<body>")]
+#[utoipa::path(post, tag = "Daemon", path = "/daemon/servers/add", request_body = AddServerBody,
+    security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Server added successfully", body = ActionResponse),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn add_server_handler(body: Json<AddServerBody>, _t: Token) -> Json<ActionResponse> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["add_server"]).start_timer();
+    HTTP_COUNTER.inc();
+    
+    let mut servers = config::servers();
+    let server = config::structs::Server {
+        address: body.address.trim_end_matches('/').to_string(),
+        token: body.token.clone(),
+    };
+    
+    if servers.servers.is_none() {
+        servers.servers = Some(BTreeMap::new());
+    }
+    
+    if let Some(ref mut server_map) = servers.servers {
+        server_map.insert(body.name.clone(), server);
+    }
+    
+    // Save to file
+    match home::home_dir() {
+        Some(path) => {
+            let config_path = format!("{}/.opm/servers.toml", path.display());
+            let contents = match toml::to_string(&servers) {
+                Ok(c) => c,
+                Err(_) => return Json(attempt(false, "add_server")),
+            };
+            
+            if let Err(_) = fs::write(&config_path, contents) {
+                return Json(attempt(false, "add_server"));
+            }
+        }
+        None => return Json(attempt(false, "add_server")),
+    }
+    
+    timer.observe_duration();
+    Json(attempt(true, "add_server"))
+}
+
+#[delete("/daemon/servers/<name>")]
+#[utoipa::path(delete, tag = "Daemon", path = "/daemon/servers/{name}",
+    security((), ("api_key" = [])),
+    params(("name" = String, Path, description = "Server name to remove")),
+    responses(
+        (status = 200, description = "Server removed successfully", body = ActionResponse),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn remove_server_handler(name: String, _t: Token) -> Json<ActionResponse> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["remove_server"]).start_timer();
+    HTTP_COUNTER.inc();
+    
+    let mut servers = config::servers();
+    
+    if let Some(ref mut server_map) = servers.servers {
+        server_map.remove(&name);
+    }
+    
+    // Save to file
+    match home::home_dir() {
+        Some(path) => {
+            let config_path = format!("{}/.opm/servers.toml", path.display());
+            let contents = match toml::to_string(&servers) {
+                Ok(c) => c,
+                Err(_) => return Json(attempt(false, "remove_server")),
+            };
+            
+            if let Err(_) = fs::write(&config_path, contents) {
+                return Json(attempt(false, "remove_server"));
+            }
+        }
+        None => return Json(attempt(false, "remove_server")),
+    }
+    
+    timer.observe_duration();
+    Json(attempt(true, "remove_server"))
+}
+
 
 #[get("/remote/<name>/list")]
 #[utoipa::path(get, tag = "Remote", path = "/remote/{name}/list", security((), ("api_key" = [])),
