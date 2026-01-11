@@ -252,41 +252,11 @@ enum Commands {
         server: Option<String>,
     },
 
-    /// Server management
-    #[command(visible_alias = "remote")]
-    Server {
-        #[command(subcommand)]
-        command: ServerCommand,
-    },
-
     /// Agent management (client-side daemon for server connection)
+    #[command(visible_alias = "server", visible_alias = "remote")]
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
-    },
-}
-
-#[derive(Subcommand)]
-enum ServerCommand {
-    /// Connect to a remote server
-    Connect {
-        /// Server name
-        name: String,
-        /// Server address (IP/URL)
-        #[arg(long)]
-        address: String,
-        /// Authentication token (optional)
-        #[arg(long)]
-        token: Option<String>,
-    },
-    /// List all configured servers
-    #[command(visible_alias = "ls")]
-    List,
-    /// Remove a server
-    #[command(visible_alias = "rm", visible_alias = "delete")]
-    Remove {
-        /// Server name
-        name: String,
     },
 }
 
@@ -303,129 +273,36 @@ enum AgentCommand {
         #[arg(long)]
         token: Option<String>,
     },
+    /// List connected agents (view via API/Web UI)
+    #[command(visible_alias = "ls")]
+    List,
     /// Disconnect agent
     Disconnect,
     /// Show agent status
     Status,
 }
 
-fn server_connect(name: &str, address: &str, token: &Option<String>) {
-    use opm::{config, helpers};
-    use std::collections::BTreeMap;
-    use std::fs;
+fn agent_list() {
+    use opm::helpers;
     
-    let mut servers = config::servers();
-    let server = config::structs::Server {
-        address: address.trim_end_matches('/').to_string(),
-        token: token.clone(),
-    };
-    
-    if servers.servers.is_none() {
-        servers.servers = Some(BTreeMap::new());
-    }
-    
-    if let Some(ref mut server_map) = servers.servers {
-        server_map.insert(name.to_string(), server);
-    }
-    
-    // Save to file
-    match home::home_dir() {
-        Some(path) => {
-            let config_path = format!("{}/.opm/servers.toml", path.display());
-            let contents = match toml::to_string(&servers) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("{} Failed to serialize server config: {}", *helpers::FAIL, e);
-                    return;
-                }
-            };
-            
-            if let Err(e) = fs::write(&config_path, contents) {
-                eprintln!("{} Failed to write server config: {}", *helpers::FAIL, e);
-                return;
-            }
-            
-            println!("{} Server '{}' added successfully", *helpers::SUCCESS, name);
-            println!("   Address: {}", address);
-            if token.is_some() {
-                println!("   Token: (configured)");
-            }
-        }
-        None => eprintln!("{} Cannot get home directory", *helpers::FAIL),
-    }
-}
-
-fn server_list() {
-    use opm::{config, helpers};
-    use tabled::{Table, Tabled};
-    
-    #[derive(Tabled)]
-    struct ServerDisplay {
-        #[tabled(rename = "Name")]
-        name: String,
-        #[tabled(rename = "Address")]
-        address: String,
-        #[tabled(rename = "Token")]
-        token: String,
-    }
-    
-    let servers = config::servers();
-    
-    if let Some(server_map) = servers.servers {
-        if server_map.is_empty() {
-            println!("{} No servers configured", *helpers::WARN);
-            return;
-        }
-        
-        let display: Vec<ServerDisplay> = server_map.into_iter().map(|(name, server)| {
-            ServerDisplay {
-                name,
-                address: server.address,
-                token: if server.token.is_some() { "Yes".to_string() } else { "No".to_string() },
-            }
-        }).collect();
-        
-        println!("{}", Table::new(display));
-    } else {
-        println!("{} No servers configured", *helpers::WARN);
-    }
-}
-
-fn server_remove(name: &str) {
-    use opm::{config, helpers};
-    use std::fs;
-    
-    let mut servers = config::servers();
-    
-    if let Some(ref mut server_map) = servers.servers {
-        if server_map.remove(name).is_some() {
-            // Save to file
-            match home::home_dir() {
-                Some(path) => {
-                    let config_path = format!("{}/.opm/servers.toml", path.display());
-                    let contents = match toml::to_string(&servers) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("{} Failed to serialize server config: {}", *helpers::FAIL, e);
-                            return;
-                        }
-                    };
-                    
-                    if let Err(e) = fs::write(&config_path, contents) {
-                        eprintln!("{} Failed to write server config: {}", *helpers::FAIL, e);
-                        return;
-                    }
-                    
-                    println!("{} Server '{}' removed successfully", *helpers::SUCCESS, name);
-                }
-                None => eprintln!("{} Cannot get home directory", *helpers::FAIL),
-            }
-        } else {
-            eprintln!("{} Server '{}' not found", *helpers::FAIL, name);
-        }
-    } else {
-        eprintln!("{} No servers configured", *helpers::WARN);
-    }
+    println!("{} Connected Agents", *helpers::INFO);
+    println!();
+    println!("To view connected agents, use one of the following methods:");
+    println!();
+    println!("  1. Web UI:");
+    println!("     • Start the daemon with Web UI enabled:");
+    println!("       opm daemon restore --webui");
+    println!("     • Open your browser to: http://localhost:9876");
+    println!("     • Navigate to the 'Agents' page");
+    println!();
+    println!("  2. API Endpoint:");
+    println!("     • Start the daemon with API enabled:");
+    println!("       opm daemon restore --api");
+    println!("     • Query: curl http://localhost:9876/daemon/agents/list");
+    println!();
+    println!("  3. Connect an agent:");
+    println!("     • On a remote machine: opm agent connect <server-url>");
+    println!("     • Example: opm agent connect http://192.168.1.100:9876");
 }
 
 fn agent_connect(server_url: String, name: Option<String>, token: Option<String>) {
@@ -633,19 +510,12 @@ fn main() {
             name,
             server,
         } => cli::adjust(item, command, name, &defaults(server)),
-        
-        Commands::Server { command } => match command {
-            ServerCommand::Connect { name, address, token } => {
-                server_connect(name, address, token)
-            }
-            ServerCommand::List => server_list(),
-            ServerCommand::Remove { name } => server_remove(name),
-        },
 
         Commands::Agent { command } => match command {
             AgentCommand::Connect { server_url, name, token } => {
                 agent_connect(server_url.clone(), name.clone(), token.clone())
             }
+            AgentCommand::List => agent_list(),
             AgentCommand::Disconnect => agent_disconnect(),
             AgentCommand::Status => agent_status(),
         },
@@ -657,7 +527,6 @@ fn main() {
         && !matches!(&cli.command, Commands::Export { .. })
         && !matches!(&cli.command, Commands::GetCommand { .. })
         && !matches!(&cli.command, Commands::Adjust { .. })
-        && !matches!(&cli.command, Commands::Server { .. })
         && !matches!(&cli.command, Commands::Agent { .. })
     {
         // When auto-starting daemon, read API/WebUI settings from config
