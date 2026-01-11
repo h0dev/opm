@@ -9,6 +9,8 @@ import { Menu, MenuItem, MenuItems, MenuButton, Transition } from '@headlessui/r
 
 const Index = (props: { base: string }) => {
 	const items = useArray([]);
+	const [searchTerm, setSearchTerm] = useState('');
+	const [statusFilter, setStatusFilter] = useState('all');
 
 	const badge = {
 		online: 'bg-emerald-400',
@@ -35,6 +37,28 @@ const Index = (props: { base: string }) => {
 	const isRemote = (item: any): bool => (item.server == 'local' ? false : true);
 	const isRunning = (status: string): bool => (status == 'stopped' ? false : status == 'crashed' ? false : true);
 	const action = (id: number, name: string) => api.post(`${props.base}/process/${id}/action`, { json: { method: name } }).then(() => fetch());
+	
+	// Save all processes
+	const saveAll = () => api.post(`${props.base}/daemon/save`, {}).then(() => {
+		alert('All processes saved to dumpfile');
+	});
+	
+	// Restore all processes
+	const restoreAll = () => api.post(`${props.base}/daemon/restore`, {}).then(() => {
+		fetch();
+		alert('All processes restored from dumpfile');
+	});
+
+	// Filter items based on search term and status filter
+	const filteredItems = items.value.filter((item) => {
+		const matchesSearch = searchTerm === '' || 
+			item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+			item.server.toLowerCase().includes(searchTerm.toLowerCase());
+		
+		const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
+		
+		return matchesSearch && matchesStatus;
+	});
 
 	useEffect(() => {
 		fetch();
@@ -45,16 +69,55 @@ const Index = (props: { base: string }) => {
 	} else {
 		return (
 			<Fragment>
-				<Header name={`Viewing ${items.count()} items`} description="View and manage all the processes on your daemons.">
-					<button
-						type="button"
-						onClick={fetch}
-						className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-zinc-800 bg-zinc-950 text-zinc-50 hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
-						Refresh
-					</button>
+				<Header name={`Viewing ${filteredItems.length} of ${items.count()} items`} description="View and manage all the processes on your daemons.">
+					<div className="flex gap-2">
+						<button
+							type="button"
+							onClick={saveAll}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-700 hover:border-zinc-600 bg-zinc-800 text-zinc-50 hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							Save All
+						</button>
+						<button
+							type="button"
+							onClick={restoreAll}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-700 hover:border-zinc-600 bg-zinc-800 text-zinc-50 hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							Restore All
+						</button>
+						<button
+							type="button"
+							onClick={fetch}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-zinc-800 bg-zinc-950 text-zinc-50 hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
+							Refresh
+						</button>
+					</div>
 				</Header>
+				
+				{/* Search and Filter Section */}
+				<div className="px-8 pb-4 flex gap-4 items-center">
+					<div className="flex-1">
+						<input
+							type="text"
+							placeholder="Search by name or server..."
+							value={searchTerm}
+							onChange={(e) => setSearchTerm(e.target.value)}
+							className="w-full px-4 py-2 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+						/>
+					</div>
+					<div>
+						<select
+							value={statusFilter}
+							onChange={(e) => setStatusFilter(e.target.value)}
+							className="px-4 py-2 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500">
+							<option value="all">All Status</option>
+							<option value="online">Online</option>
+							<option value="stopped">Stopped</option>
+							<option value="crashed">Crashed</option>
+						</select>
+					</div>
+				</div>
+
 				<ul role="list" className="px-8 pb-8 grid grid-cols-1 gap-x-6 gap-y-8 lg:grid-cols-4 xl:gap-x-8">
-					{items.value.map((item) => (
+					{filteredItems.map((item) => (
 						<li key={item.id + item.name} className="rounded-lg border border-zinc-700/50 bg-zinc-900/10 hover:bg-zinc-900/40 hover:border-zinc-700">
 							<div className="flex items-center gap-x-4 border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-3">
 								<span className="text-md font-bold text-zinc-200 truncate">

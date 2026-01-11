@@ -5,7 +5,7 @@ mod webui;
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{LogLevel, Verbosity};
-use macros_rs::{str, string, then};
+use macros_rs::{str, string};
 use update_informer::{Check, registry};
 
 use crate::{
@@ -359,6 +359,10 @@ fn main() {
         && !matches!(&cli.command, Commands::GetCommand { .. })
         && !matches!(&cli.command, Commands::Adjust { .. })
     {
-        then!(!daemon::pid::exists(), daemon::restart(&false, &false, false));
+        // When auto-starting daemon, read API/WebUI settings from config
+        if !daemon::pid::exists() {
+            let config = opm::config::read();
+            daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+        }
     }
 }

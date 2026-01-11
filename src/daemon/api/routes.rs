@@ -472,6 +472,53 @@ pub async fn dump_handler(_t: Token) -> Vec<u8> {
     dump::raw()
 }
 
+#[post("/daemon/save")]
+#[utoipa::path(post, tag = "Daemon", path = "/daemon/save", security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Save all processes successfully", body = ActionResponse),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn save_handler(_t: Token) -> Json<ActionResponse> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["save"]).start_timer();
+    HTTP_COUNTER.inc();
+    
+    Runner::new().save();
+    
+    timer.observe_duration();
+    Json(attempt(true, "save"))
+}
+
+#[post("/daemon/restore")]
+#[utoipa::path(post, tag = "Daemon", path = "/daemon/restore", security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Restore all processes successfully", body = ActionResponse),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["restore"]).start_timer();
+    HTTP_COUNTER.inc();
+    
+    let mut runner = Runner::new();
+    
+    // Restore processes from dump
+    for (_, item) in runner.items() {
+        if !item.running {
+            runner.restart(item.id, false, false);
+        }
+    }
+    
+    timer.observe_duration();
+    Json(attempt(true, "restore"))
+}
+
 #[get("/daemon/config")]
 #[utoipa::path(get, tag = "Daemon", path = "/daemon/config", security((), ("api_key" = [])),
     responses(
