@@ -506,13 +506,19 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
     let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["restore"]).start_timer();
     HTTP_COUNTER.inc();
     
-    let mut runner = Runner::new();
+    let runner = Runner::new();
     
-    // Restore processes that were running when saved
-    for (_, item) in runner.items() {
-        if item.running {
-            runner.restart(item.id, false, false);
-        }
+    // Collect IDs of processes that were running when saved
+    let running_ids: Vec<usize> = runner.items()
+        .into_iter()
+        .filter(|(_, item)| item.running)
+        .map(|(_, item)| item.id)
+        .collect();
+    
+    // Restore those processes
+    let mut runner = Runner::new();
+    for id in running_ids {
+        runner.restart(id, false, false);
     }
     
     timer.observe_duration();

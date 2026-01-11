@@ -33,7 +33,6 @@ const Index = (props: { base: string }) => {
 		} catch {}
 	}
 
-	const classNames = (...classes: Array<any>) => classes.filter(Boolean).join(' ');
 	const isRemote = (item: any): bool => (item.server == 'local' ? false : true);
 	const isRunning = (status: string): bool => (status == 'stopped' ? false : status == 'crashed' ? false : true);
 	const action = (id: number, name: string) => api.post(`${props.base}/process/${id}/action`, { json: { method: name } }).then(() => fetch());
