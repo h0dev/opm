@@ -112,7 +112,7 @@ const Index = (props: { base: string }) => {
 												<MenuItem>
 													{({ _ }) => (
 														<a
-															onClick={() => action(props.id, 'flush')}
+															onClick={() => action(item.id, 'flush')}
 															className="text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-zinc-800/80 hover:text-zinc-50">
 															Clean Logs
 														</a>

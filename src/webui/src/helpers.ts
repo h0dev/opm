@@ -17,7 +17,7 @@ export const formatMemory = (bytes: number): [number, string] => {
 	return [+size.toFixed(1), units[unitIndex]];
 };
 
-export const startDuration = (input: string, split: boolean = true): [number, string] | string => {
+export const startDuration = (input: string, split: boolean = true): [number, string] | string | null => {
 	const match = input.match(/(\d+)([dhms])/);
 	if (!match) return null;
 
