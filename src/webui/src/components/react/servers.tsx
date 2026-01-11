@@ -116,7 +116,11 @@ const Index = (props: { base: string }) => {
 								(Date.now() - new Date(agent.last_heartbeat).getTime()) < 30000; // 30 seconds threshold
 							
 							return (
-								<tr key={agent.id} className="hover:bg-zinc-800/30 transition">
+								<tr 
+									key={agent.id} 
+									className="hover:bg-zinc-800/30 transition cursor-pointer"
+									onClick={() => window.location.href = `${props.base}/agent-detail#${agent.id}`}
+								>
 									<td className="py-4 pl-4 pr-8 sm:pl-6 lg:pl-8">
 										<div className="flex items-center gap-x-4">
 											<div className={classNames(
@@ -161,7 +165,7 @@ const Index = (props: { base: string }) => {
 											</div>
 										</div>
 									</td>
-									<td className="py-4 pl-0 pr-4 text-right sm:pr-6 lg:pr-8">
+									<td className="py-4 pl-0 pr-4 text-right sm:pr-6 lg:pr-8" onClick={(e) => e.stopPropagation()}>
 										<button
 											onClick={() => removeAgent(agent.id, agent.name)}
 											className="text-red-400 hover:text-red-300 text-sm font-medium transition">
