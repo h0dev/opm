@@ -5,7 +5,7 @@ import ServersPage from '@/components/react/servers';
 import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
 ---
 
-<Layout title={SITE_TITLE + " - Servers"} description={SITE_DESCRIPTION}>
+<Layout title={SITE_TITLE + " - Agents"} description={SITE_DESCRIPTION}>
 	<Navbar active={"servers"} />
 	<main class="pt-10">
 		<ServersPage base={"{{base_path | safe}}"} client:only="@astrojs/react" />
