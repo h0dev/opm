@@ -61,6 +61,7 @@ uuid = { version = "1.11.0", features = ["v4", "serde"] }
 hostname = "0.4.0"
 tokio-tungstenite = "0.21.0"
 futures-util = "0.3.30"
+notify-rust = "4.11.3"
 
 tokio = { version = "1.39.2", features = ["full"] }
 rocket = { version = "0.5.1", features = ["json"] }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod prelude {
-    pub use super::{Config, Daemon, Runner, Server, Servers, Secure, Web};
+    pub use super::{Config, Daemon, Runner, Server, Servers, Secure, Web, Notifications};
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -27,6 +27,8 @@ pub struct Daemon {
     pub kind: String,
     #[serde(default = "default_web")]
     pub web: Web,
+    #[serde(default)]
+    pub notifications: Option<Notifications>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -86,4 +88,28 @@ impl Server {
             address: self.address.trim_end_matches('/').to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Notifications {
+    #[serde(default)]
+    pub enabled: bool,
+    pub events: Option<NotificationEvents>,
+    pub channels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NotificationEvents {
+    #[serde(default)]
+    pub agent_connect: bool,
+    #[serde(default)]
+    pub agent_disconnect: bool,
+    #[serde(default)]
+    pub process_start: bool,
+    #[serde(default)]
+    pub process_stop: bool,
+    #[serde(default)]
+    pub process_crash: bool,
+    #[serde(default)]
+    pub process_restart: bool,
 }

@@ -55,6 +55,7 @@ pub fn read() -> Config {
                         interval: 1000,
                         kind: string!("default"),
                         web: structs::default_web(),
+                        notifications: None,
                     },
                 };
 
