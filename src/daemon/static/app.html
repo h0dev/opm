@@ -12,6 +12,12 @@
             <div class="header-content">
                 <h1 class="header-title">OPM Process Manager</h1>
                 <div class="header-actions">
+                    <select id="server-select" class="server-select">
+                        <option value="local">Local Server</option>
+                    </select>
+                    <button class="btn btn-secondary" id="servers-btn">
+                        <span>🖥️</span> Servers
+                    </button>
                     <button class="btn btn-secondary" id="refresh-btn">
                         <span>⟳</span> Refresh
                     </button>
@@ -23,6 +29,31 @@
         </header>
 
         <main class="main-content">
+            <!-- Server Info Banner -->
+            <div id="server-info" class="server-info" style="display: none;">
+                <div class="server-info-content">
+                    <div class="server-info-item">
+                        <span class="server-info-label">Server:</span>
+                        <span id="current-server-name" class="server-info-value">local</span>
+                    </div>
+                    <div class="server-info-item">
+                        <span class="server-info-label">Status:</span>
+                        <span id="server-status" class="server-info-value">
+                            <span class="status-dot status-online"></span>
+                            <span>Online</span>
+                        </span>
+                    </div>
+                    <div class="server-info-item">
+                        <span class="server-info-label">Processes:</span>
+                        <span id="server-process-count" class="server-info-value">0</span>
+                    </div>
+                    <div class="server-info-item">
+                        <span class="server-info-label">Uptime:</span>
+                        <span id="server-uptime" class="server-info-value">N/A</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- Process List -->
             <div class="card">
                 <div class="card-header">
@@ -105,6 +136,27 @@
                     </select>
                 </div>
                 <pre id="logs-content" class="logs-content"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Servers Modal -->
+    <div id="servers-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Server Management</h3>
+                <button class="modal-close" id="close-servers-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="servers-list">
+                    <div class="servers-header">
+                        <h4>Configured Servers</h4>
+                        <p class="text-secondary">Manage remote OPM instances</p>
+                    </div>
+                    <div id="servers-content" class="servers-content">
+                        <div class="loading">Loading servers...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
