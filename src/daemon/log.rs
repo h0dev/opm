@@ -18,20 +18,21 @@ impl Logger {
     }
 
     pub fn write(&mut self, message: &str, args: HashMap<String, String>) {
-        let args = args
+        let args_str = args
             .iter()
             .map(|(key, value)| format!("{}={}", key, value))
             .collect::<Vec<String>>()
             .join(", ");
-        let msg = format!("{message} ({args})");
+        let msg = format!("{message} ({args_str})");
 
-        log::info!("{msg}");
-        writeln!(
+        // Use external log crate for logging
+        ::log::info!("{msg}");
+        // Silently ignore write errors to prevent panics
+        let _ = writeln!(
             &mut self.file,
             "[{}] {msg}",
             Local::now().format("%Y-%m-%d %H:%M:%S%.3f")
-        )
-        .unwrap()
+        );
     }
 }
 
@@ -40,6 +41,16 @@ macro_rules! log {
     ($msg:expr, $($key:expr => $value:expr),* $(,)?) => {{
         let mut args = std::collections::HashMap::new();
         $(args.insert($key.to_string(), format!("{}", $value));)*
-        crate::daemon::log::Logger::new().unwrap().write($msg, args)
+        if let Ok(mut logger) = crate::daemon::log::Logger::new() {
+            logger.write($msg, args)
+        } else {
+            // If logger creation fails, fall back to just using log crate
+            let args_str = args
+                .iter()
+                .map(|(key, value)| format!("{}={}", key, value))
+                .collect::<Vec<String>>()
+                .join(", ");
+            ::log::info!("{} ({})", $msg, args_str);
+        }
     }}
 }
