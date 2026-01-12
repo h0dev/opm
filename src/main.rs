@@ -446,21 +446,23 @@ fn main() {
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => {
             // Ensure daemon is running before restore (silent mode)
+            // Read config to check if API/WebUI should be enabled
+            let config = opm::config::read();
             if !daemon::pid::exists() {
-                daemon::start(false);
+                daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
             } else {
                 // Check if daemon is actually running (not just a stale PID file)
                 match daemon::pid::read() {
                     Ok(pid) => {
                         if !daemon::pid::running(pid.get()) {
                             daemon::pid::remove();
-                            daemon::start(false);
+                            daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
                         }
                     }
                     Err(_) => {
                         // PID file exists but can't be read, remove and start daemon
                         daemon::pid::remove();
-                        daemon::start(false);
+                        daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
                     }
                 }
             }
