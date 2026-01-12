@@ -14,8 +14,12 @@ use prometheus::{Counter, Gauge, Histogram, HistogramVec};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::fs::OpenOptions;
+use std::os::unix::io::AsRawFd;
 use structs::ErrorMessage;
 use tera::Context;
+use global_placeholders::global;
+use libc;
 
 use utoipa::{
     openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
@@ -174,8 +178,46 @@ impl<'r> FromRequest<'r> for routes::Token {
 
 static IS_WEBUI: AtomicBool = AtomicBool::new(false);
 
+/// Redirects stderr to the daemon log file
+/// This ensures that Rocket's error messages are captured in containers
+fn redirect_stderr_to_log() {
+    // Get the daemon log file path
+    let log_path = global!("opm.daemon.log");
+    
+    // Open the log file in append mode
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
+        Ok(log_file) => {
+            let log_fd = log_file.as_raw_fd();
+            // Redirect stderr to the log file
+            unsafe {
+                let result = libc::dup2(log_fd, libc::STDERR_FILENO);
+                if result == -1 {
+                    let error = std::io::Error::last_os_error();
+                    log::error!("Failed to dup2 stderr to log file: {}", error);
+                    return;
+                }
+            }
+            log::info!("Redirected stderr to daemon log file");
+            // Note: log_file will be dropped here, but the duplicated file descriptor remains open
+            // and is owned by the process. The dup2 call creates a new file descriptor that persists
+            // independently of the original log_file.
+        }
+        Err(err) => {
+            log::error!("Failed to open log file for stderr redirection: {}", err);
+        }
+    }
+}
+
 pub async fn start(webui: bool) {
     IS_WEBUI.store(webui, Ordering::Release);
+
+    // Redirect stderr to the daemon log file so that Rocket errors are captured
+    // This is critical in containerized environments where stderr might not be accessible
+    redirect_stderr_to_log();
 
     log::info!("API start: Creating templates");
     let tera = webui::create_templates();

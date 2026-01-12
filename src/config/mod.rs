@@ -189,6 +189,7 @@ impl Config {
         rocket::Config {
             address,
             port: self.daemon.web.port as u16,
+            log_level: rocket::config::LogLevel::Normal,
             ..rocket::Config::default()
         }
     }
