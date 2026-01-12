@@ -453,17 +453,34 @@ pub fn start(verbose: bool) {
                 "address" => config::read().fmt_address(),
                 "webui" => ui_enabled
             );
-            tokio::spawn(async move { api::start(ui_enabled).await });
             
-            // Give the API server a moment to start and bind to the port
-            // This helps ensure the server is actually listening before we report success
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            // Spawn API server in a separate task
+            let api_handle = tokio::spawn(async move { api::start(ui_enabled).await });
             
-            log!(
-                "[daemon] API server task spawned",
-                "address" => config::read().fmt_address(),
-                "webui" => ui_enabled
-            );
+            // Give the API server time to start and bind to the port
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            
+            // Check if the API server is actually listening
+            let addr = config::read().fmt_address();
+            let is_listening = tokio::net::TcpStream::connect(&addr).await.is_ok();
+            
+            if is_listening {
+                log!(
+                    "[daemon] API server successfully started",
+                    "address" => addr,
+                    "webui" => ui_enabled
+                );
+            } else {
+                log!(
+                    "[daemon] API server may have failed to start",
+                    "address" => addr,
+                    "status" => "check logs and port availability"
+                );
+                // Check if the task has already failed
+                if api_handle.is_finished() {
+                    log!("[daemon] API server task has terminated", "status" => "unexpected");
+                }
+            }
         }
 
         loop {

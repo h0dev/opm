@@ -177,17 +177,21 @@ static IS_WEBUI: AtomicBool = AtomicBool::new(false);
 pub async fn start(webui: bool) {
     IS_WEBUI.store(webui, Ordering::Release);
 
+    log::info!("API start: Creating templates");
     let tera = webui::create_templates();
     let s_path = config::read().get_path().trim_end_matches('/').to_string();
     
+    log::info!("API start: Initializing notification manager");
     // Initialize notification manager
     let notif_config = config::read().daemon.notifications.clone();
-    let notification_manager = std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
+    let _notification_manager = std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
     
+    log::info!("API start: Initializing agent registry");
     // Initialize agent registry
     let agent_registry = opm::agent::registry::AgentRegistry::new();
     let agent_registry = Arc::new(agent_registry);
 
+    log::info!("API start: Building routes");
     let routes = rocket::routes![
         embed,
         scalar,
@@ -231,7 +235,7 @@ pub async fn start(webui: bool) {
         routes::agent_unregister_handler,
     ];
 
-    log::info!("Configuring Rocket server at {}", config::read().fmt_address());
+    log::info!("API start: Configuring Rocket server at {}", config::read().fmt_address());
     
     let rocket = rocket::custom(config::read().get_address())
         .attach(Logger)
@@ -239,17 +243,20 @@ pub async fn start(webui: bool) {
         .manage(TeraState { path: tera.1, tera: tera.0 })
         .manage(agent_registry)
         .mount(format!("{s_path}/"), routes)
-        .register("/", rocket::catchers![internal_error, bad_request, not_allowed, not_found, unauthorized])
-        .launch()
-        .await;
+        .register("/", rocket::catchers![internal_error, bad_request, not_allowed, not_found, unauthorized]);
 
-    if let Err(err) = rocket {
+    log::info!("API start: Launching Rocket server");
+    let result = rocket.launch().await;
+
+    if let Err(err) = result {
         log::error!("Failed to launch Rocket server: {}", err);
         eprintln!("ERROR: Failed to launch API server: {}", err);
         eprintln!("Please check:");
         eprintln!("  1. The port is not already in use");
         eprintln!("  2. You have permission to bind to the configured address");
         eprintln!("  3. Your firewall settings allow the connection");
+    } else {
+        log::info!("Rocket server stopped normally");
     }
 }
 
