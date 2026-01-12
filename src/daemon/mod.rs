@@ -13,6 +13,7 @@ use macros_rs::{crashln, str, string, ternary};
 use opm::process::{MemoryInfo, unix::NativeProcess as Process};
 use serde::Serialize;
 use serde_json::json;
+use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread::sleep, time::Duration};
 
@@ -529,8 +530,6 @@ pub fn start(verbose: bool) {
             // If a process monitoring operation fails, we log it and continue
             // This ensures the daemon remains stable even when individual processes fail
             if !Runner::new().is_empty() {
-                use std::panic;
-                
                 let result = panic::catch_unwind(|| {
                     restart_process();
                 });
