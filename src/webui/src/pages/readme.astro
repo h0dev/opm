@@ -1,0 +1,121 @@
+---
+import Layout from '@/components/base.astro';
+import Navbar from '@/components/navbar.astro';
+import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
+---
+
+<Layout title={SITE_TITLE + " - Documentation"} description={SITE_DESCRIPTION}>
+	<Navbar active={"readme"} />
+	<main class="pt-12 sm:pt-10 min-h-screen bg-zinc-950">
+		<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+			<article class="prose prose-invert prose-zinc max-w-none">
+				<div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
+					<h1 class="text-3xl font-bold text-zinc-100 mb-4">Open Process Management (OPM)</h1>
+					<p class="text-zinc-300">
+						OPM is a simple PM2 alternative written in Rust. It provides a command-line/API interface 
+						to start, stop, restart, and manage fork processes, with a web UI for easier management.
+					</p>
+				</div>
+
+				<div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
+					<h2 class="text-2xl font-semibold text-zinc-100 mb-4">Key Features</h2>
+					<ul class="list-disc list-inside space-y-2 text-zinc-300">
+						<li>Start, stop, restart, and reload processes</li>
+						<li>Watch for file changes and auto-reload processes</li>
+						<li>Set memory limits for processes</li>
+						<li>List all running processes with customizable output formats</li>
+						<li>HTTP/Rust API for remote process control</li>
+						<li>Web UI for visual process management</li>
+						<li>Desktop notifications for process events</li>
+						<li>Configuration import/export with HCL files</li>
+					</ul>
+				</div>
+
+				<div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
+					<h2 class="text-2xl font-semibold text-zinc-100 mb-4">Quick Start</h2>
+					<div class="space-y-4">
+						<div>
+							<h3 class="text-lg font-medium text-zinc-200 mb-2">Starting the Daemon</h3>
+							<pre class="bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-zinc-300 overflow-x-auto"><code># Start daemon with API only
+opm daemon restore --api
+
+# Start daemon with both API and Web UI
+opm daemon restore --api --webui</code></pre>
+						</div>
+
+						<div>
+							<h3 class="text-lg font-medium text-zinc-200 mb-2">Basic Commands</h3>
+							<pre class="bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-zinc-300 overflow-x-auto"><code># Start a process
+opm start &lt;script&gt; [--name &lt;name&gt;] [--watch &lt;path&gt;]
+
+# List all processes
+opm list
+
+# Stop a process
+opm stop &lt;id/name&gt;
+
+# Restart a process
+opm restart &lt;id/name&gt;
+
+# View process logs
+opm logs &lt;id/name&gt;</code></pre>
+						</div>
+					</div>
+				</div>
+
+				<div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
+					<h2 class="text-2xl font-semibold text-zinc-100 mb-4">Configuration</h2>
+					<p class="text-zinc-300 mb-3">
+						The daemon can be configured in <code class="bg-zinc-800 px-2 py-1 rounded text-sm">~/.opm/config.toml</code>:
+					</p>
+					<pre class="bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-zinc-300 overflow-x-auto"><code>[daemon.web]
+ui = false      # Enable/disable web UI
+api = false     # Enable/disable API server
+address = "127.0.0.1"
+port = 9876
+
+# Optional: API security
+[daemon.web.secure]
+enabled = true
+token = "your-secret-token"</code></pre>
+				</div>
+
+				<div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
+					<h2 class="text-2xl font-semibold text-zinc-100 mb-4">API Endpoints</h2>
+					<p class="text-zinc-300 mb-3">
+						The API server provides REST endpoints for process management:
+					</p>
+					<ul class="list-disc list-inside space-y-2 text-zinc-300">
+						<li><code class="bg-zinc-800 px-2 py-1 rounded text-sm">GET /health</code> - Check server health</li>
+						<li><code class="bg-zinc-800 px-2 py-1 rounded text-sm">GET /daemon/list</code> - List all processes</li>
+						<li><code class="bg-zinc-800 px-2 py-1 rounded text-sm">GET /daemon/info/{'{'}id{'}'}</code> - Get process details</li>
+						<li><code class="bg-zinc-800 px-2 py-1 rounded text-sm">POST /daemon/action</code> - Control processes (start, stop, restart)</li>
+						<li><code class="bg-zinc-800 px-2 py-1 rounded text-sm">GET /openapi.json</code> - OpenAPI specification</li>
+					</ul>
+				</div>
+
+				<div class="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
+					<h2 class="text-2xl font-semibold text-zinc-100 mb-4">Additional Resources</h2>
+					<div class="space-y-2 text-zinc-300">
+						<p>
+							<strong class="text-zinc-100">Repository:</strong> 
+							<a href="https://lab.themackabu.dev/self/opm" class="text-blue-400 hover:text-blue-300 underline ml-2" target="_blank" rel="noopener noreferrer">
+								lab.themackabu.dev/self/opm
+							</a>
+						</p>
+						<p>
+							<strong class="text-zinc-100">License:</strong> 
+							<span class="ml-2">MIT</span>
+						</p>
+					</div>
+				</div>
+			</article>
+		</div>
+	</main>
+</Layout>
+
+<style>
+	code {
+		font-family: 'Courier New', monospace;
+	}
+</style>

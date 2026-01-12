@@ -7,7 +7,7 @@ const { active } = Astro.props;
     <div class="flex h-14 sm:h-12 justify-between relative">
       <div class="flex w-full overflow-x-auto scrollbar-hide">
         <div class="flex flex-shrink-0 items-center">
-          <img class="h-6 sm:h-7 w-auto" src="{{base_path | safe}}/assets/favicon.svg" alt="PMC">
+          <img class="h-6 sm:h-7 w-auto" src="{{base_path | safe}}/assets/favicon.svg" alt="OPM">
         </div>
         <div class="ml-3 sm:ml-6 flex space-x-3 sm:space-x-6 lg:space-x-8 items-center">
           <a href="{{base_path | safe}}/" class={`${active == "list" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>
@@ -19,9 +19,9 @@ const { active } = Astro.props;
             <span class="hidden sm:inline">Notifications</span>
             <span class="sm:hidden">Notifs</span>
           </a>
-          <a href="{{base_path | safe}}/docs" class={`${active == "docs" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>
-            <span class="hidden sm:inline">API Docs</span>
-            <span class="sm:hidden">API</span>
+          <a href="{{base_path | safe}}/readme" class={`${active == "readme" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>
+            <span class="hidden sm:inline">Documentation</span>
+            <span class="sm:hidden">Docs</span>
           </a>
         </div>
       </div>

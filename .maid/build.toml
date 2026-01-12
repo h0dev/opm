@@ -15,21 +15,21 @@ script = [
 
    # build linux (x86_64)
    "cargo zigbuild -r --color always",
-   "mv target/release/pmc build/pmc",
-   "zip build/pmc_%{env.VERSION}_linux_amd64.zip build/pmc",
-   "rm build/pmc",
+   "mv target/release/opm build/opm",
+   "zip build/opm_%{env.VERSION}_linux_amd64.zip build/opm",
+   "rm build/opm",
    
    # build macos (x86_64)
    "cargo zigbuild -r --target x86_64-apple-darwin --color always", 
-   "mv target/x86_64-apple-darwin/release/pmc build/pmc",
-   "zip build/pmc_%{env.VERSION}_darwin_amd64.zip build/pmc",
-   "rm build/pmc",
+   "mv target/x86_64-apple-darwin/release/opm build/opm",
+   "zip build/opm_%{env.VERSION}_darwin_amd64.zip build/opm",
+   "rm build/opm",
    
    # build macos (aarch64)
    "cargo zigbuild -r --target aarch64-apple-darwin --color always", 
-   "mv target/aarch64-apple-darwin/release/pmc build/pmc",
-   "zip build/pmc_%{env.VERSION}_darwin_arm.zip build/pmc",
-   "rm build/pmc",
+   "mv target/aarch64-apple-darwin/release/opm build/opm",
+   "zip build/opm_%{env.VERSION}_darwin_arm.zip build/opm",
+   "rm build/opm",
    
    # post build
    "ls -sh build",
