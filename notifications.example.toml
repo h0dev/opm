@@ -18,6 +18,7 @@ process_crash = true       # Notify when a process crashes
 process_restart = true     # Notify when a process restarts
 
 # Optional: External notification channels using Shoutrrr URLs
+# Format: service://credentials@target
 # Uncomment and configure the channels you want to use
 # channels = [
 #     "discord://token@id",                              # Discord webhook

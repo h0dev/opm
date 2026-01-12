@@ -158,6 +158,7 @@ const NotificationSettings = (props: { base: string }) => {
 						Add external notification channels using Shoutrrr URLs (e.g., Discord, Slack, Telegram)
 					</p>
 					
+					{/* Input field for adding new notification channels */}
 					<div className="flex gap-2 mb-4">
 						<input
 							type="text"
