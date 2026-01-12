@@ -2,20 +2,42 @@
 const { active } = Astro.props;
 ---
 
-<nav class="fixed w-full backdrop-blur-md bg-zinc-900/50 border-b border-zinc-800 border-off z-[100]">
-  <div class="mx-auto px-2 sm:px-4">
-    <div class="flex h-12 sm:h-10 justify-between relative">
-      <div class="flex w-full overflow-x-auto">
+<nav class="fixed w-full backdrop-blur-md bg-zinc-900/50 border-b border-zinc-800 border-off z-[100] shadow-lg">
+  <div class="mx-auto px-3 sm:px-4 lg:px-6">
+    <div class="flex h-14 sm:h-12 justify-between relative">
+      <div class="flex w-full overflow-x-auto scrollbar-hide">
         <div class="flex flex-shrink-0 items-center">
-          <img class="h-5 sm:h-6 w-auto" src="{{base_path | safe}}/assets/favicon.svg" alt="PMC">
+          <img class="h-6 sm:h-7 w-auto" src="{{base_path | safe}}/assets/favicon.svg" alt="PMC">
         </div>
-        <div class="ml-4 sm:ml-6 flex space-x-4 sm:space-x-8 items-center">
-          <a href="{{base_path | safe}}/" class={`${active == "list" ? 'border-b-2 border-sky-200 text-sky-200' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-500 hover:text-zinc-200'} px-1 pt-1 text-sm sm:text-base font-medium inline-flex items-center whitespace-nowrap py-2`}>Process List</a>
-          <a href="{{base_path | safe}}/servers" class={`${active == "servers" ? 'border-b-2 border-sky-200 text-sky-200' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-500 hover:text-zinc-200'} px-1 pt-1 text-sm sm:text-base font-medium inline-flex items-center whitespace-nowrap py-2`}>Agents</a>
-          <a href="{{base_path | safe}}/notifications" class={`${active == "notifications" ? 'border-b-2 border-sky-200 text-sky-200' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-500 hover:text-zinc-200'} px-1 pt-1 text-sm sm:text-base font-medium inline-flex items-center whitespace-nowrap py-2`}>Notifications</a>
-          <a href="{{base_path | safe}}/docs" class={`${active == "docs" ? 'border-b-2 border-sky-200 text-sky-200' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-500 hover:text-zinc-200'} px-1 pt-1 text-sm sm:text-base font-medium inline-flex items-center whitespace-nowrap py-2`}>API Docs</a>
+        <div class="ml-3 sm:ml-6 flex space-x-3 sm:space-x-6 lg:space-x-8 items-center">
+          <a href="{{base_path | safe}}/" class={`${active == "list" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>
+            <span class="hidden sm:inline">Process List</span>
+            <span class="sm:hidden">Processes</span>
+          </a>
+          <a href="{{base_path | safe}}/servers" class={`${active == "servers" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>Agents</a>
+          <a href="{{base_path | safe}}/notifications" class={`${active == "notifications" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>
+            <span class="hidden sm:inline">Notifications</span>
+            <span class="sm:hidden">Notifs</span>
+          </a>
+          <a href="{{base_path | safe}}/docs" class={`${active == "docs" ? 'border-b-2 border-sky-400 text-sky-300' : 'border-b-2 border-transparent hover:border-zinc-300 text-zinc-400 hover:text-zinc-100'} px-2 sm:px-3 pt-1 text-xs sm:text-sm lg:text-base font-medium inline-flex items-center whitespace-nowrap py-2 transition-all duration-200`}>
+            <span class="hidden sm:inline">API Docs</span>
+            <span class="sm:hidden">API</span>
+          </a>
         </div>
       </div>
    </div>
   </div>
 </nav>
+
+<style>
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+</style>

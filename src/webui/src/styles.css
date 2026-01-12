@@ -44,3 +44,111 @@ html {
 	}
 }
 
+/* Smooth transitions for interactive elements */
+button, a, input, select {
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Enhanced hover effects */
+button:hover, a:hover {
+	transform: translateY(-1px);
+}
+
+button:active, a:active {
+	transform: translateY(0);
+}
+
+/* Card hover effects */
+.card-hover {
+	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+}
+
+/* Skeleton loader animation */
+@keyframes shimmer {
+	0% {
+		background-position: -1000px 0;
+	}
+	100% {
+		background-position: 1000px 0;
+	}
+}
+
+.skeleton {
+	animation: shimmer 2s infinite linear;
+	background: linear-gradient(
+		to right,
+		#18181b 4%,
+		#27272a 25%,
+		#18181b 36%
+	);
+	background-size: 1000px 100%;
+}
+
+/* Fade in animation */
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.fade-in {
+	animation: fadeIn 0.4s ease-out;
+}
+
+/* Pulse animation for status indicators */
+@keyframes pulse {
+	0%, 100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.5;
+	}
+}
+
+.pulse {
+	animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Gradient text effect */
+.gradient-text {
+	background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%);
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: #18181b;
+}
+
+::-webkit-scrollbar-thumb {
+	background: #3f3f46;
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: #52525b;
+}
+
+/* Focus styles for accessibility */
+*:focus-visible {
+	outline: 2px solid #3b82f6;
+	outline-offset: 2px;
+}
+

@@ -189,21 +189,23 @@ const Index = (props: { base: string }) => {
 				</Header>
 				
 				{/* Search and Filter Section */}
-				<div className="px-8 pb-4 flex gap-4 items-center">
+				<div className="px-4 sm:px-6 lg:px-8 pb-4 flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center" role="search" aria-label="Search and filter processes">
 					<div className="flex-1">
 						<input
 							type="text"
 							placeholder="Search by name or server..."
 							value={searchTerm}
 							onChange={(e) => setSearchTerm(e.target.value)}
-							className="w-full px-4 py-2 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+							aria-label="Search processes by name or server"
+							className="w-full px-4 py-2.5 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all"
 						/>
 					</div>
-					<div>
+					<div className="sm:w-auto w-full">
 						<select
 							value={statusFilter}
 							onChange={(e) => setStatusFilter(e.target.value)}
-							className="px-4 py-2 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500">
+							aria-label="Filter processes by status"
+							className="w-full sm:w-auto px-4 py-2.5 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all">
 							<option value="all">All Status</option>
 							<option value="online">Online</option>
 							<option value="stopped">Stopped</option>
@@ -212,11 +214,11 @@ const Index = (props: { base: string }) => {
 					</div>
 				</div>
 
-				<ul role="list" className="px-8 pb-8 grid grid-cols-1 gap-x-6 gap-y-8 lg:grid-cols-4 xl:gap-x-8">
+				<ul role="list" className="px-4 sm:px-6 lg:px-8 pb-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 xl:gap-8 fade-in">
 					{filteredItems.map((item) => (
-						<li key={item.id + item.name} className="rounded-lg border border-zinc-700/50 bg-zinc-900/10 hover:bg-zinc-900/40 hover:border-zinc-700 relative">
+						<li key={item.id + item.name} className="rounded-xl border border-zinc-700/50 bg-zinc-900/10 hover:bg-zinc-900/40 hover:border-zinc-600 relative transition-all duration-300 card-hover shadow-lg hover:shadow-2xl overflow-hidden">
 							{/* Selection checkbox */}
-							<div className="absolute top-2 left-2 z-10">
+							<div className="absolute top-3 left-3 z-10">
 								<input
 									type="checkbox"
 									checked={selectedIds.has(item.id)}
@@ -224,20 +226,21 @@ const Index = (props: { base: string }) => {
 										e.stopPropagation();
 										toggleSelect(item.id);
 									}}
-									className="h-5 w-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-zinc-900 cursor-pointer"
+									className="h-5 w-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-zinc-900 cursor-pointer transition-all"
 								/>
 							</div>
-							<div className="flex items-center gap-x-4 border-b border-zinc-800/80 bg-zinc-900/20 px-4 py-3 pl-10">
-								<span className="text-md font-bold text-zinc-200 truncate">
+							<div className="flex items-center gap-x-4 border-b border-zinc-800/80 bg-zinc-900/30 px-4 py-3.5 pl-12 rounded-t-xl backdrop-blur-sm">
+								<span className="text-md font-bold text-zinc-200 truncate flex-1">
 									{item.name}
-									<div className="text-xs font-medium text-zinc-400">{item.server != 'local' ? item.server : 'Internal'}</div>
+									<div className="text-xs font-medium text-zinc-400 mt-0.5">{item.server != 'local' ? item.server : 'Internal'}</div>
 								</span>
-								<span className="relative flex h-2 w-2 -mt-3.5 -ml-2">
-									<span className={`${badge[item.status]} relative inline-flex rounded-full h-2 w-2`}></span>
+								<span className="relative flex h-2.5 w-2.5 -mt-3.5">
+									<span className={`${badge[item.status]} absolute inline-flex h-full w-full rounded-full opacity-75 ${item.status === 'online' ? 'animate-ping' : ''}`}></span>
+									<span className={`${badge[item.status]} relative inline-flex rounded-full h-2.5 w-2.5 shadow-lg`}></span>
 								</span>
-								<Menu as="div" className="relative ml-auto">
-									<MenuButton className="transition border focus:outline-none focus:ring-0 focus:ring-offset-0 z-50 shrink-0 border-zinc-700/50 bg-transparent hover:bg-zinc-800 p-2 text-sm font-semibold rounded-lg ml-3">
-										<EllipsisVerticalIcon className="h-5 w-5 text-zinc-50" aria-hidden="true" />
+								<Menu as="div" className="relative">
+									<MenuButton className="transition border focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-0 z-50 shrink-0 border-zinc-700/50 bg-transparent hover:bg-zinc-800 hover:border-zinc-600 p-2 text-sm font-semibold rounded-lg">
+										<EllipsisVerticalIcon className="h-5 w-5 text-zinc-300 hover:text-zinc-50 transition-colors" aria-hidden="true" />
 									</MenuButton>
 									<Transition
 										as={Fragment}
@@ -320,27 +323,27 @@ const Index = (props: { base: string }) => {
 									</Transition>
 								</Menu>
 							</div>
-							<a href={isRemote(item) ? `./view/${item.id}?server=${item.server}` : `./view/${item.id}`}>
+							<a href={isRemote(item) ? `./view/${item.id}?server=${item.server}` : `./view/${item.id}`} className="block transition-colors duration-200 hover:bg-zinc-900/20">
 								<dl className="-my-3 divide-y divide-zinc-800/30 px-6 py-4 text-sm leading-6">
-									<div className="flex justify-between gap-x-1 py-1">
-										<dt className="text-zinc-700">cpu usage</dt>
-										<dd className="text-zinc-500">{isRunning(item.status) ? item.cpu : 'offline'}</dd>
+									<div className="flex justify-between gap-x-2 py-2 transition-colors hover:text-zinc-300">
+										<dt className="text-zinc-600 font-medium">cpu usage</dt>
+										<dd className="text-zinc-400 font-mono">{isRunning(item.status) ? item.cpu : 'offline'}</dd>
 									</div>
-									<div className="flex justify-between gap-x-1 py-1">
-										<dt className="text-zinc-700">memory</dt>
-										<dd className="text-zinc-500">{isRunning(item.status) ? item.mem : 'offline'}</dd>
+									<div className="flex justify-between gap-x-2 py-2 transition-colors hover:text-zinc-300">
+										<dt className="text-zinc-600 font-medium">memory</dt>
+										<dd className="text-zinc-400 font-mono">{isRunning(item.status) ? item.mem : 'offline'}</dd>
 									</div>
-									<div className="flex justify-between gap-x-1 py-1">
-										<dt className="text-zinc-700">pid</dt>
-										<dd className="text-zinc-500">{isRunning(item.status) ? item.pid : 'none'}</dd>
+									<div className="flex justify-between gap-x-2 py-2 transition-colors hover:text-zinc-300">
+										<dt className="text-zinc-600 font-medium">pid</dt>
+										<dd className="text-zinc-400 font-mono">{isRunning(item.status) ? item.pid : 'none'}</dd>
 									</div>
-									<div className="flex justify-between gap-x-1 py-1">
-										<dt className="text-zinc-700">uptime</dt>
-										<dd className="text-zinc-500">{isRunning(item.status) ? item.uptime : 'none'}</dd>
+									<div className="flex justify-between gap-x-2 py-2 transition-colors hover:text-zinc-300">
+										<dt className="text-zinc-600 font-medium">uptime</dt>
+										<dd className="text-zinc-400 font-mono">{isRunning(item.status) ? item.uptime : 'none'}</dd>
 									</div>
-									<div className="flex justify-between gap-x-1 py-1">
-										<dt className="text-zinc-700">restarts</dt>
-										<dd className="text-zinc-500">{item.restarts == 0 ? 'none' : item.restarts}</dd>
+									<div className="flex justify-between gap-x-2 py-2 transition-colors hover:text-zinc-300">
+										<dt className="text-zinc-600 font-medium">restarts</dt>
+										<dd className="text-zinc-400 font-mono">{item.restarts == 0 ? 'none' : item.restarts}</dd>
 									</div>
 								</dl>
 							</a>

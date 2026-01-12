@@ -193,6 +193,11 @@ pub async fn server_status(name: String, state: &State<TeraState>, _webui: Enabl
     Ok((ContentType::HTML, render("status", &state, &mut ctx).await?))
 }
 
+#[get("/notifications")]
+pub async fn notifications(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { 
+    Ok((ContentType::HTML, render("notifications", &state, &mut Context::new()).await?)) 
+}
+
 #[get("/daemon/prometheus")]
 #[utoipa::path(get, tag = "Daemon", path = "/daemon/prometheus", security((), ("api_key" = [])),
     responses(
