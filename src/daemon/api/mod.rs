@@ -231,7 +231,8 @@ pub async fn start(webui: bool) {
     log::info!("API start: Initializing agent registry");
     // Initialize agent registry
     let agent_registry = opm::agent::registry::AgentRegistry::new();
-    let agent_registry = Arc::new(agent_registry);
+    // Note: Don't wrap in Arc here - Rocket's state management handles sharing
+    // let agent_registry = Arc::new(agent_registry);
 
     log::info!("API start: Building routes");
     let routes = rocket::routes![
