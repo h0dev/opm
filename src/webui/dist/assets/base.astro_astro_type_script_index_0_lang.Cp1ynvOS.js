@@ -1,0 +1,1 @@
+import{$ as s}from"./store.Bn0h-d5G.js";class n extends HTMLElement{constructor(){super();const e=this.dataset.base;fetch(e+"/daemon/metrics",{headers:{token:s.get().token||""}}).then(t=>{window.location.pathname.includes("login")?t.status===200&&(window.location.href=e+"/"):t.status!==200&&(window.location.href=e+"/login")})}}customElements.define("app-redirect",n);

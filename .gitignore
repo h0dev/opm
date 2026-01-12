@@ -11,6 +11,7 @@ bin
 
 # build output
 dist/
+!src/webui/dist/
 .astro/
 
 # dependencies

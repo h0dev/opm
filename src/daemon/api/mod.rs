@@ -13,6 +13,7 @@ use prometheus::{opts, register_counter, register_gauge, register_histogram, reg
 use prometheus::{Counter, Gauge, Histogram, HistogramVec};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use structs::ErrorMessage;
 use tera::Context;
 
@@ -30,7 +31,7 @@ use rocket::{
     State,
 };
 
-use std::{io, path::PathBuf};
+
 
 lazy_static! {
     pub static ref HTTP_COUNTER: Counter = register_counter!(opts!("http_requests_total", "Number of HTTP requests made.")).unwrap();
@@ -183,8 +184,9 @@ pub async fn start(webui: bool) {
     let notif_config = config::read().daemon.notifications.clone();
     let notification_manager = std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
     
-    // Initialize agent registry with notification support
-    let agent_registry = opm::agent::registry::AgentRegistry::with_notifier(notification_manager.clone());
+    // Initialize agent registry
+    let agent_registry = opm::agent::registry::AgentRegistry::new();
+    let agent_registry = Arc::new(agent_registry);
 
     let routes = rocket::routes![
         embed,

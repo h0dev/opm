@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread::sleep, time::Duration};
 
 use opm::{
-    agent::registry::AgentRegistry,
     config, file,
     helpers::{self, ColoredString},
     process::{Runner, get_process_cpu_usage_with_children_from_process, hash, id::Id},
