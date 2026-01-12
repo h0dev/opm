@@ -226,7 +226,7 @@ const Index = (props: { base: string }) => {
 										e.stopPropagation();
 										toggleSelect(item.id);
 									}}
-									className="h-5 w-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-zinc-900 cursor-pointer transition-all"
+									className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 focus:ring-offset-zinc-900 cursor-pointer transition-all"
 								/>
 							</div>
 							<div className="flex items-center gap-x-4 border-b border-zinc-800/80 bg-zinc-900/30 px-4 py-3.5 pl-12 rounded-t-xl backdrop-blur-sm">

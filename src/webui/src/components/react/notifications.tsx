@@ -158,7 +158,7 @@ const NotificationSettings = (props: { base: string }) => {
 						Add external notification channels using Shoutrrr URLs (e.g., Discord, Slack, Telegram)
 					</p>
 					
-					{/* Add Channel */}
+					{/* Input field for adding new notification channels */}
 					<div className="flex gap-2 mb-4">
 						<input
 							type="text"
@@ -166,12 +166,12 @@ const NotificationSettings = (props: { base: string }) => {
 							onChange={(e) => setNewChannel(e.target.value)}
 							onKeyPress={(e) => e.key === 'Enter' && addChannel()}
 							placeholder="discord://token@id or slack://token:token@channel"
-							className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+							className="flex-1 px-3 py-1.5 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
 						/>
 						<button
 							onClick={addChannel}
 							disabled={!newChannel.trim() || !settings.enabled}
-							className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition">
+							className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition">
 							Add
 						</button>
 					</div>

@@ -1,0 +1,50 @@
+# OPM Notifications Example Configuration
+# Copy this file to ~/.opm/config.toml and adjust the [daemon.notifications] section
+
+# This is an example of how to configure notifications in OPM.
+# Add this section to your ~/.opm/config.toml file.
+
+[daemon.notifications]
+# Master switch for all notifications
+enabled = true
+
+# Configure which events trigger notifications
+[daemon.notifications.events]
+agent_connect = true       # Notify when an agent connects
+agent_disconnect = true    # Notify when an agent disconnects
+process_start = true       # Notify when a process starts
+process_stop = true        # Notify when a process stops
+process_crash = true       # Notify when a process crashes
+process_restart = true     # Notify when a process restarts
+
+# Optional: External notification channels using Shoutrrr URLs
+# Format: service://credentials@target
+# Uncomment and configure the channels you want to use
+# channels = [
+#     "discord://token@id",                              # Discord webhook
+#     "slack://token:token@channel",                     # Slack webhook
+#     "telegram://token@telegram?chats=@chat",           # Telegram
+#     "gotify://gotify.example.com/token",               # Gotify
+#     "pushover://shoutrrr:token@user",                  # Pushover
+#     "matrix://user:password@homeserver/?rooms=!room",  # Matrix
+# ]
+
+# For more information about Shoutrrr URL formats, visit:
+# https://containrrr.dev/shoutrrr/
+
+# Example complete configuration:
+#
+# [daemon.notifications]
+# enabled = true
+# 
+# [daemon.notifications.events]
+# agent_connect = true
+# agent_disconnect = true
+# process_start = false
+# process_stop = false
+# process_crash = true
+# process_restart = true
+# 
+# channels = [
+#     "discord://your-discord-webhook-token@webhook-id"
+# ]
