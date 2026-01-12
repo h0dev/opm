@@ -13,7 +13,7 @@ use prometheus::{opts, register_counter, register_gauge, register_histogram, reg
 use prometheus::{Counter, Gauge, Histogram, HistogramVec};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
 use structs::ErrorMessage;
@@ -244,7 +244,6 @@ pub async fn start(webui: bool) {
     log::info!("API start: Building routes");
     let routes = rocket::routes![
         embed,
-        scalar,
         health,
         docs_json,
         static_assets,
@@ -349,11 +348,6 @@ async fn docs_json() -> Value { json!(ApiDoc::openapi()) }
 
 #[rocket::get("/docs/embed")]
 async fn embed() -> (ContentType, String) { (ContentType::HTML, docs::Docs::new().render()) }
-
-#[rocket::get("/docs")]
-async fn scalar(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { 
-    Ok((ContentType::HTML, render("docs", &state, &mut Context::new()).await?)) 
-}
 
 #[rocket::get("/health")]
 async fn health() -> Value { json!({"healthy": true}) }

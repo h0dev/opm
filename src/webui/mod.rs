@@ -8,7 +8,6 @@ pub fn create_templates() -> (Tera, String) {
     #[cfg(not(debug_assertions))]
     {
         tera.add_raw_templates(vec![
-            ("docs", include_str!("dist/docs.html")),
             ("view", include_str!("dist/view.html")),
             ("login", include_str!("dist/login.html")),
             ("dashboard", include_str!("dist/index.html")),
@@ -23,7 +22,6 @@ pub fn create_templates() -> (Tera, String) {
     {
         // For debug builds, add placeholder templates
         tera.add_raw_templates(vec![
-            ("docs", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
             ("view", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
             ("login", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
             ("dashboard", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
