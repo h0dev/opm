@@ -341,7 +341,7 @@ const View = (props: { id: string; base: string }) => {
 							<button
 								type="button"
 								disabled={disabled}
-								onClick={() => action(props.id, 'restart')}
+								onClick={() => action(props.id, online ? 'restart' : 'start')}
 								className="disabled:opacity-50 disabled:pointer-events-none transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 saturate-[110%] border-zinc-700 hover:border-zinc-600 bg-zinc-800 text-zinc-50 hover:bg-zinc-700 px-4 py-2 text-sm font-semibold rounded-lg">
 								{disabled ? (
 									<svg className="w-5 h-5 text-zinc-800 animate-spin fill-zinc-50" viewBox="0 0 100 101" fill="none">
