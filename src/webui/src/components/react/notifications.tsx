@@ -102,7 +102,7 @@ const NotificationSettings = (props: { base: string }) => {
 						</div>
 						<button
 							onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
-							className={`toggle-switch relative inline-flex h-6 w-11 items-center rounded-full transition ${
+							className={`toggle-switch relative inline-flex h-6 w-11 items-center justify-start rounded-full transition ${
 								settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
 							}`}>
 							<span
@@ -137,7 +137,7 @@ const NotificationSettings = (props: { base: string }) => {
 										}
 									})}
 									disabled={!settings.enabled}
-									className={`toggle-switch relative inline-flex h-6 w-11 items-center rounded-full transition ${
+									className={`toggle-switch relative inline-flex h-6 w-11 items-center justify-start rounded-full transition ${
 										value && settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
 									} disabled:opacity-50 disabled:cursor-not-allowed`}>
 									<span

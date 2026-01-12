@@ -157,9 +157,9 @@ const LogViewer = (props: { liveReload; setLiveReload; server: string | null; ba
 					<Switch
 						checked={props.liveReload}
 						onChange={props.setLiveReload}
-						className="group relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-zinc-800 transition-colors duration-200 ease-in-out focus:outline-none data-[checked]:bg-sky-500">
+						className="group relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer items-center justify-start rounded-full border-2 border-transparent bg-zinc-800 transition-colors duration-200 ease-in-out focus:outline-none data-[checked]:bg-sky-500">
 						<span className="sr-only">Set live reload</span>
-						<span className="pointer-events-none relative inline-block h-5 w-5 transform rounded-full bg-zinc-500 group-data-[checked]:bg-white shadow ring-0 transition duration-200 ease-in-out group-data-[checked]:translate-x-5">
+						<span className="pointer-events-none relative inline-block h-5 w-5 transform rounded-full bg-zinc-500 group-data-[checked]:bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-0 group-data-[checked]:translate-x-5">
 							<span
 								aria-hidden="true"
 								className="absolute inset-0 flex h-full w-full items-center justify-center transition-opacity duration-200 ease-in group-data-[checked]:opacity-0 group-data-[checked]:duration-100 group-data-[checked]:ease-out">
