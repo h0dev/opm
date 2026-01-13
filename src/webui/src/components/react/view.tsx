@@ -289,7 +289,7 @@ const View = (props: { id: string; base: string }) => {
 	}, []);
 
 	const action = (id: number, name: string) => {
-		server != 'local'
+		return server != 'local'
 			? api.post(`${props.base}/remote/${server}/action/${id}`, { json: { method: name } }).then(() => openConnection())
 			: api.post(`${props.base}/process/${id}/action`, { json: { method: name } }).then(() => openConnection());
 	};
