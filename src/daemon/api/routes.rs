@@ -1068,26 +1068,31 @@ pub async fn action_handler(id: usize, body: Json<ActionBody>, _t: Token) -> Res
         match method {
             "start" => {
                 runner.get(id).restart(false);  // start should not increment
+                runner.save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
             "restart" => {
                 runner.get(id).restart(true);  // restart should increment
+                runner.save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
             "reload" => {
                 runner.get(id).reload(true);  // reload should increment
+                runner.save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
             "stop" | "kill" => {
                 runner.get(id).stop();
+                runner.save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
             "reset_env" | "clear_env" => {
                 runner.get(id).clear_env();
+                runner.save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1153,18 +1158,22 @@ pub async fn bulk_action_handler(body: Json<BulkActionBody>, _t: Token) -> Json<
             match method {
                 "start" => {
                     runner.get(*id).restart(false);
+                    runner.save();
                     success.push(*id);
                 }
                 "restart" => {
                     runner.get(*id).restart(true);
+                    runner.save();
                     success.push(*id);
                 }
                 "reload" => {
                     runner.get(*id).reload(true);
+                    runner.save();
                     success.push(*id);
                 }
                 "stop" | "kill" => {
                     runner.get(*id).stop();
+                    runner.save();
                     success.push(*id);
                 }
                 "delete" | "remove" => {
