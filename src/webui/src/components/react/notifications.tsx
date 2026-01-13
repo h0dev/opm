@@ -95,7 +95,7 @@ const NotificationSettings = (props: { base: string }) => {
 					<button
 						type="button"
 						onClick={testNotification}
-						disabled={testing || !settings.enabled}
+						disabled={testing || !settings.enabled || settings.channels.length === 0}
 						className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-emerald-700 hover:border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-zinc-700 disabled:border-zinc-700 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold rounded-lg">
 						{testing ? 'Testing...' : 'Test Notification'}
 					</button>
