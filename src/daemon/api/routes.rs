@@ -807,6 +807,70 @@ pub async fn save_notifications_handler(body: Json<NotificationConfig>, _t: Toke
     Ok(Json(json!({"success": true, "message": "Notification settings saved"})))
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(crate = "rocket::serde")]
+pub struct TestNotificationBody {
+    title: String,
+    message: String,
+}
+
+#[post("/daemon/test-notification", format = "json", data = "<body>")]
+#[utoipa::path(post, tag = "Daemon", path = "/daemon/test-notification", request_body = TestNotificationBody,
+    security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Test notification sent successfully"),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn test_notification_handler(body: Json<TestNotificationBody>, _t: Token) -> Result<Json<serde_json::Value>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["test_notification"]).start_timer();
+    
+    HTTP_COUNTER.inc();
+    
+    // Get notification config
+    let config = config::read().daemon.notifications;
+    
+    if let Some(cfg) = config {
+        if !cfg.enabled {
+            timer.observe_duration();
+            return Err(generic_error(Status::BadRequest, "Notifications are not enabled".to_string()));
+        }
+        
+        // Send desktop notification
+        if let Err(e) = send_test_desktop_notification(&body.title, &body.message).await {
+            log::warn!("Failed to send test notification: {}", e);
+            timer.observe_duration();
+            return Err(generic_error(Status::InternalServerError, format!("Failed to send notification: {}", e)));
+        }
+        
+        timer.observe_duration();
+        Ok(Json(json!({"success": true, "message": "Test notification sent"})))
+    } else {
+        timer.observe_duration();
+        Err(generic_error(Status::BadRequest, "Notifications are not configured".to_string()))
+    }
+}
+
+async fn send_test_desktop_notification(
+    title: &str,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use notify_rust::{Notification, Urgency};
+    
+    Notification::new()
+        .summary(title)
+        .body(message)
+        .urgency(Urgency::Normal)
+        .appname("OPM")
+        .timeout(5000)
+        .show()?;
+    
+    Ok(())
+}
+
 #[get("/list")]
 #[utoipa::path(get, path = "/list", tag = "Process", security((), ("api_key" = [])),
     responses(
