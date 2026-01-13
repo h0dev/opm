@@ -485,7 +485,7 @@ impl<'i> Internal<'i> {
                 .with(Rotate::Left)
                 .with(Style::rounded().remove_horizontals())
                 .with(Colorization::exact([Color::FG_CYAN], Columns::first()))
-                .with(Modify::new(Segment::all()).with(BorderColor::filled(Color::try_from("#2d3748".to_string()).unwrap())))
+                .with(Modify::new(Segment::all()).with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
                 .to_string();
 
             if let Ok(json) = serde_json::to_string(&data[0]) {
@@ -1274,7 +1274,7 @@ impl<'i> Internal<'i> {
 
                 let table = Table::new(&processes)
                     .with(Style::rounded().remove_verticals())
-                    .with(Modify::new(Segment::all()).with(BorderColor::filled(Color::try_from("#2d3748".to_string()).unwrap())))
+                    .with(Modify::new(Segment::all()).with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
                     .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
                     .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
                     .to_string();
