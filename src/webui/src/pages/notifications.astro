@@ -7,7 +7,9 @@ import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
 
 <Layout title={SITE_TITLE + " - Notification Settings"} description={SITE_DESCRIPTION}>
 	<Navbar active={"notifications"} />
-	<main class="pt-10">
-		<NotificationSettings base={"{{base_path | safe}}"} client:only="@astrojs/react" />
+	<main class="ml-64 min-h-screen bg-zinc-950">
+		<div class="py-8">
+			<NotificationSettings base={"{{base_path | safe}}"} client:only="@astrojs/react" />
+		</div>
 	</main>
 </Layout>

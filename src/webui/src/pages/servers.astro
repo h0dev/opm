@@ -7,7 +7,9 @@ import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
 
 <Layout title={SITE_TITLE + " - Agents"} description={SITE_DESCRIPTION}>
 	<Navbar active={"servers"} />
-	<main class="pt-10">
-		<ServersPage base={"{{base_path | safe}}"} client:only="@astrojs/react" />
+	<main class="ml-64 min-h-screen bg-zinc-950">
+		<div class="py-8">
+			<ServersPage base={"{{base_path | safe}}"} client:only="@astrojs/react" />
+		</div>
 	</main>
 </Layout>

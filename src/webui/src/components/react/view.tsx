@@ -157,13 +157,13 @@ const LogViewer = (props: { liveReload; setLiveReload; server: string | null; ba
 					<Switch
 						checked={props.liveReload}
 						onChange={props.setLiveReload}
-						className="group relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer items-center justify-start rounded-full border-2 border-transparent bg-zinc-800 transition-colors duration-200 ease-in-out focus:outline-none data-[checked]:bg-sky-500">
+						className="group relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer items-center justify-start rounded-full border-2 border-transparent bg-zinc-800 transition-colors duration-200 ease-in-out focus:outline-none data-[checked]:bg-sky-500">
 						<span className="sr-only">Set live reload</span>
-						<span className="pointer-events-none relative inline-block h-5 w-5 transform rounded-full bg-zinc-500 group-data-[checked]:bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-0 group-data-[checked]:translate-x-5">
+						<span className="pointer-events-none relative inline-block h-3.5 w-3.5 transform rounded-full bg-zinc-500 group-data-[checked]:bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-0 group-data-[checked]:translate-x-3.5">
 							<span
 								aria-hidden="true"
 								className="absolute inset-0 flex h-full w-full items-center justify-center transition-opacity duration-200 ease-in group-data-[checked]:opacity-0 group-data-[checked]:duration-100 group-data-[checked]:ease-out">
-								<svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 text-zinc-100">
+								<svg viewBox="0 0 16 16" fill="currentColor" className="h-2.5 w-2.5 text-zinc-100">
 									<path
 										fill-rule="evenodd"
 										d="M4 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5V6.621a1.5 1.5 0 0 0-.44-1.06L9.94 2.439A1.5 1.5 0 0 0 8.878 2H4Zm1 5.75A.75.75 0 0 1 5.75 7h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 5 7.75Zm0 3a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Z"

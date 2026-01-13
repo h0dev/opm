@@ -6,23 +6,25 @@ import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
 
 <Layout title={SITE_TITLE + " - Agent Details"} description={SITE_DESCRIPTION}>
 	<Navbar active={"servers"} />
-	<main class="pt-10">
-		<div id="agent-detail-root"></div>
-		<script>
-			import AgentDetail from '@/components/react/agent-detail';
-			import { createRoot } from 'react-dom/client';
-			import { createElement } from 'react';
+	<main class="ml-64 min-h-screen bg-zinc-950">
+		<div class="py-8">
+			<div id="agent-detail-root"></div>
+			<script>
+				import AgentDetail from '@/components/react/agent-detail';
+				import { createRoot } from 'react-dom/client';
+				import { createElement } from 'react';
 
-			// Get agent ID from URL hash
-			const hash = window.location.hash.substring(1);
-			const agentId = hash || 'unknown';
-			const basePath = '{{base_path | safe}}';
+				// Get agent ID from URL hash
+				const hash = window.location.hash.substring(1);
+				const agentId = hash || 'unknown';
+				const basePath = '{{base_path | safe}}';
 
-			const container = document.getElementById('agent-detail-root');
-			if (container) {
-				const root = createRoot(container);
-				root.render(createElement(AgentDetail, { agentId, base: basePath }));
-			}
-		</script>
+				const container = document.getElementById('agent-detail-root');
+				if (container) {
+					const root = createRoot(container);
+					root.render(createElement(AgentDetail, { agentId, base: basePath }));
+				}
+			</script>
+		</div>
 	</main>
 </Layout>
