@@ -1276,7 +1276,7 @@ impl<'i> Internal<'i> {
                     .with(Style::rounded().remove_verticals())
                     .with(BorderColor::filled(Color::FG_BRIGHT_BLACK))
                     .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
-                    .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("...")))
+                    .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
                     .to_string();
 
                 if let Ok(json) = serde_json::to_string(&processes) {

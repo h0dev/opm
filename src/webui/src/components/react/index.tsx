@@ -49,8 +49,8 @@ const Index = (props: { base: string }) => {
 		} catch {}
 	}
 
-	const isRemote = (item: ProcessItem): boolean => (item.server == 'local' ? false : true);
-	const isRunning = (status: string): boolean => (status == 'stopped' ? false : status == 'crashed' ? false : true);
+	const isRemote = (item: ProcessItem): boolean => item.server !== 'local';
+	const isRunning = (status: string): boolean => !['stopped', 'crashed'].includes(status);
 	const action = (item: ProcessItem, name: string) => {
 		const endpoint = item.server === 'local' 
 			? `${props.base}/process/${item.id}/action`
