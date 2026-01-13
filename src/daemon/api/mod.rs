@@ -62,6 +62,7 @@ lazy_static! {
         routes::config_handler,
         routes::get_notifications_handler,
         routes::save_notifications_handler,
+        routes::test_notification_handler,
         routes::list_handler,
         routes::logs_handler,
         routes::remote_list,
@@ -104,6 +105,7 @@ lazy_static! {
         routes::ActionResponse,
         routes::NotificationConfig,
         routes::NotificationEvents,
+        routes::TestNotificationBody,
         routes::BulkActionBody,
         routes::BulkActionResponse,
     ))
@@ -271,6 +273,7 @@ pub async fn start(webui: bool) {
         routes::config_handler,
         routes::get_notifications_handler,
         routes::save_notifications_handler,
+        routes::test_notification_handler,
         routes::bulk_action_handler,
         routes::list_handler,
         routes::logs_handler,
