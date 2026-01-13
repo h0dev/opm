@@ -6,6 +6,7 @@ import Header from '@/components/react/header';
 const NotificationSettings = (props: { base: string }) => {
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
+	const [testing, setTesting] = useState(false);
 	const [settings, setSettings] = useState({
 		enabled: false,
 		events: {
@@ -45,6 +46,23 @@ const NotificationSettings = (props: { base: string }) => {
 		}
 	}
 
+	async function testNotification() {
+		setTesting(true);
+		try {
+			await api.post(`${props.base}/daemon/test-notification`, {
+				json: {
+					title: 'OPM Test Notification',
+					message: 'This is a test notification from OPM'
+				}
+			});
+			alert('Test notification sent! Check your notification channels.');
+		} catch (error) {
+			alert('Failed to send test notification: ' + (error as Error).message);
+		} finally {
+			setTesting(false);
+		}
+	}
+
 	const addChannel = () => {
 		if (newChannel.trim()) {
 			setSettings({
@@ -74,6 +92,13 @@ const NotificationSettings = (props: { base: string }) => {
 		<Fragment>
 			<Header name="Notification Settings" description="Configure desktop notifications and external notification channels.">
 				<div className="flex gap-2">
+					<button
+						type="button"
+						onClick={testNotification}
+						disabled={testing || !settings.enabled}
+						className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-emerald-700 hover:border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-zinc-700 disabled:border-zinc-700 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold rounded-lg">
+						{testing ? 'Testing...' : 'Test Notification'}
+					</button>
 					<button
 						type="button"
 						onClick={saveSettings}

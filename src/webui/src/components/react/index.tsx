@@ -297,6 +297,20 @@ const Index = (props: { base: string }) => {
 											anchor={{ to: 'bottom end', gap: '8px', padding: '16px' }}
 											className="z-10 w-48 origin-top-right rounded-lg bg-zinc-900 border border-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none text-base divide-y divide-zinc-800/50">
 											<div className="p-1.5">
+												{!isRunning(item.status) && (
+													<MenuItem>
+														{({ focus }) => (
+															<a
+																onClick={() => action(item, 'start')}
+																className={classNames(
+																	focus ? 'bg-emerald-700/10 text-emerald-500' : 'text-zinc-200',
+																	'rounded-md block px-2 py-2 w-full text-left cursor-pointer'
+																)}>
+																Start
+															</a>
+														)}
+													</MenuItem>
+												)}
 												<MenuItem>
 													{({ focus }) => (
 														<a

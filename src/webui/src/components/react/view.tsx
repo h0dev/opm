@@ -381,6 +381,20 @@ const View = (props: { id: string; base: string }) => {
 										anchor={{ to: 'bottom end', gap: '8px', padding: '16px' }}
 										className="z-10 w-48 origin-top-right rounded-lg bg-zinc-900/80 backdrop-blur-md border border-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none text-base divide-y divide-zinc-800/50">
 										<div className="p-1.5">
+											{!online && (
+												<MenuItem>
+													{({ focus }) => (
+														<a
+															onClick={() => action(props.id, 'start')}
+															className={classNames(
+																focus ? 'bg-emerald-700/10 text-emerald-500' : 'text-zinc-200',
+																'rounded-md block p-2 w-full text-left cursor-pointer'
+															)}>
+															Start
+														</a>
+													)}
+												</MenuItem>
+											)}
 											<MenuItem>
 												{({ focus }) => (
 													<a
