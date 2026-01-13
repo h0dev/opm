@@ -934,6 +934,7 @@ async fn send_test_channel_notifications(
                 "telegram" => send_telegram_message(&client, rest, title, message).await,
                 _ => {
                     log::warn!("Unsupported notification service: {}", service);
+                    errors.push(format!("Unsupported service: {}", service));
                     continue;
                 }
             };
@@ -945,6 +946,9 @@ async fn send_test_channel_notifications(
                     errors.push(format!("{}: {}", service, e));
                 }
             }
+        } else {
+            log::warn!("Invalid channel URL format: {}", channel_url);
+            errors.push(format!("Invalid URL format: {}", channel_url));
         }
     }
     
@@ -967,11 +971,12 @@ async fn send_discord_webhook(
     let webhook_url = if webhook_data.starts_with("http") {
         webhook_data.to_string()
     } else {
-        // Parse token@id format
+        // Parse token@id format (shoutrrr: discord://token@id)
+        // Discord API expects: https://discord.com/api/webhooks/{id}/{token}
         if let Some((token, id)) = webhook_data.split_once('@') {
             format!("https://discord.com/api/webhooks/{}/{}", id, token)
         } else {
-            return Err("Invalid Discord webhook format".into());
+            return Err("Invalid Discord webhook format: expected 'token@id' or full webhook URL".into());
         }
     };
     
@@ -997,12 +1002,11 @@ async fn send_slack_webhook(
     title: &str,
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Slack webhook URL format: token:token@channel or full webhook URL
+    // Slack webhook URL format: full webhook URL is required
     let webhook_url = if webhook_data.starts_with("http") {
         webhook_data.to_string()
     } else {
-        // For simplicity, expect full webhook URL
-        return Err("Slack webhooks require full URL format".into());
+        return Err("Slack webhooks require full URL format (e.g., https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX)".into());
     };
     
     let mut payload = HashMap::new();
@@ -1027,16 +1031,16 @@ async fn send_telegram_message(
     title: &str,
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Telegram format: token@telegram?chats=@chat
+    // Telegram format: token@telegram?chats=@chat_id
     // Extract token and chat ID
     let (token, rest) = webhook_data
         .split_once('@')
-        .ok_or("Invalid Telegram format")?;
+        .ok_or("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'")?;
     
     let chat_id = if let Some(query) = rest.strip_prefix("telegram?chats=") {
         query
     } else {
-        return Err("Invalid Telegram format: missing chat ID".into());
+        return Err("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'".into());
     };
     
     let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
