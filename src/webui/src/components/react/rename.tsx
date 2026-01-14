@@ -33,7 +33,7 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 				Rename
 			</a>
 			<Modal show={open} title="Rename this process" callback={(close: boolean) => setOpen(close)}>
-				<form onSubmit={handleSubmit}>
+				<form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
 					<div className="relative border border-zinc-700 rounded-lg px-3 py-3 focus-within:ring-1 focus-within:ring-zinc-300 focus-within:border-zinc-300 sm:w-[29rem] focus-within:shadow-sm transition bg-zinc-900">
 						<input
 							type="text"
@@ -41,8 +41,10 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 							id="name"
 							value={formData}
 							onChange={handleChange}
+							onClick={(e) => e.stopPropagation()}
 							className="bg-zinc-900 block w-full border-0 p-0 text-zinc-100 placeholder-zinc-500 focus:ring-0 sm:text-sm transition"
 							placeholder={props.old}
+							autoFocus
 						/>
 					</div>
 					<div className="bg-zinc-950 border-t border-zinc-800 px-3 py-2.5 px-6 sm:flex sm:flex-row-reverse -mb-4 mt-4 -ml-6 -mr-6">

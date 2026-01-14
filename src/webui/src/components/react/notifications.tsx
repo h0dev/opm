@@ -119,23 +119,28 @@ const NotificationSettings = (props: { base: string }) => {
 				{/* Master Toggle */}
 				<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
 					<div className="flex items-center justify-between gap-4">
-						<div>
+						<div className="flex-1">
 							<h3 className="text-lg font-semibold text-zinc-200">Enable Notifications</h3>
 							<p className="text-sm text-zinc-400 mt-1">
 								Master switch for all notifications
 							</p>
 						</div>
-						<button
-							onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
-							className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 ${
-								settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
-							}`}>
-							<span
-								className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
-									settings.enabled ? 'translate-x-5' : 'translate-x-0.5'
+						<div className="flex-shrink-0">
+							<button
+								type="button"
+								onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
+								className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
+									settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
 								}`}
-							/>
-						</button>
+								role="switch"
+								aria-checked={settings.enabled}>
+								<span
+									className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
+										settings.enabled ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
 					</div>
 				</div>
 
@@ -145,7 +150,7 @@ const NotificationSettings = (props: { base: string }) => {
 					<div className="space-y-4">
 						{Object.entries(settings.events).map(([key, value]) => (
 							<div key={key} className="flex items-center justify-between gap-4">
-								<div>
+								<div className="flex-1">
 									<div className="text-sm font-medium text-zinc-200">
 										{key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
 									</div>
@@ -153,24 +158,29 @@ const NotificationSettings = (props: { base: string }) => {
 										Notify when {key.replace('_', ' ')} occurs
 									</div>
 								</div>
-								<button
-									onClick={() => setSettings({
-										...settings,
-										events: {
-											...settings.events,
-											[key]: !value
-										}
-									})}
-									disabled={!settings.enabled}
-									className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 ${
-										value && settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
-									} disabled:opacity-50 disabled:cursor-not-allowed`}>
-									<span
-										className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
-											value ? 'translate-x-5' : 'translate-x-0.5'
-										}`}
-									/>
-								</button>
+								<div className="flex-shrink-0">
+									<button
+										type="button"
+										onClick={() => setSettings({
+											...settings,
+											events: {
+												...settings.events,
+												[key]: !value
+											}
+										})}
+										disabled={!settings.enabled}
+										className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
+											value && settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
+										} disabled:opacity-50 disabled:cursor-not-allowed`}
+										role="switch"
+										aria-checked={value}>
+										<span
+											className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
+												value ? 'translate-x-5' : 'translate-x-0.5'
+											}`}
+										/>
+									</button>
+								</div>
 							</div>
 						))}
 					</div>
