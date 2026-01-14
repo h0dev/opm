@@ -1,9 +1,7 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect } from 'react';
 import { Dialog, DialogPanel, DialogTitle, DialogBackdrop, Transition, TransitionChild } from '@headlessui/react';
 
 const Modal = (props: { show: boolean; callback: any; title: string; children: any }) => {
-	const modalRef = useRef<HTMLDivElement>(null);
-
 	// Prevent modal from closing when clicking inside input/textarea
 	useEffect(() => {
 		const handleClickOutside = (e: MouseEvent) => {
