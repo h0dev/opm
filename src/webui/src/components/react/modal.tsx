@@ -27,7 +27,9 @@ const Modal = (props: { show: boolean; callback: any; title: string; children: a
 						leave="ease-in duration-200"
 						leaveFrom="opacity-100 translate-y-0 sm:scale-100"
 						leaveTo="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95">
-						<DialogPanel className="inline-block align-bottom bg-zinc-950 border border-zinc-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+						<DialogPanel 
+							className="inline-block align-bottom bg-zinc-950 border border-zinc-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+							onClick={(e) => e.stopPropagation()}>
 							<div className="bg-zinc-950 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
 								<div className="sm:flex sm:items-start">
 									<div className="mt-3 text-center sm:mt-0 sm:text-left">

@@ -136,7 +136,7 @@ const NotificationSettings = (props: { base: string }) => {
 								aria-checked={settings.enabled}>
 								<span
 									className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
-										settings.enabled ? 'translate-x-5' : 'translate-x-0.5'
+										settings.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'
 									}`}
 								/>
 							</button>
@@ -176,7 +176,7 @@ const NotificationSettings = (props: { base: string }) => {
 										aria-checked={value}>
 										<span
 											className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
-												value ? 'translate-x-5' : 'translate-x-0.5'
+												value ? 'translate-x-[1.125rem]' : 'translate-x-0.5'
 											}`}
 										/>
 									</button>

@@ -15,6 +15,7 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 				: `${props.base}/process/${props.process_id}/rename`;
 
 		event.preventDefault();
+		event.stopPropagation();
 		api.post(url, { body: formData }).then(() => {
 			setOpen(false);
 			props.callback();
@@ -23,7 +24,7 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 
 	useEffect(() => {
 		setFormData(props.old);
-	}, []);
+	}, [props.old]);
 
 	return (
 		<Fragment>
@@ -34,7 +35,9 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 			</a>
 			<Modal show={open} title="Rename this process" callback={(close: boolean) => setOpen(close)}>
 				<form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
-					<div className="relative border border-zinc-700 rounded-lg px-3 py-3 focus-within:ring-1 focus-within:ring-zinc-300 focus-within:border-zinc-300 sm:w-[29rem] focus-within:shadow-sm transition bg-zinc-900">
+					<div 
+						className="relative border border-zinc-700 rounded-lg px-3 py-3 focus-within:ring-1 focus-within:ring-zinc-300 focus-within:border-zinc-300 sm:w-[29rem] focus-within:shadow-sm transition bg-zinc-900"
+						onClick={(e) => e.stopPropagation()}>
 						<input
 							type="text"
 							name="name"
@@ -42,6 +45,9 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 							value={formData}
 							onChange={handleChange}
 							onClick={(e) => e.stopPropagation()}
+							onFocus={(e) => e.stopPropagation()}
+							onMouseDown={(e) => e.stopPropagation()}
+							onTouchStart={(e) => e.stopPropagation()}
 							className="bg-zinc-900 block w-full border-0 p-0 text-zinc-100 placeholder-zinc-500 focus:ring-0 sm:text-sm transition"
 							placeholder={props.old}
 							autoFocus
@@ -56,7 +62,7 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 						<button
 							type="button"
 							className="mt-3 w-full inline-flex justify-center rounded-lg sm:border shadow-sm px-2.5 py-1.5 sm:py-1 bg-zinc-950 text-base font-medium border-zinc-800 hover:border-zinc-700 text-zinc-50 hover:bg-zinc-800 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm focus:outline-none transition"
-							onClick={() => setOpen(false)}>
+							onClick={(e) => { e.stopPropagation(); setOpen(false); }}>
 							Cancel
 						</button>
 					</div>
