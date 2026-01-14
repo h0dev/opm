@@ -3,8 +3,11 @@ import { useEffect, Fragment, useState } from 'react';
 import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
 import { useArray, classNames, startDuration } from '@/helpers';
+import ToastContainer from '@/components/react/toast';
+import { useToast } from '@/components/react/useToast';
 
 const Index = (props: { base: string }) => {
+	const { toasts, closeToast, error } = useToast();
 	const agents = useArray([]);
 	const [loading, setLoading] = useState(true);
 	const [serverHost, setServerHost] = useState('localhost');
@@ -42,8 +45,8 @@ const Index = (props: { base: string }) => {
 		try {
 			await api.delete(`${props.base}/daemon/agents/${agentId}`);
 			fetchAgents();
-		} catch (error) {
-			alert('Failed to remove agent: ' + (error as Error).message);
+		} catch (err) {
+			error('Failed to remove agent: ' + (err as Error).message);
 		}
 	};
 
@@ -60,6 +63,7 @@ const Index = (props: { base: string }) => {
 
 	return (
 		<Fragment>
+			<ToastContainer toasts={toasts} onClose={closeToast} />
 			<Header name="Connected Agents" description="A list of all agents connected to this server.">
 				<div className="flex gap-2">
 					<button

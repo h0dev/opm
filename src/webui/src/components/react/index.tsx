@@ -6,6 +6,8 @@ import { useArray, classNames } from '@/helpers';
 import { useEffect, useState, Fragment } from 'react';
 import { EllipsisVerticalIcon } from '@heroicons/react/20/solid';
 import { Menu, MenuItem, MenuItems, MenuButton, Transition } from '@headlessui/react';
+import ToastContainer from '@/components/react/toast';
+import { useToast } from '@/components/react/useToast';
 
 type ProcessItem = {
 	id: number;
@@ -21,6 +23,7 @@ type ProcessItem = {
 };
 
 const Index = (props: { base: string }) => {
+	const { toasts, closeToast, success, error } = useToast();
 	const items = useArray<ProcessItem>([]);
 	const [searchTerm, setSearchTerm] = useState('');
 	const [statusFilter, setStatusFilter] = useState('all');
@@ -120,9 +123,9 @@ const Index = (props: { base: string }) => {
 
 			await Promise.all(promises);
 			await fetch();
-			alert(`${method} action completed on ${selectedIds.size} processes`);
-		} catch (error) {
-			alert('Failed to perform bulk action: ' + (error as Error).message);
+			success(`${method} action completed on ${selectedIds.size} processes`);
+		} catch (err) {
+			error('Failed to perform bulk action: ' + (err as Error).message);
 		}
 	};
 	
@@ -130,9 +133,9 @@ const Index = (props: { base: string }) => {
 	const saveAll = async () => {
 		try {
 			await api.post(`${props.base}/daemon/save`, {});
-			alert('All processes saved to dumpfile');
-		} catch (error) {
-			alert('Failed to save processes: ' + (error as Error).message);
+			success('All processes saved to dumpfile');
+		} catch (err) {
+			error('Failed to save processes: ' + (err as Error).message);
 		}
 	};
 	
@@ -141,9 +144,9 @@ const Index = (props: { base: string }) => {
 		try {
 			await api.post(`${props.base}/daemon/restore`, {});
 			fetch();
-			alert('All processes restored from dumpfile');
-		} catch (error) {
-			alert('Failed to restore processes: ' + (error as Error).message);
+			success('All processes restored from dumpfile');
+		} catch (err) {
+			error('Failed to restore processes: ' + (err as Error).message);
 		}
 	};
 
@@ -167,6 +170,7 @@ const Index = (props: { base: string }) => {
 	} else {
 		return (
 			<Fragment>
+				<ToastContainer toasts={toasts} onClose={closeToast} />
 				<Header name={`Viewing ${filteredItems.length} of ${items.count()} items`} description="View and manage all the processes on your daemons.">
 					<div className="flex gap-2 flex-wrap">
 						{showBulkActions && (
