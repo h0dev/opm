@@ -115,7 +115,7 @@ const NotificationSettings = (props: { base: string }) => {
 				</div>
 			</Header>
 
-			<div className="space-y-6">
+			<div className="px-4 sm:px-6 lg:px-8 space-y-6">
 				{/* Master Toggle */}
 				<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
 					<div className="flex items-center justify-between gap-4">
