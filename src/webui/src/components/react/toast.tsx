@@ -82,17 +82,21 @@ const ToastContainer = ({ toasts, onClose }: ToastContainerProps) => {
 	return (
 		<>
 			{/* Desktop: Bottom-right */}
-			<div className="hidden sm:block fixed bottom-4 right-4 z-[400] space-y-2">
-				{toasts.map((toast) => (
-					<ToastItem key={toast.id} toast={toast} onClose={onClose} />
-				))}
+			<div className="hidden sm:block fixed bottom-4 right-4 z-[9999] space-y-2 pointer-events-none">
+				<div className="pointer-events-auto">
+					{toasts.map((toast) => (
+						<ToastItem key={toast.id} toast={toast} onClose={onClose} />
+					))}
+				</div>
 			</div>
 
 			{/* Mobile: Top-center */}
-			<div className="sm:hidden fixed top-20 left-1/2 -translate-x-1/2 z-[400] space-y-2 w-[calc(100vw-2rem)]">
-				{toasts.map((toast) => (
-					<ToastItem key={toast.id} toast={toast} onClose={onClose} />
-				))}
+			<div className="sm:hidden fixed top-20 left-1/2 -translate-x-1/2 z-[9999] space-y-2 w-[calc(100vw-2rem)] pointer-events-none">
+				<div className="pointer-events-auto">
+					{toasts.map((toast) => (
+						<ToastItem key={toast.id} toast={toast} onClose={onClose} />
+					))}
+				</div>
 			</div>
 		</>
 	);

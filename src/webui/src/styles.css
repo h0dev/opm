@@ -32,7 +32,10 @@ nav > div {
 .toggle-switch span {
 	margin-top: 0 !important;
 	margin-bottom: 0 !important;
+	top: auto !important;
+	bottom: auto !important;
 	display: inline-block !important;
+	line-height: 1 !important;
 }
 
 /* Mobile-first responsive adjustments */

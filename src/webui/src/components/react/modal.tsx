@@ -1,21 +1,26 @@
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { Dialog, DialogPanel, DialogTitle, DialogBackdrop, Transition, TransitionChild } from '@headlessui/react';
 
 const Modal = (props: { show: boolean; callback: any; title: string; children: any }) => {
-	// Prevent modal from closing on window resize (mobile keyboard fix)
+	const modalRef = useRef<HTMLDivElement>(null);
+
+	// Prevent modal from closing when clicking inside input/textarea
 	useEffect(() => {
-		const handleResize = (e: Event) => {
-			// Prevent default resize behavior and stop propagation
-			e.preventDefault();
-			e.stopPropagation();
+		const handleClickOutside = (e: MouseEvent) => {
+			// If the active element is an input or textarea, don't close the modal
+			const activeEl = document.activeElement;
+			if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+				e.stopPropagation();
+				return;
+			}
 		};
-		
+
 		if (props.show) {
-			window.addEventListener('resize', handleResize, { capture: true, passive: false });
+			document.addEventListener('mousedown', handleClickOutside, true);
 		}
-		
+
 		return () => {
-			window.removeEventListener('resize', handleResize, { capture: true });
+			document.removeEventListener('mousedown', handleClickOutside, true);
 		};
 	}, [props.show]);
 
