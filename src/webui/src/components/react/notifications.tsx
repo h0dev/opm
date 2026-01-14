@@ -2,8 +2,11 @@ import { api } from '@/api';
 import { useEffect, Fragment, useState } from 'react';
 import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
+import ToastContainer from '@/components/react/toast';
+import { useToast } from '@/components/react/useToast';
 
 const NotificationSettings = (props: { base: string }) => {
+	const { toasts, closeToast, success, error } = useToast();
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [testing, setTesting] = useState(false);
@@ -38,9 +41,9 @@ const NotificationSettings = (props: { base: string }) => {
 			await api.post(`${props.base}/daemon/config/notifications`, {
 				json: settings
 			});
-			alert('Notification settings saved successfully');
-		} catch (error) {
-			alert('Failed to save settings: ' + (error as Error).message);
+			success('Notification settings saved successfully');
+		} catch (err) {
+			error('Failed to save settings: ' + (err as Error).message);
 		} finally {
 			setSaving(false);
 		}
@@ -55,9 +58,9 @@ const NotificationSettings = (props: { base: string }) => {
 					message: 'This is a test notification from OPM'
 				}
 			});
-			alert('Test notification sent! Check your notification channels.');
-		} catch (error) {
-			alert('Failed to send test notification: ' + (error as Error).message);
+			success('Test notification sent! Check your notification channels.');
+		} catch (err) {
+			error('Failed to send test notification: ' + (err as Error).message);
 		} finally {
 			setTesting(false);
 		}
@@ -90,6 +93,7 @@ const NotificationSettings = (props: { base: string }) => {
 
 	return (
 		<Fragment>
+			<ToastContainer toasts={toasts} onClose={closeToast} />
 			<Header name="Notification Settings" description="Configure desktop notifications and external notification channels.">
 				<div className="flex gap-2">
 					<button
@@ -129,14 +133,14 @@ const NotificationSettings = (props: { base: string }) => {
 							<button
 								type="button"
 								onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
-								className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
+								className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center justify-start rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
 									settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
 								}`}
 								role="switch"
 								aria-checked={settings.enabled}>
 								<span
 									className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
-										settings.enabled ? 'translate-x-[1.063rem]' : 'translate-x-0.5'
+										settings.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'
 									}`}
 								/>
 							</button>
@@ -169,14 +173,14 @@ const NotificationSettings = (props: { base: string }) => {
 											}
 										})}
 										disabled={!settings.enabled}
-										className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
+										className={`toggle-switch relative inline-flex h-5 w-9 flex-shrink-0 items-center justify-start rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
 											value && settings.enabled ? 'bg-blue-600' : 'bg-zinc-700'
 										} disabled:opacity-50 disabled:cursor-not-allowed`}
 										role="switch"
 										aria-checked={value}>
 										<span
 											className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
-												value ? 'translate-x-[1.063rem]' : 'translate-x-0.5'
+												value ? 'translate-x-[1.125rem]' : 'translate-x-0.5'
 											}`}
 										/>
 									</button>

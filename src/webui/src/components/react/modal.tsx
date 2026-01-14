@@ -1,7 +1,23 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect } from 'react';
 import { Dialog, DialogPanel, DialogTitle, DialogBackdrop, Transition, TransitionChild } from '@headlessui/react';
 
 const Modal = (props: { show: boolean; callback: any; title: string; children: any }) => {
+	// Prevent modal from closing on window resize (mobile keyboard fix)
+	useEffect(() => {
+		const handleResize = (e: Event) => {
+			// Prevent default resize behavior that might close the modal
+			e.stopPropagation();
+		};
+		
+		if (props.show) {
+			window.addEventListener('resize', handleResize, { capture: true });
+		}
+		
+		return () => {
+			window.removeEventListener('resize', handleResize, { capture: true });
+		};
+	}, [props.show]);
+
 	return (
 		<Transition show={props.show} as={Fragment}>
 			<Dialog as="div" className="fixed z-[300] inset-0 overflow-y-auto" onClose={() => props.callback(false)}>
