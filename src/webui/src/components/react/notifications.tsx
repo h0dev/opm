@@ -135,7 +135,7 @@ const NotificationSettings = (props: { base: string }) => {
 								Master switch for all notifications
 							</p>
 						</div>
-						<div className="flex-shrink-0 flex items-center">
+						<div className="flex-shrink-0 flex items-center self-center">
 							<button
 								type="button"
 								onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
@@ -162,7 +162,7 @@ const NotificationSettings = (props: { base: string }) => {
 										Notify when {key.replace('_', ' ')} occurs
 									</div>
 								</div>
-								<div className="flex-shrink-0 flex items-center">
+								<div className="flex-shrink-0 flex items-center self-center">
 									<button
 										type="button"
 										onClick={() => setSettings({
