@@ -2,13 +2,13 @@ import { api } from '@/api';
 import Modal from '@/components/react/modal';
 import { useEffect, useState, Fragment } from 'react';
 
-const Rename = (props: { base: string; server: string; process_id: number; callback: any; old: string }) => {
+const Rename = (props: { base: string; server: string; process_id: number; callback: any; old: string; onSuccess?: (msg: string) => void; onError?: (msg: string) => void }) => {
 	const [open, setOpen] = useState(false);
 	const [formData, setFormData] = useState('');
 
 	const handleChange = (event: any) => setFormData(event.target.value);
 
-	const handleSubmit = (event: any) => {
+	const handleSubmit = async (event: any) => {
 		const url =
 			props.server != 'local'
 				? `${props.base}/remote/${props.server}/rename/${props.process_id}`
@@ -16,10 +16,14 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 
 		event.preventDefault();
 		event.stopPropagation();
-		api.post(url, { body: formData }).then(() => {
+		try {
+			await api.post(url, { body: formData });
 			setOpen(false);
 			props.callback();
-		});
+			props.onSuccess?.('Process renamed successfully');
+		} catch (err) {
+			props.onError?.('Failed to rename process: ' + (err as Error).message);
+		}
 	};
 
 	useEffect(() => {

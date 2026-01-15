@@ -7,6 +7,8 @@ import { useEffect, useState, useRef, Fragment } from 'react';
 import { classNames, isRunning, formatMemory, startDuration } from '@/helpers';
 import { EllipsisVerticalIcon, CheckIcon, ChevronUpDownIcon } from '@heroicons/react/20/solid';
 import { Menu, MenuItem, MenuItems, MenuButton, Transition, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
+import ToastContainer from '@/components/react/toast';
+import { useToast } from '@/components/react/useToast';
 
 const LogRow = ({ match, children }: any) => {
 	const _match = match.toLowerCase();
@@ -231,6 +233,7 @@ const LogViewer = (props: { liveReload; setLiveReload; server: string | null; ba
 };
 
 const View = (props: { id: string; base: string }) => {
+	const { toasts, closeToast, success, error } = useToast();
 	const [item, setItem] = useState<any>();
 	const [loaded, setLoaded] = useState(false);
 	const [disabled, setDisabled] = useState(false);
@@ -288,10 +291,25 @@ const View = (props: { id: string; base: string }) => {
 		};
 	}, []);
 
-	const action = (id: number, name: string) => {
-		return server != 'local'
-			? api.post(`${props.base}/remote/${server}/action/${id}`, { json: { method: name } }).then(() => openConnection())
-			: api.post(`${props.base}/process/${id}/action`, { json: { method: name } }).then(() => openConnection());
+	const action = async (id: number, name: string) => {
+		try {
+			if (server != 'local') {
+				await api.post(`${props.base}/remote/${server}/action/${id}`, { json: { method: name } });
+			} else {
+				await api.post(`${props.base}/process/${id}/action`, { json: { method: name } });
+			}
+			openConnection();
+			const actionMessages = {
+				'start': 'Process started successfully',
+				'restart': 'Process restarted successfully',
+				'stop': 'Process stopped successfully',
+				'delete': 'Process deleted successfully',
+				'flush': 'Logs cleaned successfully'
+			};
+			success(actionMessages[name] || `${name} action completed successfully`);
+		} catch (err) {
+			error(`Failed to ${name} process: ${(err as Error).message}`);
+		};
 	};
 
 	if (!loaded) {
@@ -310,6 +328,7 @@ const View = (props: { id: string; base: string }) => {
 
 		return (
 			<Fragment>
+				<ToastContainer toasts={toasts} onClose={closeToast} />
 				<div className="absolute top-2 right-3 z-[200]">
 					<span className="text-xs text-zinc-500 mr-2">{liveReload ? 'Fetching logs live' : 'Live logs paused'}</span>
 					<span className="inline-flex items-center gap-x-1.5 rounded-md px-2 py-1 text-xs font-medium text-white ring-1 ring-inset ring-zinc-800">
@@ -408,7 +427,7 @@ const View = (props: { id: string; base: string }) => {
 												)}
 											</MenuItem>
 											<MenuItem>
-												{({ focus }) => <Rename server={server} base={props.base} process_id={props.id} active={focus} old={item.info.name} />}
+												{({ focus }) => <Rename server={server} base={props.base} process_id={props.id} callback={openConnection} old={item.info.name} onSuccess={success} onError={error} />}
 											</MenuItem>
 											<MenuItem>
 												{({ _ }) => (

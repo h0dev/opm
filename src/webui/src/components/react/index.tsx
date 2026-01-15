@@ -54,11 +54,25 @@ const Index = (props: { base: string }) => {
 
 	const isRemote = (item: ProcessItem): boolean => item.server !== 'local';
 	const isRunning = (status: string): boolean => !['stopped', 'crashed'].includes(status);
-	const action = (item: ProcessItem, name: string) => {
+	const action = async (item: ProcessItem, name: string) => {
 		const endpoint = item.server === 'local' 
 			? `${props.base}/process/${item.id}/action`
 			: `${props.base}/remote/${item.server}/action/${item.id}`;
-		return api.post(endpoint, { json: { method: name } }).then(() => fetch());
+		try {
+			await api.post(endpoint, { json: { method: name } });
+			await fetch();
+			const actionMessages = {
+				'start': 'Process started successfully',
+				'restart': 'Process restarted successfully',
+				'reload': 'Process reloaded successfully',
+				'stop': 'Process stopped successfully',
+				'delete': 'Process deleted successfully',
+				'flush': 'Logs cleaned successfully'
+			};
+			success(actionMessages[name] || `${name} action completed successfully`);
+		} catch (err) {
+			error(`Failed to ${name} process: ${(err as Error).message}`);
+		}
 	};
 	
 	// Toggle selection
@@ -354,7 +368,7 @@ const Index = (props: { base: string }) => {
 											</div>
 											<div className="p-1.5">
 												<MenuItem>
-													{({ _ }) => <Rename base={props.base} server={item.server} process_id={item.id} callback={fetch} old={item.name} />}
+													{({ _ }) => <Rename base={props.base} server={item.server} process_id={item.id} callback={fetch} old={item.name} onSuccess={success} onError={error} />}
 												</MenuItem>
 												<MenuItem>
 													{({ _ }) => (
