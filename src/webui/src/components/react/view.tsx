@@ -299,7 +299,7 @@ const View = (props: { id: string; base: string }) => {
 				await api.post(`${props.base}/process/${id}/action`, { json: { method: name } });
 			}
 			openConnection();
-			const actionMessages = {
+			const actionMessages: Record<string, string> = {
 				'start': 'Process started successfully',
 				'restart': 'Process restarted successfully',
 				'stop': 'Process stopped successfully',
@@ -309,7 +309,7 @@ const View = (props: { id: string; base: string }) => {
 			success(actionMessages[name] || `${name} action completed successfully`);
 		} catch (err) {
 			error(`Failed to ${name} process: ${(err as Error).message}`);
-		};
+		}
 	};
 
 	if (!loaded) {

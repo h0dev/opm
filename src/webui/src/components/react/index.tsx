@@ -61,7 +61,7 @@ const Index = (props: { base: string }) => {
 		try {
 			await api.post(endpoint, { json: { method: name } });
 			await fetch();
-			const actionMessages = {
+			const actionMessages: Record<string, string> = {
 				'start': 'Process started successfully',
 				'restart': 'Process restarted successfully',
 				'reload': 'Process reloaded successfully',
