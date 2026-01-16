@@ -2,7 +2,17 @@ import { api } from '@/api';
 import { useEffect, useState, useRef } from 'react';
 import { CheckIcon, XMarkIcon, PencilIcon } from '@heroicons/react/20/solid';
 
-const InlineRename = (props: { base: string; server: string; process_id: number; callback: () => void; old: string; onSuccess?: (msg: string) => void; onError?: (msg: string) => void }) => {
+interface InlineRenameProps {
+	base: string;
+	server: string;
+	process_id: number;
+	callback: () => void;
+	old: string;
+	onSuccess?: (msg: string) => void;
+	onError?: (msg: string) => void;
+}
+
+const InlineRename = (props: InlineRenameProps) => {
 	const [isEditing, setIsEditing] = useState(false);
 	const [formData, setFormData] = useState('');
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -21,7 +31,7 @@ const InlineRename = (props: { base: string; server: string; process_id: number;
 			props.callback();
 			props.onSuccess?.('Process renamed successfully');
 		} catch (err) {
-			props.onError?.('Failed to rename process: ' + (err as Error).message);
+			props.onError?.(`Failed to rename process: ${err instanceof Error ? err.message : 'Unknown error'}`);
 		}
 	};
 
