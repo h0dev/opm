@@ -408,21 +408,46 @@ fn remove_agent_config() -> Result<(), std::io::Error> {
 
 fn start_agent_daemon() {
     use opm::helpers;
+    use nix::unistd::{fork, ForkResult, setsid};
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
     
     // Fork a background process that will run the agent
-    match unsafe { libc::fork() } {
-        -1 => {
-            eprintln!("{} Failed to fork agent process", *helpers::FAIL);
+    match unsafe { fork() } {
+        Ok(ForkResult::Parent { child }) => {
+            // Parent process
+            println!("{} Agent started in background (PID: {})", *helpers::SUCCESS, child);
         }
-        0 => {
+        Ok(ForkResult::Child) => {
             // Child process - run the agent
-            unsafe { libc::setsid() };
             
-            // Close standard file descriptors
-            unsafe {
-                libc::close(0);
-                libc::close(1);
-                libc::close(2);
+            // Create a new session
+            if let Err(e) = setsid() {
+                eprintln!("Failed to create new session: {}", e);
+                std::process::exit(1);
+            }
+            
+            // Redirect stdin to /dev/null
+            if let Ok(devnull) = OpenOptions::new().read(true).open("/dev/null") {
+                let fd = devnull.as_raw_fd();
+                unsafe { libc::dup2(fd, 0); }
+            }
+            
+            // Redirect stdout and stderr to agent log file
+            let log_path = home::home_dir()
+                .map(|p| p.join(".opm").join("agent.log"))
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/opm-agent.log"));
+            
+            if let Ok(log_file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let log_fd = log_file.as_raw_fd();
+                unsafe {
+                    libc::dup2(log_fd, 1); // Redirect stdout to log file
+                    libc::dup2(log_fd, 2); // Redirect stderr to log file
+                }
             }
             
             // Run agent connection in this child process
@@ -432,19 +457,20 @@ fn start_agent_daemon() {
                     let runtime = tokio::runtime::Runtime::new().unwrap();
                     runtime.block_on(async {
                         let mut connection = AgentConnection::new(config);
-                        if let Err(_e) = connection.run().await {
-                            // Silent error in background
+                        if let Err(e) = connection.run().await {
+                            eprintln!("[Agent Error] {}", e);
                         }
                     });
                 }
-                Err(_) => {
+                Err(e) => {
+                    eprintln!("[Agent Error] Failed to load config: {}", e);
                     std::process::exit(1);
                 }
             }
         }
-        pid => {
-            // Parent process
-            println!("{} Agent started in background (PID: {})", *helpers::SUCCESS, pid);
+        Err(e) => {
+            eprintln!("{} Failed to fork agent process: {}", *helpers::FAIL, e);
+            std::process::exit(1);
         }
     }
 }
