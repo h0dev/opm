@@ -15,13 +15,22 @@ html {
 
 /* CRITICAL: Prevent FOUC - must be early in cascade */
 /* Force navigation left alignment from first render */
-/* Note: Also duplicated as inline style in navbar.astro for immediate load */
-nav > div {
+nav {
+	display: flex !important;
 	justify-content: flex-start !important;
 }
 
+nav > div {
+	justify-content: flex-start !important;
+	gap: 1rem;
+}
+
+/* Navigation link styles */
+nav a {
+	white-space: nowrap;
+}
+
 /* Toggle switch precision alignment - prevent misalignment */
-/* Note: Also duplicated as inline style in base.astro for immediate load */
 .toggle-switch {
 	display: inline-flex !important;
 	align-items: center !important;
