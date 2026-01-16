@@ -1,5 +1,5 @@
 import { api } from '@/api';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, forwardRef, useImperativeHandle } from 'react';
 import { CheckIcon, XMarkIcon } from '@heroicons/react/20/solid';
 
 interface InlineRenameProps {
@@ -10,12 +10,18 @@ interface InlineRenameProps {
 	old: string;
 	onSuccess?: (msg: string) => void;
 	onError?: (msg: string) => void;
+	className?: string;
 }
 
-const InlineRename = (props: InlineRenameProps) => {
+const InlineRename = forwardRef((props: InlineRenameProps, ref) => {
 	const [isEditing, setIsEditing] = useState(false);
 	const [formData, setFormData] = useState('');
 	const inputRef = useRef<HTMLInputElement>(null);
+
+	// Expose triggerEdit method to parent via ref
+	useImperativeHandle(ref, () => ({
+		triggerEdit: () => setIsEditing(true)
+	}));
 
 	const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => setFormData(event.target.value);
 
@@ -68,7 +74,7 @@ const InlineRename = (props: InlineRenameProps) => {
 					e.stopPropagation();
 					setIsEditing(true);
 				}}
-				className="text-md font-bold text-zinc-200 truncate cursor-pointer hover:text-blue-400 transition-colors"
+				className={`text-md truncate cursor-pointer hover:text-blue-400 transition-colors ${props.className || 'font-bold text-zinc-200'}`}
 				title="Click to rename">
 				{props.old}
 			</span>
@@ -106,6 +112,8 @@ const InlineRename = (props: InlineRenameProps) => {
 			</button>
 		</div>
 	);
-};
+});
+
+InlineRename.displayName = 'InlineRename';
 
 export default InlineRename;

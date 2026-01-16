@@ -308,7 +308,6 @@ fn agent_list() {
 fn agent_connect(server_url: String, name: Option<String>, token: Option<String>) {
     use opm::helpers;
     use opm::agent::types::AgentConfig;
-    use opm::agent::connection::AgentConnection;
     
     println!("{} Starting OPM Agent...", *helpers::SUCCESS);
     
@@ -327,14 +326,8 @@ fn agent_connect(server_url: String, name: Option<String>, token: Option<String>
     println!("{} Agent Name: {}", *helpers::SUCCESS, config.name);
     println!("{} Server URL: {}", *helpers::SUCCESS, config.server_url);
     
-    // Start agent in async runtime
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let mut connection = AgentConnection::new(config);
-        if let Err(e) = connection.run().await {
-            eprintln!("{} Agent error: {}", *helpers::FAIL, e);
-        }
-    });
+    // Start agent in background
+    start_agent_daemon();
 }
 
 fn agent_disconnect() {
@@ -413,6 +406,85 @@ fn remove_agent_config() -> Result<(), std::io::Error> {
     Ok(())
 }
 
+fn start_agent_daemon() {
+    use opm::helpers;
+    use opm::agent::connection::AgentConnection;
+    use nix::unistd::{fork, ForkResult, setsid};
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
+    
+    // Fork a background process that will run the agent
+    match unsafe { fork() } {
+        Ok(ForkResult::Parent { child }) => {
+            // Parent process
+            println!("{} Agent started in background (PID: {})", *helpers::SUCCESS, child);
+        }
+        Ok(ForkResult::Child) => {
+            // Child process - run the agent
+            
+            // Create a new session
+            if let Err(e) = setsid() {
+                eprintln!("Failed to create new session: {}", e);
+                std::process::exit(1);
+            }
+            
+            // Redirect stdin to /dev/null
+            if let Ok(devnull) = OpenOptions::new().read(true).open("/dev/null") {
+                let fd = devnull.as_raw_fd();
+                let result = unsafe { libc::dup2(fd, 0) };
+                if result == -1 {
+                    eprintln!("Failed to redirect stdin");
+                    std::process::exit(1);
+                }
+            }
+            
+            // Redirect stdout and stderr to agent log file
+            let log_path = home::home_dir()
+                .map(|p| p.join(".opm").join("agent.log"))
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/opm-agent.log"));
+            
+            if let Ok(log_file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let log_fd = log_file.as_raw_fd();
+                let result1 = unsafe { libc::dup2(log_fd, 1) };
+                if result1 == -1 {
+                    eprintln!("Failed to redirect stdout");
+                    std::process::exit(1);
+                }
+                let result2 = unsafe { libc::dup2(log_fd, 2) };
+                if result2 == -1 {
+                    eprintln!("Failed to redirect stderr");
+                    std::process::exit(1);
+                }
+            }
+            
+            // Run agent connection in this child process
+            match load_agent_config() {
+                Ok(config) => {
+                    let runtime = tokio::runtime::Runtime::new().unwrap();
+                    runtime.block_on(async {
+                        let mut connection = AgentConnection::new(config);
+                        if let Err(e) = connection.run().await {
+                            eprintln!("[Agent Error] {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    eprintln!("[Agent Error] Failed to load config: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{} Failed to fork agent process: {}", *helpers::FAIL, e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let mut env = env_logger::Builder::new();
@@ -466,6 +538,12 @@ fn main() {
                     }
                 }
             }
+            
+            // Auto-start agent if config exists
+            if load_agent_config().is_ok() {
+                start_agent_daemon();
+            }
+            
             Internal::restore(&defaults(server))
         },
         Commands::Save { server } => Internal::save(&defaults(server)),

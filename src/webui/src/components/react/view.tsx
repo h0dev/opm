@@ -2,7 +2,7 @@ import { SSE, api, headers } from '@/api';
 import { Switch } from '@headlessui/react';
 import { matchSorter } from 'match-sorter';
 import Loader from '@/components/react/loader';
-import Rename from '@/components/react/rename';
+import InlineRename from '@/components/react/inline-rename';
 import { useEffect, useState, useRef, Fragment } from 'react';
 import { classNames, isRunning, formatMemory, startDuration } from '@/helpers';
 import { EllipsisVerticalIcon, CheckIcon, ChevronUpDownIcon } from '@heroicons/react/20/solid';
@@ -240,6 +240,7 @@ const View = (props: { id: string; base: string }) => {
 	const [disabled, setDisabled] = useState(false);
 	const [live, setLive] = useState<SSE | null>(null);
 	const [liveReload, setLiveReload] = useState(false);
+	const renameRef = useRef<{ triggerEdit: () => void }>(null);
 
 	const badge = {
 		online: 'bg-emerald-400/10 text-emerald-400',
@@ -336,7 +337,17 @@ const View = (props: { id: string; base: string }) => {
 					<div>
 						<div className="flex items-center gap-x-3">
 							<h1 className="flex gap-x-1 text-base leading-7">
-								<span className="font-semibold text-white cursor-default">{item.info.name}</span>
+								<InlineRename 
+									ref={renameRef}
+									base={props.base} 
+									server={server} 
+									process_id={parseInt(props.id)} 
+									callback={openConnection} 
+									old={item.info.name} 
+									onSuccess={success} 
+									onError={error}
+									className="font-semibold text-white"
+								/>
 							</h1>
 							<div className={`flex-none rounded-full p-1 ${badge[item.info.status]}`}>
 								<div className="h-2 w-2 rounded-full bg-current" />
@@ -421,7 +432,20 @@ const View = (props: { id: string; base: string }) => {
 												)}
 											</MenuItem>
 											<MenuItem>
-												{({ focus }) => <Rename server={server} base={props.base} process_id={props.id} callback={openConnection} old={item.info.name} onSuccess={success} onError={error} />}
+												{({ focus }) => (
+													<button
+														onClick={(e) => {
+															e.preventDefault();
+															e.stopPropagation();
+															renameRef.current?.triggerEdit();
+														}}
+														className={classNames(
+															focus ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-200',
+															'rounded-md flex items-center gap-2 p-2 w-full text-left cursor-pointer'
+														)}>
+														<span>Rename</span>
+													</button>
+												)}
 											</MenuItem>
 											<MenuItem>
 												{({ _ }) => (

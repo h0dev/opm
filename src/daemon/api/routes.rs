@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use global_placeholders::global;
-use macros_rs::{fmtstr, string, ternary, then};
+use macros_rs::{fmtstr, string, ternary};
 use prometheus::{Encoder, TextEncoder};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use opm::process::unix::NativeProcess as Process;
