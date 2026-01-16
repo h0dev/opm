@@ -48,8 +48,10 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		return <Loader />;
 	}
 
-	const isOnline = agent.last_heartbeat && 
-		(Date.now() - new Date(agent.last_heartbeat).getTime()) < 30000;
+	// Backend sends last_seen as seconds since UNIX epoch
+	// Heartbeat interval is 30s by default, so we use 60s threshold (2x) to account for network delays
+	const isOnline = agent.last_seen && 
+		(Date.now() - agent.last_seen * 1000) < 60000; // 60 seconds threshold (2x 30s heartbeat interval)
 
 	return (
 		<Fragment>
@@ -102,8 +104,8 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 					<div>
 						<div className="text-sm text-zinc-400 mb-1">Last Heartbeat</div>
 						<div className="text-zinc-200">
-							{agent.last_heartbeat 
-								? new Date(agent.last_heartbeat).toLocaleString()
+							{agent.last_seen 
+								? new Date(agent.last_seen * 1000).toLocaleString()
 								: 'Never'}
 						</div>
 					</div>
@@ -111,7 +113,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 						<div className="text-sm text-zinc-400 mb-1">Connected Since</div>
 						<div className="text-zinc-200">
 							{agent.connected_at 
-								? new Date(agent.connected_at).toLocaleString()
+								? new Date(agent.connected_at * 1000).toLocaleString()
 								: 'N/A'}
 						</div>
 					</div>
