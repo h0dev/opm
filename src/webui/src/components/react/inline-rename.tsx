@@ -69,13 +69,7 @@ const InlineRename = forwardRef((props: InlineRenameProps, ref) => {
 	if (!isEditing) {
 		return (
 			<span 
-				onClick={(e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					setIsEditing(true);
-				}}
-				className={`text-md truncate cursor-pointer hover:text-blue-400 transition-colors ${props.className || 'font-bold text-zinc-200'}`}
-				title="Click to rename">
+				className={`text-md truncate ${props.className || 'font-bold text-zinc-200'}`}>
 				{props.old}
 			</span>
 		);
