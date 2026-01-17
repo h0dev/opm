@@ -4,7 +4,7 @@ use crate::{
     process::{Runner, id::Id},
 };
 
-use chrono;
+use chrono::Utc;
 use colored::Colorize;
 use global_placeholders::global;
 use macros_rs::{crashln, fmtstr, string};
@@ -61,7 +61,7 @@ pub fn read() -> Runner {
             let backup_path = format!(
                 "{}.corrupted.{}",
                 global!("opm.dump"),
-                chrono::Utc::now().format("%Y%m%d_%H%M%S")
+                Utc::now().format("%Y%m%d_%H%M%S")
             );
             
             // Try rename first (fast for same filesystem), fall back to copy+remove for cross-filesystem
