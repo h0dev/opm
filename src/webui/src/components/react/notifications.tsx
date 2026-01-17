@@ -7,7 +7,7 @@ import { useToast } from '@/components/react/useToast';
 
 // Toggle switch common styles - ensure proper alignment
 const TOGGLE_BASE_CLASSES = "relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900";
-const TOGGLE_PIN_CLASSES = "inline-block h-4 w-4 rounded-full bg-white transition-transform duration-200 absolute top-1/2 -translate-y-1/2";
+const TOGGLE_PIN_CLASSES = "inline-block h-4 w-4 rounded-full bg-white transition-transform duration-200 absolute";
 const getToggleClasses = (enabled: boolean) => `${TOGGLE_BASE_CLASSES} ${enabled ? 'bg-blue-600' : 'bg-zinc-700'}`;
 const getTogglePinClasses = (enabled: boolean) => `${TOGGLE_PIN_CLASSES} ${enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'}`;
 
