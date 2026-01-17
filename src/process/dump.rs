@@ -52,10 +52,6 @@ pub fn read() -> Runner {
             // If parsing fails, the dump file is likely corrupted
             // Log the error and create a fresh dump file
             log!("[dump::read] Corrupted dump file detected: {err}");
-            println!(
-                "{} Dump file is corrupted. Creating a fresh dump file...",
-                *helpers::FAIL
-            );
             
             // Backup the corrupted file for debugging
             let backup_path = format!(
@@ -74,7 +70,7 @@ pub fn read() -> Runner {
             if let Err(e) = backup_result {
                 log!("[dump::read] Failed to backup corrupted file: {e}");
             } else {
-                println!("{} Backed up corrupted file to: {}", *helpers::SUCCESS, backup_path);
+                log!("[dump::read] Backed up corrupted file to: {backup_path}");
             }
             
             // Create a fresh runner with empty state
@@ -85,8 +81,7 @@ pub fn read() -> Runner {
             };
             
             write(&runner);
-            log!("created fresh dump file after corruption");
-            println!("{} Created fresh dump file", *helpers::SUCCESS);
+            log!("[dump::read] Created fresh dump file after corruption");
             
             runner
         }
