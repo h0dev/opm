@@ -33,6 +33,27 @@ fn download_file(url: String, destination: &PathBuf, download_dir: &PathBuf) {
     copy(&mut response, &mut file).expect("Failed to copy content");
 }
 
+fn use_system_node_or_download() -> PathBuf {
+    // Try to use system Node.js first
+    if let Ok(node_path) = Command::new("which").arg("node").output() {
+        if node_path.status.success() {
+            let node_bin = String::from_utf8_lossy(&node_path.stdout).trim().to_string();
+            if !node_bin.is_empty() {
+                // Get the bin directory containing node
+                let node_path = PathBuf::from(node_bin);
+                if let Some(bin_dir) = node_path.parent() {
+                    println!("cargo:warning=Using system Node.js from {:?}", bin_dir);
+                    return bin_dir.to_path_buf();
+                }
+            }
+        }
+    }
+    
+    // Fall back to downloading Node.js
+    println!("cargo:warning=System Node.js not found, downloading...");
+    download_node()
+}
+
 fn download_node() -> PathBuf {
     #[cfg(target_os = "linux")]
     let target_os = "linux";
@@ -70,16 +91,21 @@ fn download_node() -> PathBuf {
     return node_extract_dir;
 }
 
-fn download_then_build(node_extract_dir: PathBuf) {
-    let base_dir = match fs::canonicalize(node_extract_dir) {
-        Ok(path) => path,
-        Err(err) => panic!("{err}"),
-    };
-
-    let bin = &base_dir.join("bin");
+fn download_then_build(node_bin_dir: PathBuf) {
+    let bin = &node_bin_dir;
     let node = &bin.join("node");
     let project_dir = &Path::new("src").join("webui");
-    let npm = &base_dir.join("lib/node_modules/npm/index.js");
+    
+    // Check if this is system Node or downloaded Node
+    let npm = if bin.join("npm").exists() {
+        // System Node with npm binary
+        bin.join("npm")
+    } else {
+        // Downloaded Node with npm as a script
+        let parent = node_bin_dir.parent()
+            .expect("Node binary directory should have a parent directory");
+        parent.join("lib/node_modules/npm/index.js")
+    };
 
     /* set path */
     let mut paths = match env::var_os("PATH") {
@@ -95,12 +121,23 @@ fn download_then_build(node_extract_dir: PathBuf) {
     };
 
     /* install deps */
-    Command::new(node)
-        .args([npm.to_str().unwrap(), "ci"])
-        .current_dir(project_dir)
-        .env("PATH", &path)
-        .status()
-        .expect("Failed to install dependencies");
+    if npm.extension().and_then(|s| s.to_str()) == Some("js") {
+        // Downloaded npm - run as script
+        Command::new(node)
+            .args([npm.to_str().unwrap(), "ci"])
+            .current_dir(project_dir)
+            .env("PATH", &path)
+            .status()
+            .expect("Failed to install dependencies");
+    } else {
+        // System npm - run as binary
+        Command::new(&npm)
+            .args(["ci"])
+            .current_dir(project_dir)
+            .env("PATH", &path)
+            .status()
+            .expect("Failed to install dependencies");
+    }
 
     /* build frontend */
     Command::new(node)
@@ -156,8 +193,8 @@ fn main() {
             fs::remove_dir_all(format!("src/webui/dist")).ok();
 
             /* pre-build */
-            let path = download_node();
-            download_then_build(path);
+            let node_bin_dir = use_system_node_or_download();
+            download_then_build(node_bin_dir);
         }
         _ => println!("cargo:rustc-env=PROFILE=none"),
     }

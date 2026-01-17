@@ -42,6 +42,8 @@ nav a {
 
 /* Toggle switch precision alignment - prevent misalignment */
 /* Note: !important used to ensure immediate application and prevent FOUC */
+/* Track dimensions: width 3.25rem (52px), height 2rem (32px) - 1.625:1 ratio for iOS-style pill shape */
+/* Standard iOS toggle proportions for authentic appearance */
 button[role="switch"],
 .toggle-switch {
 	display: inline-flex !important;
@@ -50,10 +52,13 @@ button[role="switch"],
 	vertical-align: middle !important;
 	flex-shrink: 0 !important;
 	position: relative !important;
+	width: 3.25rem !important; /* 52px - iOS-style width */
+	height: 2rem !important; /* 32px - iOS-style height */
+	border-radius: 9999px !important; /* rounded-full */
 }
 
 /* Ensure toggle pin is perfectly centered within track */
-/* Pin dimensions: 4w x 4h (1rem), Track dimensions: 9w x 5h (2.25rem x 1.25rem) */
+/* Pin dimensions: 1.75rem x 1.75rem (28px x 28px) - iOS-style proportions */
 /* Horizontal offset: 0.125rem (2px) provides visual padding from track edge */
 /* Vertical centering: 50% + translateY(-50%) for perfect alignment */
 button[role="switch"] > span,
@@ -64,17 +69,22 @@ button[role="switch"] > span,
 	left: 0.125rem !important; /* 2px visual padding */
 	transform: translateY(-50%) !important;
 	display: inline-block !important;
+	width: 1.75rem !important; /* 28px */
+	height: 1.75rem !important; /* 28px */
+	border-radius: 9999px !important; /* rounded-full */
+	background-color: white !important;
 	line-height: 1 !important;
 	vertical-align: middle !important;
 	transition: transform 200ms ease-in-out !important;
 }
 
 /* Pin translation when checked */
-/* Translation: 1rem moves pin from left (0.125rem) to right with padding */
-/* Total movement: track width (2.25rem) - pin width (1rem) - padding (0.125rem * 2) = 1rem */
+/* Translation: 1.25rem moves pin from left (0.125rem) to right with padding */
+/* Total movement: track width (3.25rem) - pin width (1.75rem) - total padding (0.25rem) = 1.25rem */
+/* Total padding = left padding (0.125rem) + right padding (0.125rem) = 0.25rem */
 button[role="switch"][aria-checked="true"] > span,
 .toggle-switch[aria-checked="true"] > span {
-	transform: translateY(-50%) translateX(1rem) !important;
+	transform: translateY(-50%) translateX(1.25rem) !important;
 }
 
 /* Mobile-first responsive adjustments */
