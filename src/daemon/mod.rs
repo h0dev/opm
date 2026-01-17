@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread::sleep, time::Duration};
 
 use opm::{
-    config, file,
+    config,
     helpers::{self, ColoredString},
     process::{Runner, get_process_cpu_usage_with_children_from_process, hash, id::Id},
 };
@@ -234,7 +234,7 @@ pub fn health(format: &String) {
     let mut cpu_percent: Option<f64> = None;
     let mut uptime: Option<DateTime<Utc>> = None;
     let mut memory_usage: Option<MemoryInfo> = None;
-    let mut runner: Runner = file::read_object(global!("opm.dump"));
+    let mut runner = Runner::new();
     let mut daemon_running = false;
 
     #[derive(Clone, Debug, Tabled)]

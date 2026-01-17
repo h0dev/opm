@@ -30,7 +30,7 @@ use super::{
 };
 
 use opm::{
-    config, file, helpers,
+    config, helpers,
     process::{dump, http::client, ItemSingle, ProcessItem, Runner, get_process_cpu_usage_with_children_from_process, get_process_memory_with_children},
 };
 
@@ -1535,7 +1535,7 @@ pub async fn get_metrics() -> MetricsRoot {
     let mut cpu_percent: Option<f64> = None;
     let mut uptime: Option<DateTime<Utc>> = None;
     let mut memory_usage: Option<u64> = None;
-    let mut runner: Runner = file::read_object(global!("opm.dump"));
+    let mut runner = Runner::new();
 
     HTTP_COUNTER.inc();
     if pid::exists() {
