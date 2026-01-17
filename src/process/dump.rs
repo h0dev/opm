@@ -58,7 +58,11 @@ pub fn read() -> Runner {
             );
             
             // Backup the corrupted file for debugging
-            let backup_path = format!("{}.corrupted.{}", global!("opm.dump"), chrono::Utc::now().timestamp());
+            let backup_path = format!(
+                "{}.corrupted.{}",
+                global!("opm.dump"),
+                chrono::Utc::now().format("%Y%m%d_%H%M%S")
+            );
             if let Err(e) = fs::rename(global!("opm.dump"), &backup_path) {
                 log!("[dump::read] Failed to backup corrupted file: {e}");
             } else {

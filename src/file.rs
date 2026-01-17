@@ -340,11 +340,11 @@ pub fn try_read_object<T: serde::de::DeserializeOwned>(path: String) -> Result<T
             Err(err) => {
                 retry_count += 1;
                 if retry_count >= max_retries {
-                    log!("file::read] Cannot find file: {err}");
+                    log!("[file::read] Cannot find file: {err}");
                     return Err(format!("Cannot find file: {}", err));
                 } else {
                     log!(
-                        "file::read] Error reading file. Retrying... (Attempt {retry_count}/{max_retries})"
+                        "[file::read] Error reading file. Retrying... (Attempt {retry_count}/{max_retries})"
                     );
                     println!(
                         "{} Error reading file. Retrying... (Attempt {retry_count}/{max_retries})",
@@ -376,7 +376,7 @@ pub fn read_object<T: serde::de::DeserializeOwned>(path: String) -> T {
             Err(err) => {
                 retry_count += 1;
                 if retry_count >= max_retries {
-                    log!("file::read] Cannot find file: {err}");
+                    log!("[file::read] Cannot find file: {err}");
                     crashln!(
                         "{} Cannot find file.\n{}",
                         *helpers::FAIL,
@@ -384,7 +384,7 @@ pub fn read_object<T: serde::de::DeserializeOwned>(path: String) -> T {
                     );
                 } else {
                     log!(
-                        "file::read] Error reading file. Retrying... (Attempt {retry_count}/{max_retries})"
+                        "[file::read] Error reading file. Retrying... (Attempt {retry_count}/{max_retries})"
                     );
                     println!(
                         "{} Error reading file. Retrying... (Attempt {retry_count}/{max_retries})",
