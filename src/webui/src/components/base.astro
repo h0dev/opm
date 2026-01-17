@@ -29,6 +29,8 @@ const { title, description } = Astro.props;
 		<!-- Critical CSS inlined to prevent FOUC -->
 		<style is:inline>
 			/* Prevent navbar centering on initial load */
+			/* Note: These selectors mirror the navbar structure to ensure immediate application */
+			/* before external CSS loads. The structure is stable as it's defined in navbar.astro */
 			nav {
 				display: flex !important;
 				justify-content: flex-start !important;
@@ -45,6 +47,8 @@ const { title, description } = Astro.props;
 			}
 			
 			/* Prevent toggle switch shape issues on initial load */
+			/* Note: These dimensions match the Tailwind classes (h-5 w-9, h-4 w-4) used in components */
+			/* Duplicated from styles.css as critical CSS for immediate rendering */
 			button[role="switch"],
 			.toggle-switch {
 				display: inline-flex !important;

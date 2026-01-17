@@ -102,7 +102,9 @@ fn download_then_build(node_bin_dir: PathBuf) {
         bin.join("npm")
     } else {
         // Downloaded Node with npm as a script
-        node_bin_dir.parent().unwrap().join("lib/node_modules/npm/index.js")
+        let parent = node_bin_dir.parent()
+            .expect("Node binary directory should have a parent directory");
+        parent.join("lib/node_modules/npm/index.js")
     };
 
     /* set path */
