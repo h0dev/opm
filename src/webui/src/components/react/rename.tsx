@@ -1,6 +1,6 @@
 import { api } from '@/api';
 import { useEffect, useState, useRef } from 'react';
-import { CheckIcon, XMarkIcon, PencilIcon } from '@heroicons/react/20/solid';
+import { CheckIcon, XMarkIcon } from '@heroicons/react/20/solid';
 
 const Rename = (props: { base: string; server: string; process_id: number; callback: any; old: string; onSuccess?: (msg: string) => void; onError?: (msg: string) => void }) => {
 	const [isEditing, setIsEditing] = useState(false);
@@ -58,9 +58,8 @@ const Rename = (props: { base: string; server: string; process_id: number; callb
 					e.stopPropagation();
 					setIsEditing(true);
 				}}
-				className="text-zinc-200 rounded-md flex items-center gap-2 p-2 w-full text-left cursor-pointer hover:bg-zinc-800/80 hover:text-zinc-50">
-				<PencilIcon className="h-4 w-4" />
-				<span>Rename</span>
+				className="text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-zinc-800/80 hover:text-zinc-50">
+				Rename
 			</button>
 		);
 	}
