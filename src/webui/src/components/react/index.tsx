@@ -329,7 +329,11 @@ const Index = (props: { base: string }) => {
 								<div className="flex-1 min-w-0">
 									<InlineRename 
 										ref={(el) => {
-											if (el) renameRefs.current.set(item.id, el);
+											if (el) {
+												renameRefs.current.set(item.id, el);
+											} else {
+												renameRefs.current.delete(item.id);
+											}
 										}}
 										base={props.base} 
 										server={item.server} 
@@ -430,7 +434,10 @@ const Index = (props: { base: string }) => {
 															onClick={(e) => {
 																e.preventDefault();
 																e.stopPropagation();
-																renameRefs.current.get(item.id)?.triggerEdit();
+																const ref = renameRefs.current.get(item.id);
+																if (ref) {
+																	ref.triggerEdit();
+																}
 															}}
 															className={classNames(
 																focus ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-200',
