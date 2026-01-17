@@ -432,12 +432,13 @@ const View = (props: { id: string; base: string }) => {
 												)}
 											</MenuItem>
 											<MenuItem>
-												{({ focus }) => (
+												{({ focus, close }) => (
 													<button
 														onClick={(e) => {
 															e.preventDefault();
 															e.stopPropagation();
 															renameRef.current?.triggerEdit();
+															close();
 														}}
 														className={classNames(
 															focus ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-200',

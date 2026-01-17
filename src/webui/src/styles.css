@@ -18,11 +18,19 @@ html {
 nav {
 	display: flex !important;
 	justify-content: flex-start !important;
+	align-items: center !important;
 }
 
 nav > div {
+	display: flex !important;
 	justify-content: flex-start !important;
+	align-items: center !important;
 	gap: 1rem;
+}
+
+/* Prevent flex-1 from causing centering */
+nav > div > div {
+	justify-content: flex-start !important;
 }
 
 /* Navigation link styles */

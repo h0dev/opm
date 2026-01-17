@@ -429,7 +429,7 @@ const Index = (props: { base: string }) => {
 											</div>
 											<div className="p-1.5">
 												<MenuItem>
-													{({ focus }) => (
+													{({ focus, close }) => (
 														<button
 															onClick={(e) => {
 																e.preventDefault();
@@ -438,6 +438,7 @@ const Index = (props: { base: string }) => {
 																if (ref) {
 																	ref.triggerEdit();
 																}
+																close();
 															}}
 															className={classNames(
 																focus ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-200',
