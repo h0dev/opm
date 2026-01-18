@@ -7,20 +7,21 @@ const AgentDetailPage = (props: { base: string }) => {
 	useEffect(() => {
 		// Get agent ID from URL hash
 		const hash = window.location.hash.substring(1);
-		setAgentId(hash || 'unknown');
+		setAgentId(hash || '');
 
 		// Listen for hash changes
 		const handleHashChange = () => {
 			const newHash = window.location.hash.substring(1);
-			setAgentId(newHash || 'unknown');
+			setAgentId(newHash || '');
 		};
 
 		window.addEventListener('hashchange', handleHashChange);
 		return () => window.removeEventListener('hashchange', handleHashChange);
 	}, []);
 
+	// Wait for agent ID to be set from URL hash
 	if (!agentId) {
-		return null; // or a loading component
+		return null;
 	}
 
 	return <AgentDetail agentId={agentId} base={props.base} />;
