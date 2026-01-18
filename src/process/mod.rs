@@ -126,18 +126,22 @@ pub struct LogInfo {
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct ProcessItem {
-    pid: i64,
-    id: usize,
-    cpu: String,
-    mem: String,
-    name: String,
-    restarts: u64,
-    status: String,
-    uptime: String,
+    pub pid: i64,
+    pub id: usize,
+    pub cpu: String,
+    pub mem: String,
+    pub name: String,
+    pub restarts: u64,
+    pub status: String,
+    pub uptime: String,
     #[schema(example = "/path")]
-    watch_path: String,
+    pub watch_path: String,
     #[schema(value_type = String, example = "2000-01-01T01:00:00.000Z")]
-    start_time: DateTime<Utc>,
+    pub start_time: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -171,6 +175,9 @@ pub struct Process {
     /// Maximum memory limit in bytes (0 = no limit)
     #[serde(default)]
     pub max_memory: u64,
+    /// Agent ID that owns this process (None for local processes)
+    #[serde(default)]
+    pub agent_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -463,6 +470,7 @@ impl Runner {
                     script: command.clone(),
                     env: stored_env,
                     max_memory,
+                    agent_id: None, // Local processes don't have an agent
                 },
             );
         }
@@ -1046,82 +1054,93 @@ impl Runner {
             .map(|(id, _)| *id)
     }
 
+    /// Helper method to build ProcessItem from Process
+    fn build_process_item(&self, id: usize, item: &Process) -> ProcessItem {
+        let mut memory_usage: Option<MemoryInfo> = None;
+        let mut cpu_percent: Option<f64> = None;
+
+        // Use new_fast() to avoid CPU measurement delays for list view
+        // For shell scripts, try shell_pid first to capture the entire process tree
+        let mut pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+        let mut process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
+
+        // If shell_pid fails (process exited), try the actual script pid
+        if process_result.is_err() && item.shell_pid.is_some() {
+            pid_for_monitoring = item.pid;
+            process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
+        }
+
+        if let Ok(process) = process_result
+            && let Ok(_mem_info_native) = process.memory_info()
+        {
+            cpu_percent = Some(get_process_cpu_usage_with_children_fast(pid_for_monitoring));
+            memory_usage = get_process_memory_with_children(pid_for_monitoring);
+        }
+
+        let cpu_percent = match cpu_percent {
+            Some(percent) => format!("{:.2}%", percent),
+            None => string!("0.00%"),
+        };
+
+        let memory_usage = match memory_usage {
+            Some(usage) => helpers::format_memory(usage.rss),
+            None => string!("0b"),
+        };
+
+        let process_actually_running = item.running && is_pid_alive(item.pid);
+        
+        let status = if process_actually_running {
+            string!("online")
+        } else if item.running {
+            string!("crashed")
+        } else {
+            match item.crash.crashed {
+                true => string!("crashed"),
+                false => string!("stopped"),
+            }
+        };
+
+        let uptime = if process_actually_running {
+            helpers::format_duration(item.started)
+        } else {
+            string!("0s")
+        };
+
+        ProcessItem {
+            id,
+            status,
+            pid: item.pid,
+            cpu: cpu_percent,
+            mem: memory_usage,
+            restarts: item.restarts,
+            name: item.name.clone(),
+            start_time: item.started,
+            watch_path: item.watch.path.clone(),
+            uptime,
+            agent_id: item.agent_id.clone(),
+            agent_name: None,
+        }
+    }
+
     pub fn fetch(&self) -> Vec<ProcessItem> {
         let mut processes: Vec<ProcessItem> = Vec::new();
 
         for (id, item) in self.items() {
-            let mut memory_usage: Option<MemoryInfo> = None;
-            let mut cpu_percent: Option<f64> = None;
+            processes.push(self.build_process_item(id, &item));
+        }
 
-            // Use new_fast() to avoid CPU measurement delays for list view
-            // This uses average CPU since process start instead of current instantaneous CPU
-            // For accurate current CPU, use the info endpoint which measures over a 100ms window
+        return processes;
+    }
 
-            // For shell scripts, try shell_pid first to capture the entire process tree
-            // If shell_pid process has exited, fall back to the actual script pid
-            let mut pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-            let mut process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
+    /// Fetch processes filtered by agent ID
+    pub fn fetch_by_agent(&self, agent_id: &str) -> Vec<ProcessItem> {
+        let mut processes: Vec<ProcessItem> = Vec::new();
 
-            // If shell_pid fails (process exited), try the actual script pid
-            if process_result.is_err() && item.shell_pid.is_some() {
-                pid_for_monitoring = item.pid;
-                process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
+        for (id, item) in self.items() {
+            // Only include processes that belong to the specified agent
+            if item.agent_id.as_deref() == Some(agent_id) {
+                processes.push(self.build_process_item(id, &item));
             }
-
-            if let Ok(process) = process_result
-                && let Ok(_mem_info_native) = process.memory_info()
-            {
-                // Use fast CPU calculation that includes children (important for .sh scripts)
-                cpu_percent = Some(get_process_cpu_usage_with_children_fast(pid_for_monitoring));
-                memory_usage = get_process_memory_with_children(pid_for_monitoring);
-            }
-
-            let cpu_percent = match cpu_percent {
-                Some(percent) => format!("{:.2}%", percent),
-                None => string!("0.00%"),
-            };
-
-            let memory_usage = match memory_usage {
-                Some(usage) => helpers::format_memory(usage.rss),
-                None => string!("0b"),
-            };
-
-            // Check if process actually exists before reporting as online
-            // A process marked as running but with a non-existent PID should be shown as crashed
-            let process_actually_running = item.running && is_pid_alive(item.pid);
-            
-            let status = if process_actually_running {
-                string!("online")
-            } else if item.running {
-                // Process is marked as running but PID doesn't exist - it crashed
-                string!("crashed")
-            } else {
-                match item.crash.crashed {
-                    true => string!("crashed"),
-                    false => string!("stopped"),
-                }
-            };
-
-            // Only count uptime when the process is actually running
-            // Crashed or stopped processes should show "0s" uptime
-            let uptime = if process_actually_running {
-                helpers::format_duration(item.started)
-            } else {
-                string!("0s")
-            };
-
-            processes.push(ProcessItem {
-                id,
-                status,
-                pid: item.pid,
-                cpu: cpu_percent,
-                mem: memory_usage,
-                restarts: item.restarts,
-                name: item.name.clone(),
-                start_time: item.started,
-                watch_path: item.watch.path.clone(),
-                uptime,
-            });
         }
 
         return processes;

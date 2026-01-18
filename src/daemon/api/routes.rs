@@ -1133,9 +1133,21 @@ async fn send_telegram_message(
         )
     )
 )]
-pub async fn list_handler(_t: Token) -> Json<Vec<ProcessItem>> {
+pub async fn list_handler(
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> Json<Vec<ProcessItem>> {
     let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["list"]).start_timer();
-    let data = Runner::new().fetch();
+    let mut data = Runner::new().fetch();
+
+    // Enrich process items with agent names
+    for process in &mut data {
+        if let Some(agent_id) = &process.agent_id {
+            if let Some(agent) = registry.get(agent_id) {
+                process.agent_name = Some(agent.name.clone());
+            }
+        }
+    }
 
     HTTP_COUNTER.inc();
     timer.observe_duration();
@@ -1864,4 +1876,73 @@ pub async fn agent_unregister_handler(
         "success": true,
         "message": "Agent unregistered successfully"
     })))
+}
+
+/// Get agent details by ID
+#[utoipa::path(
+    get,
+    path = "/daemon/agents/{id}",
+    params(
+        ("id" = String, Path, description = "Agent ID")
+    ),
+    responses(
+        (status = 200, description = "Agent details retrieved successfully"),
+        (status = 404, description = "Agent not found")
+    ),
+    security(("api_key" = []))
+)]
+#[get("/daemon/agents/<id>")]
+pub async fn agent_get_handler(
+    id: String,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> Result<Json<opm::agent::types::AgentInfo>, NotFound> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_get"]).start_timer();
+    HTTP_COUNTER.inc();
+
+    match registry.get(&id) {
+        Some(agent) => {
+            timer.observe_duration();
+            Ok(Json(agent))
+        }
+        None => {
+            timer.observe_duration();
+            Err(not_found("Agent not found"))
+        }
+    }
+}
+
+/// Get processes for a specific agent
+#[utoipa::path(
+    get,
+    path = "/daemon/agents/{id}/processes",
+    params(
+        ("id" = String, Path, description = "Agent ID")
+    ),
+    responses(
+        (status = 200, description = "List of processes for the agent"),
+        (status = 404, description = "Agent not found")
+    ),
+    security(("api_key" = []))
+)]
+#[get("/daemon/agents/<id>/processes")]
+pub async fn agent_processes_handler(
+    id: String,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> Result<Json<Vec<ProcessItem>>, NotFound> {
+    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_processes"]).start_timer();
+    HTTP_COUNTER.inc();
+
+    // Verify agent exists
+    if registry.get(&id).is_none() {
+        timer.observe_duration();
+        return Err(not_found("Agent not found"));
+    }
+
+    // Fetch processes filtered by agent ID
+    let processes = Runner::new().fetch_by_agent(&id);
+    timer.observe_duration();
+
+    Ok(Json(processes))
 }

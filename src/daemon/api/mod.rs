@@ -80,6 +80,8 @@ lazy_static! {
         routes::agent_heartbeat_handler,
         routes::agent_list_handler,
         routes::agent_unregister_handler,
+        routes::agent_get_handler,
+        routes::agent_processes_handler,
     ),
     components(schemas(
         ErrorMessage,
@@ -289,6 +291,8 @@ pub async fn start(webui: bool) {
         routes::agent_heartbeat_handler,
         routes::agent_list_handler,
         routes::agent_unregister_handler,
+        routes::agent_get_handler,
+        routes::agent_processes_handler,
     ];
 
     log::info!("API start: Configuring Rocket server at {}", config::read().fmt_address());
