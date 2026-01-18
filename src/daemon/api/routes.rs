@@ -1379,6 +1379,19 @@ pub async fn list_handler(
         }
     }
 
+    // Add processes from all connected agents
+    let agents = registry.list();
+    for agent in agents {
+        if let Some(mut agent_processes) = registry.get_processes(&agent.id) {
+            // Enrich agent processes with agent name
+            for process in &mut agent_processes {
+                process.agent_id = Some(agent.id.clone());
+                process.agent_name = Some(agent.name.clone());
+            }
+            data.extend(agent_processes);
+        }
+    }
+
     HTTP_COUNTER.inc();
     timer.observe_duration();
 
