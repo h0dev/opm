@@ -83,18 +83,15 @@ impl AgentConnection {
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        // Construct the API endpoint URL
-        let api_endpoint = format!(
-            "http://{}:{}",
-            self.config.api_address, self.config.api_port
-        );
+        // Construct the API endpoint URL (optional - for backward compatibility)
+        let api_endpoint = None; // Agents no longer need to expose API endpoint
 
         // Send registration message
         let register_msg = AgentMessage::Register {
             id: self.config.id.clone(),
             name: self.config.name.clone(),
             hostname: hostname::get().ok().and_then(|h| h.into_string().ok()),
-            api_endpoint: Some(api_endpoint.clone()),
+            api_endpoint,
         };
 
         let register_json = serde_json::to_string(&register_msg)
@@ -115,7 +112,6 @@ impl AgentConnection {
                         if let AgentMessage::Response { success, message } = response {
                             if success {
                                 println!("[Agent] Successfully registered with server");
-                                println!("[Agent] API endpoint: {}", api_endpoint);
                                 self.status = AgentStatus::Online;
                             } else {
                                 return Err(anyhow!("Registration failed: {}", message));
@@ -133,9 +129,11 @@ impl AgentConnection {
             }
         }
 
-        // Start heartbeat loop
+        // Start heartbeat and process update loop
         let mut heartbeat_interval =
             tokio::time::interval(Duration::from_secs(self.config.heartbeat_interval));
+        // Send process updates every 10 seconds (configurable)
+        let mut process_update_interval = tokio::time::interval(Duration::from_secs(10));
 
         loop {
             tokio::select! {
@@ -150,7 +148,34 @@ impl AgentConnection {
                             eprintln!("[Agent] Failed to send heartbeat: {}", e);
                             return Err(anyhow!("Heartbeat failed: {}", e));
                         }
-                        println!("[Agent] Heartbeat sent successfully");
+                        log::debug!("[Agent] Heartbeat sent");
+                    }
+                }
+
+                // Send process updates periodically
+                _ = process_update_interval.tick() => {
+                    // Fetch current process list
+                    use crate::process::Runner;
+                    let runner = Runner::new();
+                    let processes = runner.fetch();
+                    
+                    // Convert to JSON values for serialization
+                    let process_values: Vec<serde_json::Value> = processes
+                        .into_iter()
+                        .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
+                        .collect();
+
+                    let process_update_msg = AgentMessage::ProcessUpdate {
+                        id: self.config.id.clone(),
+                        processes: process_values,
+                    };
+
+                    if let Ok(update_json) = serde_json::to_string(&process_update_msg) {
+                        if let Err(e) = ws_sender.send(Message::Text(update_json)).await {
+                            eprintln!("[Agent] Failed to send process update: {}", e);
+                            return Err(anyhow!("Process update failed: {}", e));
+                        }
+                        log::debug!("[Agent] Process update sent");
                     }
                 }
 

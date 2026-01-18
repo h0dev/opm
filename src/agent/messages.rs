@@ -13,6 +13,11 @@ pub enum AgentMessage {
     },
     /// Heartbeat/ping message
     Heartbeat { id: String },
+    /// Process list update message
+    ProcessUpdate {
+        id: String,
+        processes: Vec<serde_json::Value>,
+    },
     /// Response message
     Response { success: bool, message: String },
     /// Ping message from server to agent

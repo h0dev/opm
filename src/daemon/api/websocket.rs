@@ -1,6 +1,7 @@
 use opm::agent::messages::AgentMessage;
 use opm::agent::registry::AgentRegistry;
 use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
+use opm::process::ProcessItem;
 use rocket::{State, get};
 use rocket_ws::{Message, Stream, WebSocket};
 
@@ -71,6 +72,27 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
 
                                         // Close connection
                                         break;
+                                    }
+                                }
+                                AgentMessage::ProcessUpdate { id, processes } => {
+                                    log::debug!("[WebSocket] Process update from agent {}", id);
+
+                                    // Parse processes from JSON values
+                                    let parsed_processes: Vec<ProcessItem> = processes
+                                        .into_iter()
+                                        .filter_map(|p| serde_json::from_value(p).ok())
+                                        .collect();
+
+                                    registry.update_processes(&id, parsed_processes);
+
+                                    // Send acknowledgment
+                                    let response = AgentMessage::Response {
+                                        success: true,
+                                        message: "Process update received".to_string(),
+                                    };
+
+                                    if let Ok(response_json) = serde_json::to_string(&response) {
+                                        yield Message::Text(response_json);
                                     }
                                 }
                                 AgentMessage::Pong => {

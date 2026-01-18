@@ -14,6 +14,7 @@ pub fn create_templates() -> (Tera, String) {
             ("status", include_str!("dist/status.html")),
             ("servers", include_str!("dist/servers.html")),
             ("notifications", include_str!("dist/notifications.html")),
+            ("agent-detail", include_str!("dist/agent-detail.html")),
         ])
         .unwrap();
     }
@@ -44,6 +45,10 @@ pub fn create_templates() -> (Tera, String) {
             ),
             (
                 "notifications",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
+            (
+                "agent-detail",
                 "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
             ),
         ])

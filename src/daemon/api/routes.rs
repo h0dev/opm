@@ -231,6 +231,17 @@ pub async fn notifications(
     ))
 }
 
+#[get("/agent-detail")]
+pub async fn agent_detail(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("agent-detail", &state, &mut Context::new()).await?,
+    ))
+}
+
 #[get("/daemon/prometheus")]
 #[utoipa::path(get, tag = "Daemon", path = "/daemon/prometheus", security((), ("api_key" = [])),
     responses(
@@ -2232,59 +2243,64 @@ pub async fn agent_processes_handler(
         }
     };
 
-    // Get API endpoint from agent
-    let api_endpoint = match &agent.api_endpoint {
-        Some(endpoint) => endpoint,
-        None => {
-            timer.observe_duration();
-            return Err(generic_error(
-                Status::InternalServerError,
-                string!("Agent API endpoint not configured"),
-            ));
-        }
-    };
+    // Try to get processes from registry first (pushed via WebSocket)
+    if let Some(processes) = registry.get_processes(&id) {
+        timer.observe_duration();
+        return Ok(Json(processes));
+    }
 
-    // Fetch processes from agent's API
-    let (client, headers) = client(&None).await;
-    match client
-        .get(fmtstr!("{api_endpoint}/list"))
-        .headers(headers)
-        .send()
-        .await
-    {
-        Ok(response) => {
-            if response.status() != 200 {
-                let err_text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "Unknown error".to_string());
-                timer.observe_duration();
-                Err(generic_error(
-                    Status::InternalServerError,
-                    format!("Failed to fetch processes from agent: {}", err_text),
-                ))
-            } else {
-                match response.json::<Vec<ProcessItem>>().await {
-                    Ok(processes) => {
-                        timer.observe_duration();
-                        Ok(Json(processes))
-                    }
-                    Err(e) => {
-                        timer.observe_duration();
-                        Err(generic_error(
-                            Status::InternalServerError,
-                            format!("Failed to parse agent response: {}", e),
-                        ))
+    // Fallback: Check if agent has an API endpoint configured (legacy support)
+    if let Some(api_endpoint) = &agent.api_endpoint {
+        // Fetch processes from agent's API
+        let (client, headers) = client(&None).await;
+        match client
+            .get(fmtstr!("{api_endpoint}/list"))
+            .headers(headers)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status() != 200 {
+                    let err_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    timer.observe_duration();
+                    Err(generic_error(
+                        Status::InternalServerError,
+                        format!("Failed to fetch processes from agent: {}", err_text),
+                    ))
+                } else {
+                    match response.json::<Vec<ProcessItem>>().await {
+                        Ok(processes) => {
+                            timer.observe_duration();
+                            Ok(Json(processes))
+                        }
+                        Err(e) => {
+                            timer.observe_duration();
+                            Err(generic_error(
+                                Status::InternalServerError,
+                                format!("Failed to parse agent response: {}", e),
+                            ))
+                        }
                     }
                 }
             }
+            Err(err) => {
+                timer.observe_duration();
+                Err(generic_error(
+                    Status::InternalServerError,
+                    format!("Failed to connect to agent API: {}", err),
+                ))
+            }
         }
-        Err(err) => {
-            timer.observe_duration();
-            Err(generic_error(
-                Status::InternalServerError,
-                format!("Failed to connect to agent API: {}", err),
-            ))
-        }
+    } else {
+        // No API endpoint and no process data - try local Runner by agent_id
+        // Note: Creating a new Runner instance is the standard pattern in this codebase
+        // to ensure fresh data is loaded from disk on each request
+        let runner = Runner::new();
+        let processes = runner.fetch_by_agent(&id);
+        timer.observe_duration();
+        Ok(Json(processes))
     }
 }
