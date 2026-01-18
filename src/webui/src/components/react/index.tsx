@@ -381,7 +381,7 @@ const Index = (props: { base: string }) => {
 										onError={error} 
 									/>
 									<div className="flex items-center gap-2 mt-0.5">
-										<div className="text-xs font-medium text-zinc-400">{item.server != 'local' ? item.server : 'Internal'}</div>
+										<div className="text-xs font-medium text-zinc-400">{item.server != 'local' ? item.server : 'local'}</div>
 										{item.agent_name && (
 											<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
 												{item.agent_name}

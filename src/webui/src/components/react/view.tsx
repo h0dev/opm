@@ -330,7 +330,7 @@ const View = (props: { id: string; base: string }) => {
 						<svg viewBox="0 0 6 6" aria-hidden="true" className="h-1.5 w-1.5 fill-green-400">
 							<circle r={3} cx={3} cy={3} />
 						</svg>
-						{server != 'local' ? server : 'Internal'}
+						{server != 'local' ? server : 'local'}
 					</span>
 				</div>
 				<div className="flex items-start justify-between gap-x-8 gap-y-4 bg-zinc-700/10 px-4 py-4 flex-row items-center sm:px-6 lg:px-8">
