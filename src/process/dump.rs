@@ -52,37 +52,36 @@ pub fn read() -> Runner {
             // If parsing fails, the dump file is likely corrupted
             // Log the error and create a fresh dump file
             log!("[dump::read] Corrupted dump file detected: {err}");
-            
+
             // Backup the corrupted file for debugging
             let backup_path = format!(
                 "{}.corrupted.{}",
                 global!("opm.dump"),
                 Utc::now().format("%Y%m%d_%H%M%S")
             );
-            
+
             // Try rename first (fast for same filesystem), fall back to copy+remove for cross-filesystem
-            let backup_result = fs::rename(global!("opm.dump"), &backup_path)
-                .or_else(|_| {
-                    fs::copy(global!("opm.dump"), &backup_path)
-                        .and_then(|_| fs::remove_file(global!("opm.dump")))
-                });
-            
+            let backup_result = fs::rename(global!("opm.dump"), &backup_path).or_else(|_| {
+                fs::copy(global!("opm.dump"), &backup_path)
+                    .and_then(|_| fs::remove_file(global!("opm.dump")))
+            });
+
             if let Err(e) = backup_result {
                 log!("[dump::read] Failed to backup corrupted file: {e}");
             } else {
                 log!("[dump::read] Backed up corrupted file to: {backup_path}");
             }
-            
+
             // Create a fresh runner with empty state
             let runner = Runner {
                 id: Id::new(0),
                 list: BTreeMap::new(),
                 remote: None,
             };
-            
+
             write(&runner);
             log!("[dump::read] Created fresh dump file after corruption");
-            
+
             runner
         }
     }

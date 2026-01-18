@@ -37,7 +37,9 @@ fn use_system_node_or_download() -> PathBuf {
     // Try to use system Node.js first
     if let Ok(node_path) = Command::new("which").arg("node").output() {
         if node_path.status.success() {
-            let node_bin = String::from_utf8_lossy(&node_path.stdout).trim().to_string();
+            let node_bin = String::from_utf8_lossy(&node_path.stdout)
+                .trim()
+                .to_string();
             if !node_bin.is_empty() {
                 // Get the bin directory containing node
                 let node_path = PathBuf::from(node_bin);
@@ -48,7 +50,7 @@ fn use_system_node_or_download() -> PathBuf {
             }
         }
     }
-    
+
     // Fall back to downloading Node.js
     eprintln!("System Node.js not found, downloading...");
     download_node()
@@ -67,11 +69,14 @@ fn download_node() -> PathBuf {
     #[cfg(all(target_arch = "aarch64"))]
     let target_arch = "arm64";
 
-    let download_url = format!("https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-{target_os}-{target_arch}.tar.gz");
+    let download_url = format!(
+        "https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-{target_os}-{target_arch}.tar.gz"
+    );
 
     /* paths */
     let download_dir = Path::new("target").join("downloads");
-    let node_extract_dir = download_dir.join(format!("node-v{NODE_VERSION}-{target_os}-{target_arch}"));
+    let node_extract_dir =
+        download_dir.join(format!("node-v{NODE_VERSION}-{target_os}-{target_arch}"));
 
     if node_extract_dir.is_dir() {
         return node_extract_dir;
@@ -86,7 +91,10 @@ fn download_node() -> PathBuf {
         panic!("Failed to extract Node.js: {:?}", err)
     }
 
-    println!("cargo:rustc-env=NODE_HOME={}", node_extract_dir.to_str().unwrap());
+    println!(
+        "cargo:rustc-env=NODE_HOME={}",
+        node_extract_dir.to_str().unwrap()
+    );
 
     return node_extract_dir;
 }
@@ -95,14 +103,15 @@ fn download_then_build(node_bin_dir: PathBuf) {
     let bin = &node_bin_dir;
     let node = &bin.join("node");
     let project_dir = &Path::new("src").join("webui");
-    
+
     // Check if this is system Node or downloaded Node
     let npm = if bin.join("npm").exists() {
         // System Node with npm binary
         bin.join("npm")
     } else {
         // Downloaded Node with npm as a script
-        let parent = node_bin_dir.parent()
+        let parent = node_bin_dir
+            .parent()
             .expect("Node binary directory should have a parent directory");
         parent.join("lib/node_modules/npm/index.js")
     };

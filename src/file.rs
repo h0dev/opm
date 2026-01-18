@@ -373,11 +373,7 @@ pub fn try_read_object<T: serde::de::DeserializeOwned>(path: String) -> Result<T
 pub fn read_object<T: serde::de::DeserializeOwned>(path: String) -> T {
     let bytes = match read_file_with_retry(&path) {
         Ok(bytes) => bytes,
-        Err(err) => crashln!(
-            "{} Cannot find file.\n{}",
-            *helpers::FAIL,
-            err.white()
-        ),
+        Err(err) => crashln!("{} Cannot find file.\n{}", *helpers::FAIL, err.white()),
     };
 
     // Parse the file content - no retry loop needed as corrupted content won't fix itself

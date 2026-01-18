@@ -215,7 +215,11 @@ pub fn export_hcl(items: &Items, path: &Option<String>) {
             .open(&output_path)
         {
             Ok(f) => f,
-            Err(err) => crashln!("{} Error opening file.\n{}", *helpers::FAIL, string!(err).white()),
+            Err(err) => crashln!(
+                "{} Error opening file.\n{}",
+                *helpers::FAIL,
+                string!(err).white()
+            ),
         };
 
         if let Err(err) = writeln!(file, "{}", serialized) {

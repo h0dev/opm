@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-use uuid::Uuid;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 // Default API port for agents (different from server default 9876)
 pub const AGENT_DEFAULT_API_PORT: u16 = 9877;
@@ -14,7 +14,7 @@ pub struct AgentConfig {
     pub token: Option<String>,
     pub reconnect_interval: u64, // seconds
     pub heartbeat_interval: u64, // seconds
-    pub api_address: String, // Address where agent API is listening
+    pub api_address: String,     // Address where agent API is listening
     pub api_port: u16,
 }
 

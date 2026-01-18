@@ -6,44 +6,64 @@ mod structs;
 mod websocket;
 
 use crate::webui::{self, assets::NamedFile};
-use helpers::{create_status, NotFound};
-use include_dir::{include_dir, Dir};
+use helpers::{NotFound, create_status};
+use include_dir::{Dir, include_dir};
 use lazy_static::lazy_static;
 use opm::{config, process};
-use prometheus::{opts, register_counter, register_gauge, register_histogram, register_histogram_vec};
 use prometheus::{Counter, Gauge, Histogram, HistogramVec};
-use serde_json::{json, Value};
+use prometheus::{
+    opts, register_counter, register_gauge, register_histogram, register_histogram_vec,
+};
+use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use global_placeholders::global;
+use libc;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
 use structs::ErrorMessage;
 use tera::Context;
-use global_placeholders::global;
-use libc;
 
 use utoipa::{
-    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
     Modify, OpenApi,
+    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 
 use rocket::{
-    catch,
+    State, catch,
     http::{ContentType, Status},
     outcome::Outcome,
     request::{self, FromRequest, Request},
     serde::json::Json,
-    State,
 };
 
-
-
 lazy_static! {
-    pub static ref HTTP_COUNTER: Counter = register_counter!(opts!("http_requests_total", "Number of HTTP requests made.")).unwrap();
-    pub static ref DAEMON_START_TIME: Gauge = register_gauge!(opts!("process_start_time_seconds", "The uptime of the daemon.")).unwrap();
-    pub static ref DAEMON_MEM_USAGE: Histogram = register_histogram!("daemon_memory_usage", "The memory usage graph of the daemon.").unwrap();
-    pub static ref DAEMON_CPU_PERCENTAGE: Histogram = register_histogram!("daemon_cpu_percentage", "The cpu usage graph of the daemon.").unwrap();
-    pub static ref HTTP_REQ_HISTOGRAM: HistogramVec = register_histogram_vec!("http_request_duration_seconds", "The HTTP request latencies in seconds.", &["route"]).unwrap();
+    pub static ref HTTP_COUNTER: Counter = register_counter!(opts!(
+        "http_requests_total",
+        "Number of HTTP requests made."
+    ))
+    .unwrap();
+    pub static ref DAEMON_START_TIME: Gauge = register_gauge!(opts!(
+        "process_start_time_seconds",
+        "The uptime of the daemon."
+    ))
+    .unwrap();
+    pub static ref DAEMON_MEM_USAGE: Histogram = register_histogram!(
+        "daemon_memory_usage",
+        "The memory usage graph of the daemon."
+    )
+    .unwrap();
+    pub static ref DAEMON_CPU_PERCENTAGE: Histogram = register_histogram!(
+        "daemon_cpu_percentage",
+        "The cpu usage graph of the daemon."
+    )
+    .unwrap();
+    pub static ref HTTP_REQ_HISTOGRAM: HistogramVec = register_histogram_vec!(
+        "http_request_duration_seconds",
+        "The HTTP request latencies in seconds.",
+        &["route"]
+    )
+    .unwrap();
 }
 
 #[derive(OpenApi)]
@@ -128,24 +148,37 @@ struct TeraState {
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let components = openapi.components.as_mut().unwrap();
-        components.add_security_scheme("api_key", SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("token"))))
+        components.add_security_scheme(
+            "api_key",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("token"))),
+        )
     }
 }
 
 #[catch(500)]
-fn internal_error<'m>() -> Json<ErrorMessage> { create_status(Status::InternalServerError) }
+fn internal_error<'m>() -> Json<ErrorMessage> {
+    create_status(Status::InternalServerError)
+}
 
 #[catch(400)]
-fn bad_request<'m>() -> Json<ErrorMessage> { create_status(Status::BadRequest) }
+fn bad_request<'m>() -> Json<ErrorMessage> {
+    create_status(Status::BadRequest)
+}
 
 #[catch(405)]
-fn not_allowed<'m>() -> Json<ErrorMessage> { create_status(Status::MethodNotAllowed) }
+fn not_allowed<'m>() -> Json<ErrorMessage> {
+    create_status(Status::MethodNotAllowed)
+}
 
 #[catch(404)]
-fn not_found<'m>() -> Json<ErrorMessage> { create_status(Status::NotFound) }
+fn not_found<'m>() -> Json<ErrorMessage> {
+    create_status(Status::NotFound)
+}
 
 #[catch(401)]
-fn unauthorized<'m>() -> Json<ErrorMessage> { create_status(Status::Unauthorized) }
+fn unauthorized<'m>() -> Json<ErrorMessage> {
+    create_status(Status::Unauthorized)
+}
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for EnableWebUI {
@@ -166,7 +199,9 @@ impl<'r> FromRequest<'r> for EnableWebUI {
 impl<'r> FromRequest<'r> for routes::Token {
     type Error = ();
 
-    async fn from_request(request: &'r rocket::Request<'_>) -> rocket::request::Outcome<Self, Self::Error> {
+    async fn from_request(
+        request: &'r rocket::Request<'_>,
+    ) -> rocket::request::Outcome<Self, Self::Error> {
         let config = config::read().daemon.web;
 
         match config.secure {
@@ -195,13 +230,9 @@ static IS_WEBUI: AtomicBool = AtomicBool::new(false);
 fn redirect_stderr_to_log() {
     // Get the daemon log file path
     let log_path = global!("opm.daemon.log");
-    
+
     // Open the log file in append mode
-    match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-    {
+    match OpenOptions::new().create(true).append(true).open(log_path) {
         Ok(log_file) => {
             let log_fd = log_file.as_raw_fd();
             // Redirect stderr to the log file
@@ -234,12 +265,13 @@ pub async fn start(webui: bool) {
     log::info!("API start: Creating templates");
     let tera = webui::create_templates();
     let s_path = config::read().get_path().trim_end_matches('/').to_string();
-    
+
     log::info!("API start: Initializing notification manager");
     // Initialize notification manager
     let notif_config = config::read().daemon.notifications.clone();
-    let _notification_manager = std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
-    
+    let _notification_manager =
+        std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
+
     log::info!("API start: Initializing agent registry");
     // Initialize agent registry
     let agent_registry = opm::agent::registry::AgentRegistry::new();
@@ -295,15 +327,30 @@ pub async fn start(webui: bool) {
         websocket::websocket_handler,
     ];
 
-    log::info!("API start: Configuring Rocket server at {}", config::read().fmt_address());
-    
+    log::info!(
+        "API start: Configuring Rocket server at {}",
+        config::read().fmt_address()
+    );
+
     let rocket = rocket::custom(config::read().get_address())
         .attach(Logger)
         .attach(AddCORS)
-        .manage(TeraState { path: tera.1, tera: tera.0 })
+        .manage(TeraState {
+            path: tera.1,
+            tera: tera.0,
+        })
         .manage(agent_registry)
         .mount(format!("{s_path}/"), routes)
-        .register("/", rocket::catchers![internal_error, bad_request, not_allowed, not_found, unauthorized]);
+        .register(
+            "/",
+            rocket::catchers![
+                internal_error,
+                bad_request,
+                not_allowed,
+                not_found,
+                unauthorized
+            ],
+        );
 
     log::info!("API start: Launching Rocket server");
     let result = rocket.launch().await;
@@ -320,11 +367,18 @@ pub async fn start(webui: bool) {
     }
 }
 
-async fn render(name: &str, state: &State<TeraState>, ctx: &mut Context) -> Result<String, NotFound> {
+async fn render(
+    name: &str,
+    state: &State<TeraState>,
+    ctx: &mut Context,
+) -> Result<String, NotFound> {
     ctx.insert("base_path", &state.path);
     ctx.insert("build_version", env!("CARGO_PKG_VERSION"));
 
-    state.tera.render(name, &ctx).or(Err(helpers::not_found("Page was not found")))
+    state
+        .tera
+        .render(name, &ctx)
+        .or(Err(helpers::not_found("Page was not found")))
 }
 
 #[rocket::get("/assets/<name>")]
@@ -335,9 +389,10 @@ async fn dynamic_assets(name: String) -> Option<NamedFile> {
         let file = DIR.get_file(&name)?;
         NamedFile::send(name, file.contents_utf8()).await.ok()
     }
-    
+
     #[cfg(debug_assertions)]
     {
+        let _ = name; // Unused in debug builds (used in non-debug above)
         None
     }
 }
@@ -351,10 +406,16 @@ async fn static_assets(name: String) -> Option<NamedFile> {
 }
 
 #[rocket::get("/openapi.json")]
-async fn docs_json() -> Value { json!(ApiDoc::openapi()) }
+async fn docs_json() -> Value {
+    json!(ApiDoc::openapi())
+}
 
 #[rocket::get("/docs/embed")]
-async fn embed() -> (ContentType, String) { (ContentType::HTML, docs::Docs::new().render()) }
+async fn embed() -> (ContentType, String) {
+    (ContentType::HTML, docs::Docs::new().render())
+}
 
 #[rocket::get("/health")]
-async fn health() -> Value { json!({"healthy": true}) }
+async fn health() -> Value {
+    json!({"healthy": true})
+}

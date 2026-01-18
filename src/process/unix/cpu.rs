@@ -4,13 +4,14 @@
 #[cfg(target_os = "linux")]
 pub fn get_effective_cpu_count() -> f64 {
     use std::fs;
-    
+
     // Helper function to read CPU quota from cgroup v2
     let read_cgroup_v2_quota = |path: &str| -> Option<f64> {
         if let Ok(content) = fs::read_to_string(path) {
             let parts: Vec<&str> = content.trim().split_whitespace().collect();
             if parts.len() >= 2 && parts[0] != "max" {
-                if let (Ok(quota), Ok(period)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                if let (Ok(quota), Ok(period)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>())
+                {
                     if period > 0.0 {
                         let cpu_count = quota / period;
                         if cpu_count > 0.0 {
@@ -22,13 +23,13 @@ pub fn get_effective_cpu_count() -> f64 {
         }
         None
     };
-    
+
     // Try to read cgroup v2 CPU settings
     // First check the root cgroup location
     if let Some(cpu_count) = read_cgroup_v2_quota("/sys/fs/cgroup/cpu.max") {
         return cpu_count;
     }
-    
+
     // For cgroup v2, also try the process's specific cgroup path
     if let Ok(cgroup_content) = fs::read_to_string("/proc/self/cgroup") {
         for line in cgroup_content.lines() {
@@ -46,17 +47,20 @@ pub fn get_effective_cpu_count() -> f64 {
             }
         }
     }
-    
+
     // Try cgroup v1 (older systems)
     // Check /sys/fs/cgroup/cpu/cpu.cfs_quota_us and /sys/fs/cgroup/cpu/cpu.cfs_period_us
     let quota_result = fs::read_to_string("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
         .or_else(|_| fs::read_to_string("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us"));
-    
+
     let period_result = fs::read_to_string("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
         .or_else(|_| fs::read_to_string("/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us"));
-    
+
     if let (Ok(quota_str), Ok(period_str)) = (quota_result, period_result) {
-        if let (Ok(quota), Ok(period)) = (quota_str.trim().parse::<i64>(), period_str.trim().parse::<i64>()) {
+        if let (Ok(quota), Ok(period)) = (
+            quota_str.trim().parse::<i64>(),
+            period_str.trim().parse::<i64>(),
+        ) {
             // -1 means no limit
             if quota > 0 && period > 0 {
                 let cpu_count = quota as f64 / period as f64;
@@ -66,7 +70,7 @@ pub fn get_effective_cpu_count() -> f64 {
             }
         }
     }
-    
+
     // No container limits found, return host CPU count
     num_cpus::get() as f64
 }
@@ -201,7 +205,8 @@ pub fn get_cpu_percent_fast(pid: u32) -> f64 {
                             // CPU percentage = (CPU time / elapsed time) * 100
                             // This gives percentage relative to ONE full core
                             // We then normalize by dividing by available CPUs
-                            let cpu_percent = (process_cpu_time / process_uptime) * 100.0 / num_cpus;
+                            let cpu_percent =
+                                (process_cpu_time / process_uptime) * 100.0 / num_cpus;
 
                             // Clamp to 100% - represents full utilization of available CPU
                             return cpu_percent.min(100.0);

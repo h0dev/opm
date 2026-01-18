@@ -47,7 +47,7 @@ fn wait_for_process_termination(pid: i64) -> bool {
     if pid <= 0 {
         return true;
     }
-    
+
     for _ in 0..MAX_TERMINATION_WAIT_ATTEMPTS {
         // Check if process is still running using libc::kill with signal 0
         // This returns 0 if the process exists, -1 if it doesn't (or permission denied)
@@ -306,14 +306,14 @@ fn load_dotenv(path: &PathBuf) -> BTreeMap<String, String> {
 /// Check if a process with the given PID is alive
 /// Uses libc::kill with signal 0 to check process existence without sending a signal
 /// Also checks if the process is a zombie (defunct), which should be treated as dead
-/// 
+///
 /// Why zombie detection matters:
 /// When a process crashes immediately after starting, it can become a zombie (defunct) process
 /// that still exists in the process table. The parent shell hasn't yet read its exit status via wait().
 /// Without zombie detection, libc::kill(pid, 0) returns success for zombies, causing the daemon to
 /// incorrectly report them as "online" and stop attempting restarts. By detecting zombies and treating
 /// them as dead, we ensure the daemon continues restart attempts until the max threshold is reached.
-/// 
+///
 /// PID <= 0 is never considered alive:
 /// - PID 0 signals all processes in the current process group
 /// - Negative PIDs signal process groups
@@ -322,14 +322,14 @@ pub fn is_pid_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    
+
     // First check if the PID exists using libc::kill
     let pid_exists = unsafe { libc::kill(pid as i32, 0) == 0 };
-    
+
     if !pid_exists {
         return false;
     }
-    
+
     // PID exists, but it might be a zombie (defunct)
     // Zombies are dead processes that still exist in the process table
     // They should be treated as dead for process monitoring purposes
@@ -339,7 +339,7 @@ pub fn is_pid_alive(pid: i64) -> bool {
             return false;
         }
     }
-    
+
     true
 }
 
@@ -443,7 +443,12 @@ impl Runner {
                 Ok(result) => result,
                 Err(err) => {
                     log::error!("Failed to start process '{}': {}", name, err);
-                    println!("{} Failed to start process '{}': {}", *helpers::FAIL, name, err);
+                    println!(
+                        "{} Failed to start process '{}': {}",
+                        *helpers::FAIL,
+                        name,
+                        err
+                    );
                     return self;
                 }
             };
@@ -509,14 +514,21 @@ impl Runner {
 
             kill_children(process.children.clone());
             if let Err(err) = process_stop(process.pid) {
-                log::warn!("Failed to stop process {} during restart: {}", process.pid, err);
+                log::warn!(
+                    "Failed to stop process {} during restart: {}",
+                    process.pid,
+                    err
+                );
                 // Continue with restart even if stop fails - process may already be dead
             }
 
             // Wait for the process to actually terminate before starting a new one
             // This prevents conflicts when restarting processes that hold resources (e.g., network connections)
             if !wait_for_process_termination(process.pid) {
-                log::warn!("Process {} did not terminate within timeout during restart", process.pid);
+                log::warn!(
+                    "Process {} did not terminate within timeout during restart",
+                    process.pid
+                );
             }
 
             if let Err(err) = std::env::set_current_dir(&path) {
@@ -524,7 +536,7 @@ impl Runner {
                 if let Some(ref dir) = original_dir {
                     let _ = std::env::set_current_dir(dir);
                 }
-                
+
                 // When dead=true (crash restart), keep running=true so daemon will retry on next cycle
                 // When dead=false (manual restart), set running=false to stop retrying until user manually restarts
                 if !dead {
@@ -532,14 +544,19 @@ impl Runner {
                 }
                 process.children = vec![];
                 process.crash.crashed = true;
-                
+
                 // Increment crash counter for restart failures to count against restart limit
                 // This prevents infinite retry loops when restart repeatedly fails
                 if dead {
                     self.handle_restart_failure(id, &name);
                 }
-                
-                log::error!("Failed to set working directory {:?} for process {} during restart: {}", path, name, err);
+
+                log::error!(
+                    "Failed to set working directory {:?} for process {} during restart: {}",
+                    path,
+                    name,
+                    err
+                );
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
                     *helpers::FAIL,
@@ -584,7 +601,7 @@ impl Runner {
                     if let Some(ref dir) = original_dir {
                         let _ = std::env::set_current_dir(dir);
                     }
-                    
+
                     // When dead=true (crash restart), keep running=true so daemon will retry on next cycle
                     // When dead=false (manual restart), set running=false to stop retrying until user manually restarts
                     if !dead {
@@ -592,15 +609,21 @@ impl Runner {
                     }
                     process.children = vec![];
                     process.crash.crashed = true;
-                    
+
                     // Increment crash counter for restart failures to count against restart limit
                     // This prevents infinite retry loops when restart repeatedly fails
                     if dead {
                         self.handle_restart_failure(id, &name);
                     }
-                    
+
                     log::error!("Failed to restart process '{}' (id={}): {}", name, id, err);
-                    println!("{} Failed to restart process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
+                    println!(
+                        "{} Failed to restart process '{}' (id={}): {}",
+                        *helpers::FAIL,
+                        name,
+                        id,
+                        err
+                    );
                     return self;
                 }
             };
@@ -621,7 +644,7 @@ impl Runner {
             // The daemon will reset it automatically after the process runs successfully
             // for the grace period (1 second), which provides better visibility into
             // process stability over time.
-            
+
             // Restore the original working directory to avoid affecting the daemon
             if let Some(dir) = original_dir {
                 if let Err(err) = std::env::set_current_dir(&dir) {
@@ -671,7 +694,7 @@ impl Runner {
                 if let Some(ref dir) = original_dir {
                     let _ = std::env::set_current_dir(dir);
                 }
-                
+
                 // When dead=true (crash reload), keep running=true so daemon will retry on next cycle
                 // When dead=false (manual reload), set running=false to stop retrying until user manually reloads
                 if !dead {
@@ -679,14 +702,19 @@ impl Runner {
                 }
                 process.children = vec![];
                 process.crash.crashed = true;
-                
+
                 // Increment crash counter for reload failures to count against restart limit
                 // This prevents infinite retry loops when reload repeatedly fails
                 if dead {
                     self.handle_restart_failure(id, &name);
                 }
-                
-                log::error!("Failed to set working directory {:?} for process {} during reload: {}", path, name, err);
+
+                log::error!(
+                    "Failed to set working directory {:?} for process {} during reload: {}",
+                    path,
+                    name,
+                    err
+                );
                 println!(
                     "{} Failed to set working directory {:?}\nError: {:#?}",
                     *helpers::FAIL,
@@ -731,7 +759,7 @@ impl Runner {
                     if let Some(ref dir) = original_dir {
                         let _ = std::env::set_current_dir(dir);
                     }
-                    
+
                     // When dead=true (crash reload), keep running=true so daemon will retry on next cycle
                     // When dead=false (manual reload), set running=false to stop retrying until user manually reloads
                     if !dead {
@@ -739,15 +767,21 @@ impl Runner {
                     }
                     process.children = vec![];
                     process.crash.crashed = true;
-                    
+
                     // Increment crash counter for reload failures to count against restart limit
                     // This prevents infinite retry loops when reload repeatedly fails
                     if dead {
                         self.handle_restart_failure(id, &name);
                     }
-                    
+
                     log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
-                    println!("{} Failed to reload process '{}' (id={}): {}", *helpers::FAIL, name, id, err);
+                    println!(
+                        "{} Failed to reload process '{}' (id={}): {}",
+                        *helpers::FAIL,
+                        name,
+                        id,
+                        err
+                    );
                     return self;
                 }
             };
@@ -782,9 +816,12 @@ impl Runner {
 
             // Wait for old process to fully terminate to release any held resources
             if !wait_for_process_termination(old_pid) {
-                log::warn!("Old process {} did not terminate within timeout during reload", old_pid);
+                log::warn!(
+                    "Old process {} did not terminate within timeout during reload",
+                    old_pid
+                );
             }
-            
+
             // Restore the original working directory
             if let Some(dir) = original_dir {
                 if let Err(err) = std::env::set_current_dir(&dir) {
@@ -934,12 +971,15 @@ impl Runner {
     fn handle_restart_failure(&mut self, id: usize, process_name: &str) {
         let process = self.process(id);
         process.crash.value += 1;
-        
+
         // Check if we've exceeded max restart limit
         let daemon_config = config::read().daemon;
         if process.crash.value > daemon_config.restarts {
             process.running = false;
-            log::error!("Process {} exceeded max restart attempts due to repeated failures", process_name);
+            log::error!(
+                "Process {} exceeded max restart attempts due to repeated failures",
+                process_name
+            );
         }
     }
 
@@ -961,7 +1001,10 @@ impl Runner {
 
             // waiting until Process is terminated
             if !wait_for_process_termination(pid_to_check) {
-                log::warn!("Process {} did not terminate within timeout during stop", pid_to_check);
+                log::warn!(
+                    "Process {} did not terminate within timeout during stop",
+                    pid_to_check
+                );
             }
 
             let process = self.process(id);
@@ -1088,7 +1131,7 @@ impl Runner {
         };
 
         let process_actually_running = item.running && is_pid_alive(item.pid);
-        
+
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
@@ -1249,7 +1292,7 @@ impl ProcessWrapper {
         // Check if process actually exists before reporting as online
         // A process marked as running but with a non-existent PID should be shown as crashed
         let process_actually_running = item.running && is_pid_alive(item.pid);
-        
+
         let mut memory_usage: Option<MemoryInfo> = None;
         let mut cpu_percent: Option<f64> = None;
 
@@ -1277,7 +1320,7 @@ impl ProcessWrapper {
                 memory_usage = get_process_memory_with_children(pid_for_monitoring);
             }
         }
-        
+
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
@@ -1453,7 +1496,7 @@ pub fn process_stop(pid: i64) -> Result<(), String> {
     if pid <= 0 {
         return Ok(());
     }
-    
+
     let children = process_find_children(pid);
 
     // Stop child processes first
@@ -1679,6 +1722,7 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
@@ -1729,6 +1773,7 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
@@ -1814,6 +1859,7 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
@@ -1835,32 +1881,39 @@ mod tests {
     #[test]
     fn test_cpu_usage_with_children_performance() {
         use std::time::Instant;
-        
+
         // Test that measuring CPU with children is reasonably fast
         // even with multiple children, since we use fast measurements for children
         let current_pid = std::process::id() as i64;
-        
+
         // Simulate finding children (even if empty, the function should be fast)
         let start = Instant::now();
         let _cpu_with_children = get_process_cpu_usage_with_children_fast(current_pid);
         let duration = start.elapsed();
-        
+
         // Fast version should complete very quickly (< 50ms even with multiple children)
         // since it doesn't use delay-based sampling
-        assert!(duration.as_millis() < 50, 
-            "Fast CPU measurement with children took too long: {:?}", duration);
-        
+        assert!(
+            duration.as_millis() < 50,
+            "Fast CPU measurement with children took too long: {:?}",
+            duration
+        );
+
         // Test that the timed version with a pre-created process is also reasonably fast
         // It should only have one delay (for parent), not cumulative delays per child
         if let Ok(process) = unix::NativeProcess::new(current_pid as u32) {
             let start = Instant::now();
-            let _cpu_with_children = get_process_cpu_usage_with_children_from_process(&process, current_pid);
+            let _cpu_with_children =
+                get_process_cpu_usage_with_children_from_process(&process, current_pid);
             let duration = start.elapsed();
-            
+
             // This should complete quickly since the parent measurement was already taken
             // and children use fast measurements (no additional delays)
-            assert!(duration.as_millis() < 50,
-                "CPU measurement with pre-created process took too long: {:?}", duration);
+            assert!(
+                duration.as_millis() < 50,
+                "CPU measurement with pre-created process took too long: {:?}",
+                duration
+            );
         }
     }
 
@@ -1868,22 +1921,25 @@ mod tests {
     fn test_cpu_usage_consistency() {
         // Test that CPU measurements are consistent and within expected ranges
         let current_pid = std::process::id() as i64;
-        
+
         // Get CPU usage with different methods
         let fast_cpu = get_process_cpu_usage_percentage_fast(current_pid);
         let fast_cpu_with_children = get_process_cpu_usage_with_children_fast(current_pid);
-        
+
         // Single process should be 0-100%
         assert!(fast_cpu >= 0.0);
         assert!(fast_cpu <= 100.0);
-        
+
         // Process with children can exceed 100% if multiple processes run in parallel
         assert!(fast_cpu_with_children >= 0.0);
-        
+
         // CPU with children should be >= CPU of parent alone (assuming no negative children)
-        assert!(fast_cpu_with_children >= fast_cpu - 0.1, 
-            "CPU with children ({}) should be >= parent CPU ({})", 
-            fast_cpu_with_children, fast_cpu);
+        assert!(
+            fast_cpu_with_children >= fast_cpu - 0.1,
+            "CPU with children ({}) should be >= parent CPU ({})",
+            fast_cpu_with_children,
+            fast_cpu
+        );
     }
 
     #[test]
@@ -1900,12 +1956,14 @@ mod tests {
 
         let result = process_run(metadata);
         assert!(result.is_err(), "Expected error for nonexistent shell");
-        
+
         let err_msg = result.unwrap_err();
         // Check that the error message mentions the shell and that it wasn't found
         assert!(
-            err_msg.contains("/nonexistent/shell/that/does/not/exist") && 
-            (err_msg.contains("not found") || err_msg.contains("Command") || err_msg.contains("Failed to spawn")),
+            err_msg.contains("/nonexistent/shell/that/does/not/exist")
+                && (err_msg.contains("not found")
+                    || err_msg.contains("Command")
+                    || err_msg.contains("Failed to spawn")),
             "Error message should indicate shell not found, got: {}",
             err_msg
         );
@@ -1925,7 +1983,7 @@ mod tests {
 
         let result = process_run(metadata);
         assert!(result.is_err(), "Expected error for nonexistent log path");
-        
+
         let err_msg = result.unwrap_err();
         assert!(
             err_msg.contains("Failed to open") && err_msg.contains("log file"),
@@ -1940,7 +1998,7 @@ mod tests {
         // This test verifies the structure is set up correctly for error handling
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: UNLIKELY_PID,
@@ -1963,17 +2021,24 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
 
         // Verify the process exists
         assert!(runner.exists(id), "Process should exist in runner");
-        
+
         // Verify process state
         let process = runner.info(id).unwrap();
-        assert_eq!(process.running, false, "Process should start as not running");
-        assert_eq!(process.crash.crashed, false, "Process should start as not crashed");
+        assert_eq!(
+            process.running, false,
+            "Process should start as not running"
+        );
+        assert_eq!(
+            process.crash.crashed, false,
+            "Process should start as not crashed"
+        );
     }
 
     #[test]
@@ -1981,7 +2046,7 @@ mod tests {
         // Test that processes marked as running but with dead PIDs show as crashed
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: UNLIKELY_PID,
@@ -2004,6 +2069,7 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2011,11 +2077,13 @@ mod tests {
         // Fetch the process list and check status
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
-        
+
         // The process is marked as running but the PID doesn't exist
         // So status should be "crashed", not "online"
-        assert_eq!(processes[0].status, "crashed", 
-            "Process with dead PID should show as crashed, not online");
+        assert_eq!(
+            processes[0].status, "crashed",
+            "Process with dead PID should show as crashed, not online"
+        );
     }
 
     #[test]
@@ -2023,10 +2091,10 @@ mod tests {
         // Test that crashed processes show "0s" uptime, not accumulated time
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         // Create a process with a start time in the past
         let past_time = Utc::now() - chrono::Duration::seconds(300); // 5 minutes ago
-        
+
         let process = Process {
             id,
             pid: UNLIKELY_PID,
@@ -2049,6 +2117,7 @@ mod tests {
             children: vec![],
             started: past_time, // Started 5 minutes ago
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2056,14 +2125,18 @@ mod tests {
         // Fetch the process list
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
-        
+
         // The process is marked as running but the PID doesn't exist - it's crashed
-        assert_eq!(processes[0].status, "crashed", 
-            "Process with dead PID should show as crashed");
-        
+        assert_eq!(
+            processes[0].status, "crashed",
+            "Process with dead PID should show as crashed"
+        );
+
         // Uptime should be "0s", not "5m" or similar
-        assert_eq!(processes[0].uptime, "0s",
-            "Crashed process should show 0s uptime, not accumulated time");
+        assert_eq!(
+            processes[0].uptime, "0s",
+            "Crashed process should show 0s uptime, not accumulated time"
+        );
     }
 
     #[test]
@@ -2071,10 +2144,10 @@ mod tests {
         // Test that stopped processes also show "0s" uptime
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         // Create a process with a start time in the past
         let past_time = Utc::now() - chrono::Duration::seconds(600); // 10 minutes ago
-        
+
         let process = Process {
             id,
             pid: UNLIKELY_PID,
@@ -2097,6 +2170,7 @@ mod tests {
             children: vec![],
             started: past_time, // Started 10 minutes ago
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2104,14 +2178,18 @@ mod tests {
         // Fetch the process list
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
-        
+
         // The process is stopped
-        assert_eq!(processes[0].status, "stopped", 
-            "Process should show as stopped");
-        
+        assert_eq!(
+            processes[0].status, "stopped",
+            "Process should show as stopped"
+        );
+
         // Uptime should be "0s", not "10m" or similar
-        assert_eq!(processes[0].uptime, "0s",
-            "Stopped process should show 0s uptime, not accumulated time");
+        assert_eq!(
+            processes[0].uptime, "0s",
+            "Stopped process should show 0s uptime, not accumulated time"
+        );
     }
 
     #[test]
@@ -2121,7 +2199,7 @@ mod tests {
         // The daemon only attempts restarts for processes where running=true
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: 12345,
@@ -2144,22 +2222,32 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
 
         runner.list.insert(id, process);
-        
+
         // Verify initial state
         let process = runner.info(id).unwrap();
         assert_eq!(process.running, true, "Process should start as running");
-        assert_eq!(process.crash.crashed, false, "Process should start as not crashed");
+        assert_eq!(
+            process.crash.crashed, false,
+            "Process should start as not crashed"
+        );
 
         // Call set_crashed
         runner.set_crashed(id);
 
         // Verify that crashed is set but running remains true for daemon to attempt restart
         let process = runner.info(id).unwrap();
-        assert_eq!(process.crash.crashed, true, "Process should be marked as crashed");
-        assert_eq!(process.running, true, "Process should remain marked as running so daemon will restart it");
+        assert_eq!(
+            process.crash.crashed, true,
+            "Process should be marked as crashed"
+        );
+        assert_eq!(
+            process.running, true,
+            "Process should remain marked as running so daemon will restart it"
+        );
     }
 
     #[test]
@@ -2168,7 +2256,7 @@ mod tests {
         // This validates the fix for allowing exactly max_restarts attempts
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         // Test with crash.value = 9 (should be allowed to restart if max=10)
         let mut process = Process {
             id,
@@ -2192,30 +2280,37 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process.clone());
-        
+
         // With max_restarts=10, crash.value=9 should allow restart (9 <= 10)
         let max_restarts = 10;
-        assert!(process.crash.value <= max_restarts, 
-            "crash.value=9 should be <= max_restarts=10, allowing restart");
-        
+        assert!(
+            process.crash.value <= max_restarts,
+            "crash.value=9 should be <= max_restarts=10, allowing restart"
+        );
+
         // Test with crash.value = 10 (should be allowed to restart if max=10)
         process.crash.value = 10;
         runner.list.insert(id, process.clone());
-        
+
         // With max_restarts=10, crash.value=10 should allow restart (10 <= 10)
-        assert!(process.crash.value <= max_restarts, 
-            "crash.value=10 should be <= max_restarts=10, allowing restart (this is the fix!)");
-        
+        assert!(
+            process.crash.value <= max_restarts,
+            "crash.value=10 should be <= max_restarts=10, allowing restart (this is the fix!)"
+        );
+
         // Test with crash.value = 11 (should NOT allow restart if max=10)
         process.crash.value = 11;
         runner.list.insert(id, process.clone());
-        
+
         // With max_restarts=10, crash.value=11 should NOT allow restart (11 > 10)
-        assert!(process.crash.value > max_restarts, 
-            "crash.value=11 should be > max_restarts=10, preventing restart");
+        assert!(
+            process.crash.value > max_restarts,
+            "crash.value=11 should be > max_restarts=10, preventing restart"
+        );
     }
 
     #[test]
@@ -2224,7 +2319,7 @@ mod tests {
         // This ensures the counter doesn't increase when user starts an existing process
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: 12345,
@@ -2247,17 +2342,25 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process);
-        
+
         // Verify initial state
-        assert_eq!(runner.info(id).unwrap().restarts, 5, "Should start with 5 restarts");
-        
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            5,
+            "Should start with 5 restarts"
+        );
+
         // Start command (dead=false, increment_counter=false) should NOT increment
         // So the counter should remain at 5
-        assert_eq!(runner.info(id).unwrap().restarts, 5, 
-            "Start command should NOT increment counter");
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            5,
+            "Start command should NOT increment counter"
+        );
     }
 
     #[test]
@@ -2266,7 +2369,7 @@ mod tests {
         // This ensures the counter tracks manual restart commands
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: 12345,
@@ -2289,20 +2392,28 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process);
-        
+
         // Verify initial state
-        assert_eq!(runner.info(id).unwrap().restarts, 5, "Should start with 5 restarts");
-        
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            5,
+            "Should start with 5 restarts"
+        );
+
         // Simulate restart command (increment_counter=true)
         let proc = runner.process(id);
         proc.restarts += 1;
-        
+
         // Verify the counter incremented
-        assert_eq!(runner.info(id).unwrap().restarts, 6, 
-            "Restart command should increment counter from 5 to 6");
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            6,
+            "Restart command should increment counter from 5 to 6"
+        );
     }
 
     #[test]
@@ -2311,7 +2422,7 @@ mod tests {
         // This ensures automatic daemon restarts are tracked
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: UNLIKELY_PID,
@@ -2334,22 +2445,34 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process);
-        
+
         // Verify initial state
-        assert_eq!(runner.info(id).unwrap().restarts, 2, "Should start with 2 restarts");
-        assert_eq!(runner.info(id).unwrap().crash.value, 1, "Should have 1 crash");
-        
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            2,
+            "Should start with 2 restarts"
+        );
+        assert_eq!(
+            runner.info(id).unwrap().crash.value,
+            1,
+            "Should have 1 crash"
+        );
+
         // Simulate what the daemon does when it detects a crash and restarts (dead=true)
         let proc = runner.process(id);
         proc.restarts += 1; // This is conditional on dead=true in the actual code
-        
+
         // Verify the counter incremented
-        assert_eq!(runner.info(id).unwrap().restarts, 3, 
-            "Crash restart should increment counter from 2 to 3");
-        
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            3,
+            "Crash restart should increment counter from 2 to 3"
+        );
+
         // The crash.value would be managed separately by the daemon
         // and is reset to 0 on successful restart (not tested here)
     }
@@ -2360,7 +2483,7 @@ mod tests {
         // Reload is similar to restart but with zero-downtime (starts new before stopping old)
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: 12345,
@@ -2383,20 +2506,28 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process);
-        
+
         // Verify initial state
-        assert_eq!(runner.info(id).unwrap().restarts, 5, "Should start with 5 restarts");
-        
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            5,
+            "Should start with 5 restarts"
+        );
+
         // Simulate reload command (increment_counter=true)
         let proc = runner.process(id);
         proc.restarts += 1;
-        
+
         // Verify the counter incremented
-        assert_eq!(runner.info(id).unwrap().restarts, 6, 
-            "Reload command should increment counter from 5 to 6");
+        assert_eq!(
+            runner.info(id).unwrap().restarts,
+            6,
+            "Reload command should increment counter from 5 to 6"
+        );
     }
 
     #[test]
@@ -2407,7 +2538,7 @@ mod tests {
         // This is the key fix for the restore issue
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         let process = Process {
             id,
             pid: UNLIKELY_PID, // Invalid PID - restore will fail
@@ -2430,25 +2561,32 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process);
-        
+
         // Simulate what restore does when it detects a failed process
         // (just the marking part, not the actual restart attempt or save)
         runner.set_crashed(id);
-        
+
         // Verify the process state after "failed restore"
         let process = runner.info(id).unwrap();
-        assert_eq!(process.crash.crashed, true, 
-            "Failed restore should mark process as crashed");
-        assert_eq!(process.running, true, 
-            "Failed restore should keep running=true so daemon will attempt restart");
-        
+        assert_eq!(
+            process.crash.crashed, true,
+            "Failed restore should mark process as crashed"
+        );
+        assert_eq!(
+            process.running, true,
+            "Failed restore should keep running=true so daemon will attempt restart"
+        );
+
         // Verify that crash counter is NOT incremented by restore
         // (the daemon will increment it when it detects the crash)
-        assert_eq!(process.crash.value, 0,
-            "Restore should not increment crash counter - daemon will do it");
+        assert_eq!(
+            process.crash.value, 0,
+            "Restore should not increment crash counter - daemon will do it"
+        );
     }
 
     #[test]
@@ -2456,58 +2594,80 @@ mod tests {
         // Test that is_pid_alive returns false for zombie processes
         // We can't easily create a zombie in a test, but we can verify
         // that the function exists and works correctly for non-zombie processes
-        
+
         // Current process should be alive and not a zombie
         let current_pid = std::process::id() as i64;
-        assert!(is_pid_alive(current_pid), 
-            "Current process should be detected as alive");
-        
+        assert!(
+            is_pid_alive(current_pid),
+            "Current process should be detected as alive"
+        );
+
         // Invalid PID should not be alive
-        assert!(!is_pid_alive(UNLIKELY_PID), 
-            "Invalid PID should not be detected as alive");
-        
+        assert!(
+            !is_pid_alive(UNLIKELY_PID),
+            "Invalid PID should not be detected as alive"
+        );
+
         // PID 0 should not be alive (special case)
-        assert!(!is_pid_alive(0), 
-            "PID 0 should not be detected as alive");
-        
+        assert!(!is_pid_alive(0), "PID 0 should not be detected as alive");
+
         // Negative PID should not be alive
-        assert!(!is_pid_alive(-1), 
-            "Negative PID should not be detected as alive");
+        assert!(
+            !is_pid_alive(-1),
+            "Negative PID should not be detected as alive"
+        );
     }
 
     #[test]
     fn test_wait_for_process_termination_with_invalid_pids() {
         use std::time::Instant;
-        
+
         // Test that wait_for_process_termination returns immediately for PID 0
         // Previously, this would cause a 5-second delay because libc::kill(0, 0)
         // checks the entire process group instead of a specific process
         let start = Instant::now();
         let result = wait_for_process_termination(0);
         let duration = start.elapsed();
-        
-        assert!(result, "wait_for_process_termination should return true for PID 0");
-        assert!(duration.as_millis() < 100, 
-            "wait_for_process_termination(0) should return immediately, took {:?}", duration);
-        
+
+        assert!(
+            result,
+            "wait_for_process_termination should return true for PID 0"
+        );
+        assert!(
+            duration.as_millis() < 100,
+            "wait_for_process_termination(0) should return immediately, took {:?}",
+            duration
+        );
+
         // Test with negative PID
         let start = Instant::now();
         let result = wait_for_process_termination(-1);
         let duration = start.elapsed();
-        
-        assert!(result, "wait_for_process_termination should return true for negative PID");
-        assert!(duration.as_millis() < 100, 
-            "wait_for_process_termination(-1) should return immediately, took {:?}", duration);
-        
+
+        assert!(
+            result,
+            "wait_for_process_termination should return true for negative PID"
+        );
+        assert!(
+            duration.as_millis() < 100,
+            "wait_for_process_termination(-1) should return immediately, took {:?}",
+            duration
+        );
+
         // Test with unlikely PID (should also return quickly since process doesn't exist)
         let start = Instant::now();
         let result = wait_for_process_termination(UNLIKELY_PID);
         let duration = start.elapsed();
-        
-        assert!(result, 
-            "wait_for_process_termination should return true for non-existent PID");
-        assert!(duration.as_millis() < 200, 
-            "wait_for_process_termination(non-existent) should return quickly, took {:?}", duration);
+
+        assert!(
+            result,
+            "wait_for_process_termination should return true for non-existent PID"
+        );
+        assert!(
+            duration.as_millis() < 200,
+            "wait_for_process_termination(non-existent) should return quickly, took {:?}",
+            duration
+        );
     }
 
     #[test]
@@ -2515,10 +2675,10 @@ mod tests {
         // Test that when restart() fails repeatedly, the crash counter is incremented
         // and eventually the process is stopped after exceeding max_restarts.
         // This prevents infinite retry loops when restart repeatedly fails.
-        
+
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        
+
         // Create a process with a non-existent working directory
         // This will cause restart() to fail at the set_current_dir step
         let process = Process {
@@ -2533,7 +2693,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: true, // Already marked as crashed, so restart will be attempted
-                value: 1, // First crash detected
+                value: 1,      // First crash detected
             },
             watch: Watch {
                 enabled: false,
@@ -2543,41 +2703,58 @@ mod tests {
             children: vec![],
             started: Utc::now(),
             max_memory: 0,
+            agent_id: None,
         };
-        
+
         runner.list.insert(id, process);
-        
+
         // Simulate daemon calling restart with dead=true (auto-restart)
         // This should fail due to invalid working directory
         runner.restart(id, true, true);
-        
+
         // Verify that crash.value was incremented due to restart failure
         let process = runner.info(id).unwrap();
-        assert_eq!(process.crash.value, 2, 
-            "Restart failure should increment crash counter from 1 to 2");
-        assert_eq!(process.crash.crashed, true, 
-            "Restart failure should keep crashed flag set");
-        assert_eq!(process.running, true, 
-            "Restart failure should keep running=true so daemon will retry (not yet at limit)");
-        
+        assert_eq!(
+            process.crash.value, 2,
+            "Restart failure should increment crash counter from 1 to 2"
+        );
+        assert_eq!(
+            process.crash.crashed, true,
+            "Restart failure should keep crashed flag set"
+        );
+        assert_eq!(
+            process.running, true,
+            "Restart failure should keep running=true so daemon will retry (not yet at limit)"
+        );
+
         // Simulate multiple restart failures up to the limit (default is 10)
         for expected_crash_value in 3..=10 {
             runner.restart(id, true, true);
             let process = runner.info(id).unwrap();
-            assert_eq!(process.crash.value, expected_crash_value, 
-                "Crash counter should increment with each restart failure");
-            assert_eq!(process.running, true, 
-                "Process should still be running (within restart limit)");
+            assert_eq!(
+                process.crash.value, expected_crash_value,
+                "Crash counter should increment with each restart failure"
+            );
+            assert_eq!(
+                process.running, true,
+                "Process should still be running (within restart limit)"
+            );
         }
-        
+
         // One more restart failure should exceed the limit
         runner.restart(id, true, true);
         let process = runner.info(id).unwrap();
-        assert_eq!(process.crash.value, 11, 
-            "Crash counter should be 11 after exceeding limit");
-        assert_eq!(process.running, false, 
-            "Process should be stopped after exceeding max restart limit");
-        assert_eq!(process.crash.crashed, true, 
-            "Process should still be marked as crashed");
+        assert_eq!(
+            process.crash.value, 11,
+            "Crash counter should be 11 after exceeding limit"
+        );
+        assert_eq!(
+            process.running, false,
+            "Process should be stopped after exceeding max restart limit"
+        );
+        assert_eq!(
+            process.crash.crashed, true,
+            "Process should still be marked as crashed"
+        );
     }
 }
