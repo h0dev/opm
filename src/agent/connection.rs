@@ -43,7 +43,7 @@ impl AgentConnection {
         // Expected format: http://host:port or https://host:port
         let server_url = self.config.server_url.trim_end_matches('/');
         
-        // Extract host and port, then add 1 to port for WebSocket connection
+        // Use the same port as HTTP server (WebSocket is now integrated)
         let ws_url = if server_url.starts_with("https://") {
             let base = server_url.strip_prefix("https://").unwrap();
             let (host, port) = if base.contains(':') {
@@ -51,10 +51,10 @@ impl AgentConnection {
                 let port: u16 = parts.get(1)
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(443);
-                (parts[0], port + 1)
+                (parts[0], port)
             } else {
-                // No port specified, use default HTTPS port + 1
-                (base, 444)
+                // No port specified, use default HTTPS port
+                (base, 443)
             };
             format!("wss://{}:{}/ws/agent", host, port)
         } else {
@@ -64,10 +64,10 @@ impl AgentConnection {
                 let port: u16 = parts.get(1)
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(80);
-                (parts[0], port + 1)
+                (parts[0], port)
             } else {
-                // No port specified, use default HTTP port + 1
-                (base, 81)
+                // No port specified, use default HTTP port
+                (base, 80)
             };
             format!("ws://{}:{}/ws/agent", host, port)
         };
