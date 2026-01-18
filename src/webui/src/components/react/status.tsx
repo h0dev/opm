@@ -173,7 +173,7 @@ const Status = (props: { name: string; base: string }) => {
 						<svg viewBox="0 0 6 6" aria-hidden="true" className="h-1.5 w-1.5 fill-green-400">
 							<circle r={3} cx={3} cy={3} />
 						</svg>
-						{props.name != 'local' ? props.name : 'Internal'}
+						{props.name != 'local' ? props.name : 'local'}
 					</span>
 				</div>
 				<dl className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 px-5">

@@ -142,6 +142,8 @@ pub struct ProcessItem {
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_api_endpoint: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1162,6 +1164,7 @@ impl Runner {
             uptime,
             agent_id: item.agent_id.clone(),
             agent_name: None,
+            agent_api_endpoint: None,
         }
     }
 

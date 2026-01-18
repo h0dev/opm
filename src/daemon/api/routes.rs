@@ -1383,12 +1383,14 @@ pub async fn list_handler(
     let agents = registry.list();
     for agent in agents {
         if let Some(mut agent_processes) = registry.get_processes(&agent.id) {
-            // Enrich agent processes with agent name
+            // Enrich agent processes with agent name and API endpoint
             let agent_id = agent.id.clone();
             let agent_name = agent.name.clone();
+            let agent_api_endpoint = agent.api_endpoint.clone();
             for process in &mut agent_processes {
                 process.agent_id = Some(agent_id.clone());
                 process.agent_name = Some(agent_name.clone());
+                process.agent_api_endpoint = agent_api_endpoint.clone();
             }
             data.extend(agent_processes);
         }
