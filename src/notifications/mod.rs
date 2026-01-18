@@ -1,7 +1,7 @@
 use crate::config::structs::Notifications;
 use notify_rust::{Notification, Urgency};
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ impl NotificationManager {
 
     pub async fn send(&self, event: NotificationEvent, title: &str, message: &str) {
         let config = self.config.read().await;
-        
+
         if let Some(cfg) = config.as_ref() {
             if !cfg.enabled {
                 return;
@@ -53,7 +53,10 @@ impl NotificationManager {
             // Send to configured external channels
             if let Some(channels) = &cfg.channels {
                 if !channels.is_empty() {
-                    if let Err(e) = self.send_channel_notifications(title, message, channels).await {
+                    if let Err(e) = self
+                        .send_channel_notifications(title, message, channels)
+                        .await
+                    {
                         log::warn!("Failed to send channel notifications: {}", e);
                     }
                 }
@@ -91,25 +94,31 @@ impl NotificationManager {
         channels: &[String],
     ) -> Result<(), Box<dyn std::error::Error>> {
         use reqwest::Client;
-        
+
         let client = Client::new();
         let mut errors = Vec::new();
         let mut success_count = 0;
-        
+
         for channel_url in channels {
             // Parse the shoutrrr URL to determine the service type
             if let Some((service, rest)) = channel_url.split_once("://") {
                 let result = match service {
-                    "discord" => self.send_discord_webhook(&client, rest, title, message).await,
+                    "discord" => {
+                        self.send_discord_webhook(&client, rest, title, message)
+                            .await
+                    }
                     "slack" => self.send_slack_webhook(&client, rest, title, message).await,
-                    "telegram" => self.send_telegram_message(&client, rest, title, message).await,
+                    "telegram" => {
+                        self.send_telegram_message(&client, rest, title, message)
+                            .await
+                    }
                     _ => {
                         log::warn!("Unsupported notification service: {}", service);
                         errors.push(format!("Unsupported service: {}", service));
                         continue;
                     }
                 };
-                
+
                 match result {
                     Ok(_) => success_count += 1,
                     Err(e) => {
@@ -122,7 +131,7 @@ impl NotificationManager {
                 errors.push(format!("Invalid URL format: {}", channel_url));
             }
         }
-        
+
         if success_count > 0 {
             Ok(())
         } else if !errors.is_empty() {
@@ -150,29 +159,35 @@ impl NotificationManager {
             if let Some((token, id)) = webhook_data.split_once('@') {
                 format!("https://discord.com/api/webhooks/{}/{}", id, token)
             } else {
-                return Err("Invalid Discord webhook format: expected 'token@id' or full webhook URL".into());
+                return Err(
+                    "Invalid Discord webhook format: expected 'token@id' or full webhook URL"
+                        .into(),
+                );
             }
         };
-        
+
         let mut payload = HashMap::new();
         payload.insert("content", format!("**{}**\n{}", title, message));
-        
-        let response = client
-            .post(&webhook_url)
-            .json(&payload)
-            .send()
-            .await?;
-        
+
+        let response = client.post(&webhook_url).json(&payload).send().await?;
+
         if !response.status().is_success() {
             let status = response.status();
             let body = if status.is_client_error() || status.is_server_error() {
-                response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read response body".to_string())
             } else {
                 "Non-success status but no error details available".to_string()
             };
-            return Err(format!("Discord webhook failed with status: {} - Response: {}", status, body).into());
+            return Err(format!(
+                "Discord webhook failed with status: {} - Response: {}",
+                status, body
+            )
+            .into());
         }
-        
+
         Ok(())
     }
 
@@ -189,26 +204,29 @@ impl NotificationManager {
         } else {
             return Err("Slack webhooks require full URL format (e.g., https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX)".into());
         };
-        
+
         let mut payload = HashMap::new();
         payload.insert("text", format!("*{}*\n{}", title, message));
-        
-        let response = client
-            .post(&webhook_url)
-            .json(&payload)
-            .send()
-            .await?;
-        
+
+        let response = client.post(&webhook_url).json(&payload).send().await?;
+
         if !response.status().is_success() {
             let status = response.status();
             let body = if status.is_client_error() || status.is_server_error() {
-                response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read response body".to_string())
             } else {
                 "Non-success status but no error details available".to_string()
             };
-            return Err(format!("Slack webhook failed with status: {} - Response: {}", status, body).into());
+            return Err(format!(
+                "Slack webhook failed with status: {} - Response: {}",
+                status, body
+            )
+            .into());
         }
-        
+
         Ok(())
     }
 
@@ -224,37 +242,40 @@ impl NotificationManager {
         let (token, rest) = webhook_data
             .split_once('@')
             .ok_or("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'")?;
-        
+
         let chat_id = if let Some(query) = rest.strip_prefix("telegram?chats=") {
             query
         } else {
             return Err("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'".into());
         };
-        
+
         let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
         let text = format!("<b>{}</b>\n{}", title, message);
-        
+
         let mut payload = HashMap::new();
         payload.insert("chat_id", chat_id);
         payload.insert("text", &text);
         payload.insert("parse_mode", "HTML");
-        
-        let response = client
-            .post(&api_url)
-            .json(&payload)
-            .send()
-            .await?;
-        
+
+        let response = client.post(&api_url).json(&payload).send().await?;
+
         if !response.status().is_success() {
             let status = response.status();
             let body = if status.is_client_error() || status.is_server_error() {
-                response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read response body".to_string())
             } else {
                 "Non-success status but no error details available".to_string()
             };
-            return Err(format!("Telegram API failed with status: {} - Response: {}", status, body).into());
+            return Err(format!(
+                "Telegram API failed with status: {} - Response: {}",
+                status, body
+            )
+            .into());
         }
-        
+
         Ok(())
     }
 }

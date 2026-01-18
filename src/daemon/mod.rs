@@ -55,37 +55,37 @@ extern "C" fn handle_sigpipe(_: libc::c_int) {
 fn restart_process() {
     // Load daemon config once at the start to avoid repeated I/O operations
     let daemon_config = config::read().daemon;
-    
+
     // Use a single Runner instance to avoid state synchronization issues
     let runner = Runner::new();
     // Collect IDs first to avoid borrowing issues during iteration
     // Use process_ids() instead of items().keys() to avoid cloning all processes
     let process_ids: Vec<usize> = runner.process_ids().collect();
-    
+
     for id in process_ids {
         // Note: We reload runner at the start of each iteration to ensure we see
         // changes made by previous iterations (e.g., when a previous process was
         // restarted and the state was saved to disk). This is necessary because
         // operations like restart() modify the state and save it, and we need
         // the latest state for accurate crash detection and restart logic.
-        // 
+        //
         // Performance considerations:
         // - Runner::new() loads from disk, which could be expensive
         // - However, the daemon runs infrequently (default 1000ms interval)
         // - There are typically few processes, so total overhead is low
         // - Correctness is prioritized over performance here
-        // 
+        //
         // Alternative approaches considered:
         // - Caching and selective reload: Complex to implement correctly,
         //   and the performance gain would be minimal given typical usage
         // - Using a refresh() method: Would need to be implemented in Runner,
         //   and would still require reading from disk
-        // 
+        //
         // TODO: Consider implementing Runner::reload() method for future optimization
         // that only updates changed state rather than full reconstruction from disk.
         // This would be more efficient but adds complexity.
         let mut runner = Runner::new();
-        
+
         // Clone item to avoid borrowing issues when we mutate runner later.
         // This is required by Rust's borrow checker - we can't hold an immutable
         // reference to runner (via runner.info()) while also calling mutable
@@ -98,7 +98,7 @@ fn restart_process() {
             Some(item) => item.clone(),
             None => continue, // Process was removed, skip it
         };
-        
+
         let children = opm::process::process_find_children(item.pid);
 
         if !children.is_empty() && children != item.children {
@@ -136,7 +136,7 @@ fn restart_process() {
 
             if hash != item.watch.hash {
                 log!("[daemon] watch triggered reload", "name" => item.name, "id" => id);
-                runner.restart(id, false, true);  // Watch reload should increment counter
+                runner.restart(id, false, true); // Watch reload should increment counter
                 runner.save();
                 log!("[daemon] watch reload complete", "name" => item.name, "id" => id);
                 continue;
@@ -146,7 +146,7 @@ fn restart_process() {
         // Check if process is alive based on PID
         // is_pid_alive() handles all PID validation (including PID <= 0)
         let process_alive = opm::process::is_pid_alive(item.pid);
-        
+
         // If process is alive and has been running successfully, keep monitoring
         // Note: We no longer auto-reset crash counter here - it persists to show
         // crash history over time. Only explicit reset (via reset_counters()) will clear it.
@@ -163,18 +163,17 @@ fn restart_process() {
                 }
             }
         }
-        
+
         // If process is dead, handle crash/restart logic
         if !process_alive {
             // Reset PID to 0 if it wasn't already
             if item.pid > 0 {
                 let process = runner.process(id);
-                process.pid = 0;  // Set to 0 to indicate no valid PID
+                process.pid = 0; // Set to 0 to indicate no valid PID
             }
-            
+
             // Only handle crash/restart logic if process was supposed to be running
             if item.running {
-                
                 // Check if this is a newly detected crash (not already marked as crashed)
                 // If already crashed, we've already incremented the counter and are waiting for restart
                 if !item.crash.crashed {
@@ -188,7 +187,7 @@ fn restart_process() {
                         // Only set running=false if we've exceeded max crash limit
                         process.crash.value
                     };
-                    
+
                     // Check if we've exceeded the maximum crash limit
                     // Using > instead of >= because:
                     // - crash_count=10 with max_restarts=10: allow restart (10th restart attempt)
@@ -284,7 +283,7 @@ pub fn health(format: &String) {
                     // Always set PID and uptime if daemon is running
                     pid = Some(process_id.get::<i32>());
                     uptime = pid::uptime().ok();
-                    
+
                     // Try to get process stats (may fail for detached processes)
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                     {
@@ -441,7 +440,7 @@ pub fn start(verbose: bool) {
         let api_enabled = ENABLE_API.load(Ordering::Acquire);
         let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
 
-        unsafe { 
+        unsafe {
             libc::signal(libc::SIGTERM, handle_termination_signal as usize);
             libc::signal(libc::SIGPIPE, handle_sigpipe as usize);
         };
@@ -457,37 +456,37 @@ pub fn start(verbose: bool) {
                 "address" => config::read().fmt_address(),
                 "webui" => ui_enabled
             );
-            
+
             // Spawn API server in a separate task
             let api_handle = tokio::spawn(async move { api::start(ui_enabled).await });
-            
+
             // Wait for the API server to start and bind to the port
             // Use a retry loop with exponential backoff to allow time for Rocket initialization
             let addr = config::read().fmt_address();
             let max_retries = 10;
             let mut retry_count = 0;
             let mut is_listening = false;
-            
+
             while retry_count < max_retries {
                 // Wait before checking - start with 300ms and increase
                 let wait_ms = 300 + (retry_count * 200);
                 tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
-                
+
                 // Try to connect to the API server
                 if tokio::net::TcpStream::connect(&addr).await.is_ok() {
                     is_listening = true;
                     break;
                 }
-                
+
                 // Check if the task has already failed - if so, no point retrying
                 if api_handle.is_finished() {
                     log!("[daemon] API server task has terminated", "status" => "unexpected", "retry" => retry_count);
                     break;
                 }
-                
+
                 retry_count += 1;
             }
-            
+
             if is_listening {
                 log!(
                     "[daemon] API server successfully started",
@@ -515,7 +514,7 @@ pub fn start(verbose: bool) {
                             process::id() as i64,
                         );
                         DAEMON_CPU_PERCENTAGE.observe(cpu_usage);
-                        
+
                         if let Ok(mem_info) = process_info.memory_info() {
                             DAEMON_MEM_USAGE.observe(mem_info.rss() as f64);
                         }
@@ -536,14 +535,16 @@ pub fn start(verbose: bool) {
                 let result = panic::catch_unwind(|| {
                     restart_process();
                 });
-                
+
                 if let Err(err) = result {
                     // Log the panic but don't crash the daemon
                     log!("[daemon] panic in restart_process", "error" => format!("{:?}", err));
-                    eprintln!("[daemon] Warning: process monitoring encountered an error but daemon continues running");
+                    eprintln!(
+                        "[daemon] Warning: process monitoring encountered an error but daemon continues running"
+                    );
                 }
             }
-            
+
             sleep(Duration::from_millis(config.interval));
         }
     }
@@ -564,7 +565,7 @@ pub fn start(verbose: bool) {
             let max_wait_ms = 2000; // Wait up to 2 seconds
             let poll_interval_ms = 50; // Check every 50ms
             let mut elapsed_ms = 0;
-            
+
             while elapsed_ms < max_wait_ms {
                 if pid::exists() {
                     match pid::read() {
@@ -583,11 +584,15 @@ pub fn start(verbose: bool) {
                 sleep(Duration::from_millis(poll_interval_ms));
                 elapsed_ms += poll_interval_ms;
             }
-            
+
             // If we reach here, daemon didn't start within the timeout
             // Log a warning but don't crash - the daemon might still be starting
             log!("[daemon] PID file not created within timeout", "max_wait_ms" => max_wait_ms);
-            eprintln!("{} Warning: Daemon PID file not detected within {}ms", *helpers::WARN, max_wait_ms);
+            eprintln!(
+                "{} Warning: Daemon PID file not detected within {}ms",
+                *helpers::WARN,
+                max_wait_ms
+            );
         }
         Ok(Fork::Child) => init(),
         Err(err) => crashln!("{} Daemon creation failed with code {err}", *helpers::FAIL),
@@ -666,7 +671,11 @@ pub fn setup() {
     // Get the path to the opm binary
     let opm_binary = match env::current_exe() {
         Ok(path) => path,
-        Err(err) => crashln!("{} Unable to determine opm binary path: {}", *helpers::FAIL, err),
+        Err(err) => crashln!(
+            "{} Unable to determine opm binary path: {}",
+            *helpers::FAIL,
+            err
+        ),
     };
 
     let opm_binary_str = opm_binary.to_string_lossy();
@@ -682,10 +691,7 @@ pub fn setup() {
             "multi-user.target",
         )
     } else {
-        (
-            home_dir.join(".config/systemd/user"),
-            "default.target",
-        )
+        (home_dir.join(".config/systemd/user"), "default.target")
     };
 
     let service_dir = service_dir_path.as_path();
@@ -730,11 +736,7 @@ LimitCORE=infinity
 [Install]
 WantedBy={}
 "#,
-            opm_dir,
-            pid_file,
-            opm_binary_str,
-            opm_binary_str,
-            install_target
+            opm_dir, pid_file, opm_binary_str, opm_binary_str, install_target
         )
     } else {
         format!(
@@ -756,11 +758,7 @@ RestartSec=5s
 [Install]
 WantedBy={}
 "#,
-            opm_dir,
-            pid_file,
-            opm_binary_str,
-            opm_binary_str,
-            install_target
+            opm_dir, pid_file, opm_binary_str, opm_binary_str, install_target
         )
     };
 
@@ -782,18 +780,27 @@ WantedBy={}
 
     // Provide instructions for enabling the service
     if is_root {
-        println!("\n{} To enable and start the OPM daemon:", *helpers::SUCCESS);
+        println!(
+            "\n{} To enable and start the OPM daemon:",
+            *helpers::SUCCESS
+        );
         println!("  sudo systemctl daemon-reload");
         println!("  sudo systemctl enable opm.service");
         println!("  sudo systemctl start opm.service");
         println!("\n{} To check daemon status:", *helpers::SUCCESS);
         println!("  sudo systemctl status opm.service");
     } else {
-        println!("\n{} To enable and start the OPM daemon:", *helpers::SUCCESS);
+        println!(
+            "\n{} To enable and start the OPM daemon:",
+            *helpers::SUCCESS
+        );
         println!("  systemctl --user daemon-reload");
         println!("  systemctl --user enable opm.service");
         println!("  systemctl --user start opm.service");
-        println!("\n{} To enable lingering (start daemon at boot):", *helpers::SUCCESS);
+        println!(
+            "\n{} To enable lingering (start daemon at boot):",
+            *helpers::SUCCESS
+        );
         println!("  loginctl enable-linger $USER");
         println!("\n{} To check daemon status:", *helpers::SUCCESS);
         println!("  systemctl --user status opm.service");

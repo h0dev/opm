@@ -1,20 +1,17 @@
+use opm::agent::messages::AgentMessage;
 use opm::agent::registry::AgentRegistry;
 use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
-use opm::agent::messages::AgentMessage;
 use rocket::{State, get};
-use rocket_ws::{WebSocket, Stream, Message};
+use rocket_ws::{Message, Stream, WebSocket};
 
 /// WebSocket route handler for agent connections
 #[get("/ws/agent")]
-pub fn websocket_handler(
-    ws: WebSocket,
-    registry: &State<AgentRegistry>,
-) -> Stream!['static] {
+pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stream!['static] {
     let registry = registry.inner().clone();
-    
+
     Stream! { ws =>
         let mut agent_id: Option<String> = None;
-        
+
         for await message in ws {
             match message {
                 Ok(Message::Text(text)) => {
@@ -23,7 +20,7 @@ pub fn websocket_handler(
                             match agent_msg {
                                 AgentMessage::Register { id, name, hostname, api_endpoint } => {
                                     log::info!("[WebSocket] Agent registration: {} ({})", name, id);
-                                    
+
                                     let agent_info = AgentInfo {
                                         id: id.clone(),
                                         name: name.clone(),
@@ -34,30 +31,30 @@ pub fn websocket_handler(
                                         connected_at: std::time::SystemTime::now(),
                                         api_endpoint,
                                     };
-                                    
+
                                     registry.register(agent_info);
                                     agent_id = Some(id);
-                                    
+
                                     // Send success response
                                     let response = AgentMessage::Response {
                                         success: true,
                                         message: "Agent registered successfully".to_string(),
                                     };
-                                    
+
                                     if let Ok(response_json) = serde_json::to_string(&response) {
                                         yield Message::Text(response_json);
                                     }
                                 }
                                 AgentMessage::Heartbeat { id } => {
                                     log::debug!("[WebSocket] Heartbeat from agent {}", id);
-                                    
+
                                     if registry.update_heartbeat(&id) {
                                         // Send pong response
                                         let response = AgentMessage::Response {
                                             success: true,
                                             message: "Heartbeat received".to_string(),
                                         };
-                                        
+
                                         if let Ok(response_json) = serde_json::to_string(&response) {
                                             yield Message::Text(response_json);
                                         }
@@ -67,11 +64,11 @@ pub fn websocket_handler(
                                             success: false,
                                             message: "Agent not found".to_string(),
                                         };
-                                        
+
                                         if let Ok(response_json) = serde_json::to_string(&response) {
                                             yield Message::Text(response_json);
                                         }
-                                        
+
                                         // Close connection
                                         break;
                                     }
@@ -121,7 +118,7 @@ pub fn websocket_handler(
                 _ => {}
             }
         }
-        
+
         // Cleanup: unregister agent on disconnect
         if let Some(id) = agent_id {
             log::info!("[WebSocket] Unregistering agent {}", id);
@@ -129,4 +126,3 @@ pub fn websocket_handler(
         }
     }
 }
-

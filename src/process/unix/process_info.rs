@@ -327,22 +327,28 @@ mod tests {
     fn test_is_process_zombie_current_process() {
         // Current process should not be a zombie
         let current_pid = std::process::id() as i32;
-        assert!(!is_process_zombie(current_pid), 
-            "Current process should not be detected as zombie");
+        assert!(
+            !is_process_zombie(current_pid),
+            "Current process should not be detected as zombie"
+        );
     }
 
     #[test]
     fn test_is_process_zombie_nonexistent() {
         // Use i32::MAX which is extremely unlikely to be a valid PID on any system
         let invalid_pid = i32::MAX;
-        assert!(!is_process_zombie(invalid_pid), 
-            "Non-existent process should return false for is_process_zombie");
+        assert!(
+            !is_process_zombie(invalid_pid),
+            "Non-existent process should return false for is_process_zombie"
+        );
     }
 
     #[test]
     fn test_is_process_zombie_init() {
         // Init process (PID 1) should not be a zombie
-        assert!(!is_process_zombie(1), 
-            "Init process should not be detected as zombie");
+        assert!(
+            !is_process_zombie(1),
+            "Init process should not be detected as zombie"
+        );
     }
 }

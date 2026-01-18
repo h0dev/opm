@@ -27,7 +27,7 @@ pub(crate) fn format(server_name: &String) -> (String, String) {
 /// Check if the current role allows remote operations
 pub(crate) fn check_remote_permission(server_name: &String) {
     let config = config::read();
-    
+
     // If trying to access a remote server and role is agent, deny
     if config.is_agent() && !LOCAL_SERVER_NAMES.contains(&server_name.as_str()) {
         crashln!(
@@ -69,7 +69,7 @@ pub fn start(
 ) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let mut runner = Runner::new();
     let (kind, list_name) = format(server_name);
 
@@ -137,7 +137,7 @@ pub fn start(
 
             // Create each worker as a new process
             runner = Internal {
-                id: 0,  // 0 means create new process
+                id: 0, // 0 means create new process
                 server_name,
                 kind: kind.clone(),
                 runner: runner.clone(),
@@ -164,7 +164,7 @@ pub fn start(
         );
 
         let process_ids: Vec<usize> = runner.items().keys().copied().collect();
-        
+
         if process_ids.is_empty() {
             println!("{} Cannot start all, no processes found", *helpers::FAIL);
         } else {
@@ -175,7 +175,7 @@ pub fn start(
                     kind: kind.clone(),
                     runner: runner.clone(),
                 }
-                .restart(name, watch, *reset_env, true, false);  // start all - don't increment
+                .restart(name, watch, *reset_env, true, false); // start all - don't increment
             }
         }
     } else {
@@ -187,7 +187,7 @@ pub fn start(
                     server_name,
                     kind,
                 }
-                .restart(name, watch, *reset_env, false, false);  // start by id - don't increment
+                .restart(name, watch, *reset_env, false, false); // start by id - don't increment
             }
             Args::Script(script) => match runner.find(&script, server_name) {
                 Some(id) => {
@@ -197,7 +197,7 @@ pub fn start(
                         server_name,
                         kind,
                     }
-                    .restart(name, watch, *reset_env, false, false);  // start existing - don't increment
+                    .restart(name, watch, *reset_env, false, false); // start existing - don't increment
                 }
                 None => {
                     Internal {
@@ -228,18 +228,15 @@ fn parse_port_range(port_str: &str) -> Vec<u16> {
             );
         }
 
-        let start: u16 = parts[0].parse().unwrap_or_else(|_| {
-            crashln!("{} Invalid start port number", *helpers::FAIL)
-        });
-        let end: u16 = parts[1].parse().unwrap_or_else(|_| {
-            crashln!("{} Invalid end port number", *helpers::FAIL)
-        });
+        let start: u16 = parts[0]
+            .parse()
+            .unwrap_or_else(|_| crashln!("{} Invalid start port number", *helpers::FAIL));
+        let end: u16 = parts[1]
+            .parse()
+            .unwrap_or_else(|_| crashln!("{} Invalid end port number", *helpers::FAIL));
 
         if start >= end {
-            crashln!(
-                "{} Start port must be less than end port",
-                *helpers::FAIL
-            );
+            crashln!("{} Start port must be less than end port", *helpers::FAIL);
         }
 
         (start..=end).collect()
@@ -252,7 +249,7 @@ fn parse_port_range(port_str: &str) -> Vec<u16> {
 pub fn stop(items: &Items, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let mut runner: Runner = Runner::new();
     let (kind, list_name) = format(server_name);
 
@@ -260,7 +257,7 @@ pub fn stop(items: &Items, server_name: &String) {
         println!("{} Applying {kind}action stopAllProcess", *helpers::SUCCESS);
 
         let process_ids: Vec<usize> = runner.items().keys().copied().collect();
-        
+
         if process_ids.is_empty() {
             println!("{} Cannot stop all, no processes found", *helpers::FAIL);
         } else {
@@ -308,15 +305,18 @@ pub fn stop(items: &Items, server_name: &String) {
 pub fn remove(items: &Items, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
     if items.is_all() {
-        println!("{} Applying {kind}action removeAllProcess", *helpers::SUCCESS);
+        println!(
+            "{} Applying {kind}action removeAllProcess",
+            *helpers::SUCCESS
+        );
 
         let process_ids: Vec<usize> = runner.items().keys().copied().collect();
-        
+
         if process_ids.is_empty() {
             println!("{} Cannot remove all, no processes found", *helpers::FAIL);
         } else {
@@ -360,7 +360,7 @@ pub fn remove(items: &Items, server_name: &String) {
 pub fn info(item: &Item, format: &String, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = self::format(server_name);
 
@@ -396,7 +396,7 @@ pub fn logs(
 ) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
@@ -425,7 +425,7 @@ pub fn logs(
 pub fn env(item: &Item, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
@@ -453,7 +453,7 @@ pub fn env(item: &Item, server_name: &String) {
 pub fn flush(item: &Item, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
@@ -481,7 +481,7 @@ pub fn flush(item: &Item, server_name: &String) {
 pub fn restart(items: &Items, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let mut runner: Runner = Runner::new();
     let (kind, list_name) = format(server_name);
 
@@ -492,7 +492,7 @@ pub fn restart(items: &Items, server_name: &String) {
         );
 
         let process_ids: Vec<usize> = runner.items().keys().copied().collect();
-        
+
         if process_ids.is_empty() {
             println!("{} Cannot restart all, no processes found", *helpers::FAIL);
         } else {
@@ -503,7 +503,7 @@ pub fn restart(items: &Items, server_name: &String) {
                     kind: kind.clone(),
                     runner: runner.clone(),
                 }
-                .restart(&None, &None, false, true, true);  // restart all - increment counter
+                .restart(&None, &None, false, true, true); // restart all - increment counter
             }
         }
     } else {
@@ -516,7 +516,7 @@ pub fn restart(items: &Items, server_name: &String) {
                         kind: kind.clone(),
                         runner: runner.clone(),
                     }
-                    .restart(&None, &None, false, false, true);  // restart by id - increment counter
+                    .restart(&None, &None, false, false, true); // restart by id - increment counter
                 }
                 Item::Name(name) => match runner.find(&name, server_name) {
                     Some(id) => {
@@ -526,7 +526,7 @@ pub fn restart(items: &Items, server_name: &String) {
                             kind: kind.clone(),
                             runner: runner.clone(),
                         }
-                        .restart(&None, &None, false, false, true);  // restart by name - increment counter
+                        .restart(&None, &None, false, false, true); // restart by name - increment counter
                     }
                     None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
                 },
@@ -542,7 +542,7 @@ pub fn restart(items: &Items, server_name: &String) {
 pub fn reload(items: &Items, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let mut runner: Runner = Runner::new();
     let (kind, list_name) = format(server_name);
 
@@ -553,7 +553,7 @@ pub fn reload(items: &Items, server_name: &String) {
         );
 
         let process_ids: Vec<usize> = runner.items().keys().copied().collect();
-        
+
         if process_ids.is_empty() {
             println!("{} Cannot reload all, no processes found", *helpers::FAIL);
         } else {
@@ -603,7 +603,7 @@ pub fn reload(items: &Items, server_name: &String) {
 pub fn get_command(item: &Item, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 
@@ -628,15 +628,10 @@ pub fn get_command(item: &Item, server_name: &String) {
     }
 }
 
-pub fn adjust(
-    item: &Item,
-    command: &Option<String>,
-    name: &Option<String>,
-    server_name: &String,
-) {
+pub fn adjust(item: &Item, command: &Option<String>, name: &Option<String>, server_name: &String) {
     // Check permissions for remote operations
     check_remote_permission(server_name);
-    
+
     let runner: Runner = Runner::new();
     let (kind, _) = format(server_name);
 

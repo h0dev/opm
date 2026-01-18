@@ -9,11 +9,7 @@ use serde_json::json;
 use std::fs;
 
 #[cfg(not(target_os = "linux"))]
-use nix::{
-    errno::Errno,
-    sys::signal::kill,
-    unistd::Pid,
-};
+use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
 
 use opm::{
     config, file,
@@ -254,7 +250,7 @@ impl<'i> Internal<'i> {
 
         if matches!(self.server_name, "internal" | "local") {
             let mut item = self.runner.get(self.id);
-            item.reload(true);  // Reload command should increment counter
+            item.reload(true); // Reload command should increment counter
             self.runner = item.get_runner().clone();
             self.runner.save();
         } else {
@@ -266,7 +262,7 @@ impl<'i> Internal<'i> {
                 match Runner::connect(self.server_name.into(), server.get(), false) {
                     Some(remote) => {
                         let mut item = remote.get(self.id);
-                        item.reload(true);  // Reload command should increment counter
+                        item.reload(true); // Reload command should increment counter
                     }
                     None => crashln!(
                         "{} Failed to connect (name={}, address={})",
@@ -485,7 +481,12 @@ impl<'i> Internal<'i> {
                 .with(Rotate::Left)
                 .with(Style::rounded().remove_horizontals())
                 .with(Colorization::exact([Color::FG_CYAN], Columns::first()))
-                .with(Modify::new(Segment::all()).with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
+                .with(
+                    Modify::new(Segment::all()).with(BorderColor::filled(Color::new(
+                        "\x1b[38;2;45;55;72m",
+                        "\x1b[39m",
+                    ))),
+                )
                 .to_string();
 
             if let Ok(json) = serde_json::to_string(&data[0]) {
@@ -526,7 +527,7 @@ impl<'i> Internal<'i> {
                 // Check if process actually exists before reporting as online
                 // A process marked as running but with a non-existent PID should be shown as crashed
                 let process_actually_running = item.running && is_pid_alive(item.pid);
-                
+
                 let mut memory_usage: Option<MemoryInfo> = None;
                 let mut cpu_percent: Option<f64> = None;
 
@@ -604,7 +605,11 @@ impl<'i> Internal<'i> {
                     path: format!("{} ", path),
                     log_error: item.logs().error,
                     status: ColoredString(status),
-                    pid: ternary!(process_actually_running, format!("{}", item.pid), string!("n/a")),
+                    pid: ternary!(
+                        process_actually_running,
+                        format!("{}", item.pid),
+                        string!("n/a")
+                    ),
                     command: format!(
                         "{} {} '{}'",
                         config.shell,
@@ -1110,7 +1115,7 @@ impl<'i> Internal<'i> {
                 // This ensures consistent behavior between restore and daemon monitoring
                 let pid_to_check = process.shell_pid.unwrap_or(process.pid);
                 let process_alive = opm::process::is_pid_alive(pid_to_check);
-                
+
                 if process.running && process_alive {
                     restored_ids.push(*id);
                 } else {
@@ -1149,7 +1154,7 @@ impl<'i> Internal<'i> {
     pub fn list(format: &String, server_name: &String) {
         // Check permissions for remote operations
         super::check_remote_permission(server_name);
-        
+
         let render_list = |runner: &mut Runner, internal: bool| {
             let mut processes: Vec<ProcessItem> = Vec::new();
 
@@ -1195,7 +1200,7 @@ impl<'i> Internal<'i> {
                     // Check if process actually exists before reporting as online
                     // A process marked as running but with a non-existent PID should be shown as crashed
                     let process_actually_running = item.running && is_pid_alive(item.pid);
-                    
+
                     let mut cpu_percent: String = string!("0.00%");
                     let mut memory_usage: String = string!("0b");
 
@@ -1203,7 +1208,8 @@ impl<'i> Internal<'i> {
                     // Stopped or crashed processes should always show 0% CPU and 0b memory
                     if process_actually_running {
                         if internal {
-                            let mut usage_internals: (Option<f64>, Option<MemoryInfo>) = (None, None);
+                            let mut usage_internals: (Option<f64>, Option<MemoryInfo>) =
+                                (None, None);
 
                             // For shell scripts, use shell_pid to capture the entire process tree
                             let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
@@ -1275,7 +1281,11 @@ impl<'i> Internal<'i> {
                         id: id.to_string().cyan().bold().into(),
                         restarts: format!("{}  ", item.restarts),
                         name: format!("{}   ", item.name.clone()),
-                        pid: ternary!(process_actually_running, format!("{}  ", item.pid), string!("n/a  ")),
+                        pid: ternary!(
+                            process_actually_running,
+                            format!("{}  ", item.pid),
+                            string!("n/a  ")
+                        ),
                         watch: ternary!(
                             item.watch.enabled,
                             format!("{}  ", item.watch.path),
@@ -1287,7 +1297,12 @@ impl<'i> Internal<'i> {
 
                 let table = Table::new(&processes)
                     .with(Style::rounded().remove_verticals())
-                    .with(Modify::new(Segment::all()).with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
+                    .with(
+                        Modify::new(Segment::all()).with(BorderColor::filled(Color::new(
+                            "\x1b[38;2;45;55;72m",
+                            "\x1b[39m",
+                        ))),
+                    )
                     .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
                     .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
                     .to_string();

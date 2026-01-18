@@ -3,35 +3,36 @@
 use chrono::{DateTime, Utc};
 use global_placeholders::global;
 use macros_rs::{fmtstr, string, ternary};
-use prometheus::{Encoder, TextEncoder};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use opm::process::unix::NativeProcess as Process;
+use prometheus::{Encoder, TextEncoder};
 use reqwest::header::HeaderValue;
+use serde_json::json;
 use tera::Context;
 use toml;
 use utoipa::ToSchema;
-use serde_json::json;
 
 use rocket::{
-    delete,
-    get,
+    State, delete, get,
     http::{ContentType, Status},
     post,
     response::stream::{Event, EventStream},
-    serde::{json::Json, Deserialize, Serialize},
-    State,
+    serde::{Deserialize, Serialize, json::Json},
 };
 
 use super::{
-    helpers::{generic_error, not_found, GenericError, NotFound},
+    EnableWebUI, TeraState,
+    helpers::{GenericError, NotFound, generic_error, not_found},
     render,
     structs::ErrorMessage,
-    EnableWebUI, TeraState,
 };
 
 use opm::{
     config, helpers,
-    process::{dump, http::client, ItemSingle, ProcessItem, Runner, get_process_cpu_usage_with_children_from_process, get_process_memory_with_children},
+    process::{
+        ItemSingle, ProcessItem, Runner, dump, get_process_cpu_usage_with_children_from_process,
+        get_process_memory_with_children, http::client,
+    },
 };
 
 use crate::daemon::{
@@ -165,37 +166,69 @@ fn attempt(done: bool, method: &str) -> ActionResponse {
 
 // WebUI Routes
 #[get("/")]
-pub async fn dashboard(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { 
-    Ok((ContentType::HTML, render("dashboard", &state, &mut Context::new()).await?)) 
+pub async fn dashboard(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("dashboard", &state, &mut Context::new()).await?,
+    ))
 }
 
 #[get("/servers")]
-pub async fn servers(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { 
-    Ok((ContentType::HTML, render("servers", &state, &mut Context::new()).await?)) 
+pub async fn servers(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("servers", &state, &mut Context::new()).await?,
+    ))
 }
 
 #[get("/login")]
-pub async fn login(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { 
-    Ok((ContentType::HTML, render("login", &state, &mut Context::new()).await?)) 
+pub async fn login(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("login", &state, &mut Context::new()).await?,
+    ))
 }
 
 #[get("/view/<id>")]
-pub async fn view_process(id: usize, state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> {
+pub async fn view_process(
+    id: usize,
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
     let mut ctx = Context::new();
     ctx.insert("process_id", &id);
     Ok((ContentType::HTML, render("view", &state, &mut ctx).await?))
 }
 
 #[get("/status/<name>")]
-pub async fn server_status(name: String, state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> {
+pub async fn server_status(
+    name: String,
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
     let mut ctx = Context::new();
     ctx.insert("server_name", &name);
     Ok((ContentType::HTML, render("status", &state, &mut ctx).await?))
 }
 
 #[get("/notifications")]
-pub async fn notifications(state: &State<TeraState>, _webui: EnableWebUI) -> Result<(ContentType, String), NotFound> { 
-    Ok((ContentType::HTML, render("notifications", &state, &mut Context::new()).await?)) 
+pub async fn notifications(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("notifications", &state, &mut Context::new()).await?,
+    ))
 }
 
 #[get("/daemon/prometheus")]
@@ -231,17 +264,19 @@ pub async fn prometheus_handler(_t: Token) -> String {
     )
 )]
 pub async fn servers_handler(_t: Token) -> Result<Json<Vec<String>>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["servers"]).start_timer();
-    
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["servers"])
+        .start_timer();
+
     let result = if let Some(servers) = config::servers().servers {
         servers.into_keys().collect()
     } else {
         vec![]
     };
-    
+
     HTTP_COUNTER.inc();
     timer.observe_duration();
-    
+
     Ok(Json(result))
 }
 
@@ -264,23 +299,25 @@ pub struct AddServerBody {
     )
 )]
 pub async fn add_server_handler(body: Json<AddServerBody>, _t: Token) -> Json<ActionResponse> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["add_server"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["add_server"])
+        .start_timer();
     HTTP_COUNTER.inc();
-    
+
     let mut servers = config::servers();
     let server = config::structs::Server {
         address: body.address.trim_end_matches('/').to_string(),
         token: body.token.clone(),
     };
-    
+
     if servers.servers.is_none() {
         servers.servers = Some(BTreeMap::new());
     }
-    
+
     if let Some(ref mut server_map) = servers.servers {
         server_map.insert(body.name.clone(), server);
     }
-    
+
     // Save to file
     match home::home_dir() {
         Some(path) => {
@@ -289,14 +326,14 @@ pub async fn add_server_handler(body: Json<AddServerBody>, _t: Token) -> Json<Ac
                 Ok(c) => c,
                 Err(_) => return Json(attempt(false, "add_server")),
             };
-            
+
             if let Err(_) = fs::write(&config_path, contents) {
                 return Json(attempt(false, "add_server"));
             }
         }
         None => return Json(attempt(false, "add_server")),
     }
-    
+
     timer.observe_duration();
     Json(attempt(true, "add_server"))
 }
@@ -314,15 +351,17 @@ pub async fn add_server_handler(body: Json<AddServerBody>, _t: Token) -> Json<Ac
     )
 )]
 pub async fn remove_server_handler(name: String, _t: Token) -> Json<ActionResponse> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["remove_server"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["remove_server"])
+        .start_timer();
     HTTP_COUNTER.inc();
-    
+
     let mut servers = config::servers();
-    
+
     if let Some(ref mut server_map) = servers.servers {
         server_map.remove(&name);
     }
-    
+
     // Save to file
     match home::home_dir() {
         Some(path) => {
@@ -331,18 +370,17 @@ pub async fn remove_server_handler(name: String, _t: Token) -> Json<ActionRespon
                 Ok(c) => c,
                 Err(_) => return Json(attempt(false, "remove_server")),
             };
-            
+
             if let Err(_) = fs::write(&config_path, contents) {
                 return Json(attempt(false, "remove_server"));
             }
         }
         None => return Json(attempt(false, "remove_server")),
     }
-    
+
     timer.observe_duration();
     Json(attempt(true, "remove_server"))
 }
-
 
 #[get("/remote/<name>/list")]
 #[utoipa::path(get, tag = "Remote", path = "/remote/{name}/list", security((), ("api_key" = [])),
@@ -357,18 +395,30 @@ pub async fn remove_server_handler(name: String, _t: Token) -> Json<ActionRespon
     )
 )]
 pub async fn remote_list(name: String, _t: Token) -> Result<Json<Vec<ProcessItem>>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["list"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["list"])
+        .start_timer();
 
     if let Some(servers) = config::servers().servers {
         let (address, (client, headers)) = match servers.get(&name) {
             Some(server) => (&server.address, client(&server.token).await),
-            None => return Err(generic_error(Status::NotFound, string!("Server was not found"))),
+            None => {
+                return Err(generic_error(
+                    Status::NotFound,
+                    string!("Server was not found"),
+                ));
+            }
         };
 
         HTTP_COUNTER.inc();
         timer.observe_duration();
 
-        match client.get(fmtstr!("{address}/list")).headers(headers).send().await {
+        match client
+            .get(fmtstr!("{address}/list"))
+            .headers(headers)
+            .send()
+            .await
+        {
             Ok(data) => {
                 if data.status() != 200 {
                     let err = data.json::<ErrorMessage>().await.unwrap();
@@ -380,7 +430,10 @@ pub async fn remote_list(name: String, _t: Token) -> Result<Json<Vec<ProcessItem
             Err(err) => Err(generic_error(Status::InternalServerError, err.to_string())),
         }
     } else {
-        Err(generic_error(Status::BadRequest, string!("No servers have been added")))
+        Err(generic_error(
+            Status::BadRequest,
+            string!("No servers have been added"),
+        ))
     }
 }
 
@@ -399,19 +452,35 @@ pub async fn remote_list(name: String, _t: Token) -> Result<Json<Vec<ProcessItem
         )
     )
 )]
-pub async fn remote_info(name: String, id: usize, _t: Token) -> Result<Json<ItemSingle>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["info"]).start_timer();
+pub async fn remote_info(
+    name: String,
+    id: usize,
+    _t: Token,
+) -> Result<Json<ItemSingle>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["info"])
+        .start_timer();
 
     if let Some(servers) = config::servers().servers {
         let (address, (client, headers)) = match servers.get(&name) {
             Some(server) => (&server.address, client(&server.token).await),
-            None => return Err(generic_error(Status::NotFound, string!("Server was not found"))),
+            None => {
+                return Err(generic_error(
+                    Status::NotFound,
+                    string!("Server was not found"),
+                ));
+            }
         };
 
         HTTP_COUNTER.inc();
         timer.observe_duration();
 
-        match client.get(fmtstr!("{address}/process/{id}/info")).headers(headers).send().await {
+        match client
+            .get(fmtstr!("{address}/process/{id}/info"))
+            .headers(headers)
+            .send()
+            .await
+        {
             Ok(data) => {
                 if data.status() != 200 {
                     let err = data.json::<ErrorMessage>().await.unwrap();
@@ -423,7 +492,10 @@ pub async fn remote_info(name: String, id: usize, _t: Token) -> Result<Json<Item
             Err(err) => Err(generic_error(Status::InternalServerError, err.to_string())),
         }
     } else {
-        Err(generic_error(Status::BadRequest, string!("No servers have been added")))
+        Err(generic_error(
+            Status::BadRequest,
+            string!("No servers have been added"),
+        ))
     }
 }
 
@@ -443,19 +515,36 @@ pub async fn remote_info(name: String, id: usize, _t: Token) -> Result<Json<Item
         )
     )
 )]
-pub async fn remote_logs(name: String, id: usize, kind: String, _t: Token) -> Result<Json<LogResponse>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["info"]).start_timer();
+pub async fn remote_logs(
+    name: String,
+    id: usize,
+    kind: String,
+    _t: Token,
+) -> Result<Json<LogResponse>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["info"])
+        .start_timer();
 
     if let Some(servers) = config::servers().servers {
         let (address, (client, headers)) = match servers.get(&name) {
             Some(server) => (&server.address, client(&server.token).await),
-            None => return Err(generic_error(Status::NotFound, string!("Server was not found"))),
+            None => {
+                return Err(generic_error(
+                    Status::NotFound,
+                    string!("Server was not found"),
+                ));
+            }
         };
 
         HTTP_COUNTER.inc();
         timer.observe_duration();
 
-        match client.get(fmtstr!("{address}/process/{id}/logs/{kind}")).headers(headers).send().await {
+        match client
+            .get(fmtstr!("{address}/process/{id}/logs/{kind}"))
+            .headers(headers)
+            .send()
+            .await
+        {
             Ok(data) => {
                 if data.status() != 200 {
                     let err = data.json::<ErrorMessage>().await.unwrap();
@@ -467,7 +556,10 @@ pub async fn remote_logs(name: String, id: usize, kind: String, _t: Token) -> Re
             Err(err) => Err(generic_error(Status::InternalServerError, err.to_string())),
         }
     } else {
-        Err(generic_error(Status::BadRequest, string!("No servers have been added")))
+        Err(generic_error(
+            Status::BadRequest,
+            string!("No servers have been added"),
+        ))
     }
 }
 
@@ -491,20 +583,38 @@ pub async fn remote_logs(name: String, id: usize, kind: String, _t: Token) -> Re
         )
     )
 )]
-pub async fn remote_rename(name: String, id: usize, body: String, _t: Token) -> Result<Json<ActionResponse>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["rename"]).start_timer();
+pub async fn remote_rename(
+    name: String,
+    id: usize,
+    body: String,
+    _t: Token,
+) -> Result<Json<ActionResponse>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["rename"])
+        .start_timer();
 
     if let Some(servers) = config::servers().servers {
         let (address, (client, mut headers)) = match servers.get(&name) {
             Some(server) => (&server.address, client(&server.token).await),
-            None => return Err(generic_error(Status::NotFound, string!("Server was not found"))),
+            None => {
+                return Err(generic_error(
+                    Status::NotFound,
+                    string!("Server was not found"),
+                ));
+            }
         };
 
         HTTP_COUNTER.inc();
         timer.observe_duration();
         headers.insert("content-type", HeaderValue::from_static("text/plain"));
 
-        match client.post(fmtstr!("{address}/process/{id}/rename")).body(body).headers(headers).send().await {
+        match client
+            .post(fmtstr!("{address}/process/{id}/rename"))
+            .body(body)
+            .headers(headers)
+            .send()
+            .await
+        {
             Ok(data) => {
                 if data.status() != 200 {
                     let err = data.json::<ErrorMessage>().await.unwrap();
@@ -516,7 +626,10 @@ pub async fn remote_rename(name: String, id: usize, body: String, _t: Token) -> 
             Err(err) => Err(generic_error(Status::InternalServerError, err.to_string())),
         }
     } else {
-        Err(generic_error(Status::BadRequest, string!("No servers have been added")))
+        Err(generic_error(
+            Status::BadRequest,
+            string!("No servers have been added"),
+        ))
     }
 }
 
@@ -536,19 +649,37 @@ pub async fn remote_rename(name: String, id: usize, body: String, _t: Token) -> 
         )
     )
 )]
-pub async fn remote_action(name: String, id: usize, body: Json<ActionBody>, _t: Token) -> Result<Json<ActionResponse>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["action"]).start_timer();
+pub async fn remote_action(
+    name: String,
+    id: usize,
+    body: Json<ActionBody>,
+    _t: Token,
+) -> Result<Json<ActionResponse>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["action"])
+        .start_timer();
 
     if let Some(servers) = config::servers().servers {
         let (address, (client, headers)) = match servers.get(&name) {
             Some(server) => (&server.address, client(&server.token).await),
-            None => return Err(generic_error(Status::NotFound, string!("Server was not found"))),
+            None => {
+                return Err(generic_error(
+                    Status::NotFound,
+                    string!("Server was not found"),
+                ));
+            }
         };
 
         HTTP_COUNTER.inc();
         timer.observe_duration();
 
-        match client.post(fmtstr!("{address}/process/{id}/action")).json(&body.0).headers(headers).send().await {
+        match client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&body.0)
+            .headers(headers)
+            .send()
+            .await
+        {
             Ok(data) => {
                 if data.status() != 200 {
                     let err = data.json::<ErrorMessage>().await.unwrap();
@@ -560,7 +691,10 @@ pub async fn remote_action(name: String, id: usize, body: Json<ActionBody>, _t: 
             Err(err) => Err(generic_error(Status::InternalServerError, err.to_string())),
         }
     } else {
-        Err(generic_error(Status::BadRequest, string!("No servers have been added")))
+        Err(generic_error(
+            Status::BadRequest,
+            string!("No servers have been added"),
+        ))
     }
 }
 
@@ -575,7 +709,9 @@ pub async fn remote_action(name: String, id: usize, body: Json<ActionBody>, _t: 
     )
 )]
 pub async fn dump_handler(_t: Token) -> Vec<u8> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["dump"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["dump"])
+        .start_timer();
 
     HTTP_COUNTER.inc();
     timer.observe_duration();
@@ -594,11 +730,13 @@ pub async fn dump_handler(_t: Token) -> Vec<u8> {
     )
 )]
 pub async fn save_handler(_t: Token) -> Json<ActionResponse> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["save"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["save"])
+        .start_timer();
     HTTP_COUNTER.inc();
-    
+
     Runner::new().save();
-    
+
     timer.observe_duration();
     Json(attempt(true, "save"))
 }
@@ -614,25 +752,28 @@ pub async fn save_handler(_t: Token) -> Json<ActionResponse> {
     )
 )]
 pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["restore"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["restore"])
+        .start_timer();
     HTTP_COUNTER.inc();
-    
+
     let runner = Runner::new();
-    
+
     // Collect IDs of processes that were running when saved
-    let running_ids: Vec<usize> = runner.items()
+    let running_ids: Vec<usize> = runner
+        .items()
         .into_iter()
         .filter(|(_, item)| item.running)
         .map(|(_, item)| item.id)
         .collect();
-    
+
     // Restore those processes (without incrementing counters)
     let mut runner = Runner::new();
     let total_processes = running_ids.len();
     for (index, id) in running_ids.iter().enumerate() {
         runner.restart(*id, false, false);
         runner.save();
-        
+
         // Only add delay between processes when restoring multiple processes
         // This prevents resource conflicts and false crash detection
         // Skip delay after the last process
@@ -640,7 +781,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
             tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
         }
     }
-    
+
     // Reset restart and crash counters after restore for ALL processes
     // This gives each process a fresh start after system restore/reboot
     let all_process_ids: Vec<usize> = runner.items().keys().copied().collect();
@@ -648,7 +789,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         runner.reset_counters(id);
     }
     runner.save();
-    
+
     timer.observe_duration();
     Json(attempt(true, "restore"))
 }
@@ -664,7 +805,9 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
     )
 )]
 pub async fn config_handler(_t: Token) -> Json<ConfigBody> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["dump"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["dump"])
+        .start_timer();
     let config = config::read().runner;
 
     HTTP_COUNTER.inc();
@@ -726,7 +869,9 @@ impl Default for NotificationEvents {
     )
 )]
 pub async fn get_notifications_handler(_t: Token) -> Json<NotificationConfig> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["get_notifications"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_notifications"])
+        .start_timer();
     let config = config::read().daemon.notifications;
 
     HTTP_COUNTER.inc();
@@ -736,12 +881,36 @@ pub async fn get_notifications_handler(_t: Token) -> Json<NotificationConfig> {
         Some(notif) => NotificationConfig {
             enabled: notif.enabled,
             events: NotificationEvents {
-                agent_connect: notif.events.as_ref().map(|e| e.agent_connect).unwrap_or(false),
-                agent_disconnect: notif.events.as_ref().map(|e| e.agent_disconnect).unwrap_or(false),
-                process_start: notif.events.as_ref().map(|e| e.process_start).unwrap_or(false),
-                process_stop: notif.events.as_ref().map(|e| e.process_stop).unwrap_or(false),
-                process_crash: notif.events.as_ref().map(|e| e.process_crash).unwrap_or(false),
-                process_restart: notif.events.as_ref().map(|e| e.process_restart).unwrap_or(false),
+                agent_connect: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.agent_connect)
+                    .unwrap_or(false),
+                agent_disconnect: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.agent_disconnect)
+                    .unwrap_or(false),
+                process_start: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.process_start)
+                    .unwrap_or(false),
+                process_stop: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.process_stop)
+                    .unwrap_or(false),
+                process_crash: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.process_crash)
+                    .unwrap_or(false),
+                process_restart: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.process_restart)
+                    .unwrap_or(false),
             },
             channels: notif.channels.unwrap_or_default(),
         },
@@ -766,14 +935,19 @@ pub async fn get_notifications_handler(_t: Token) -> Json<NotificationConfig> {
         )
     )
 )]
-pub async fn save_notifications_handler(body: Json<NotificationConfig>, _t: Token) -> Result<Json<serde_json::Value>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["save_notifications"]).start_timer();
-    
+pub async fn save_notifications_handler(
+    body: Json<NotificationConfig>,
+    _t: Token,
+) -> Result<Json<serde_json::Value>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["save_notifications"])
+        .start_timer();
+
     HTTP_COUNTER.inc();
-    
+
     // Read current config
     let mut full_config = config::read();
-    
+
     // Update notification config
     full_config.daemon.notifications = Some(config::structs::Notifications {
         enabled: body.enabled,
@@ -787,24 +961,39 @@ pub async fn save_notifications_handler(body: Json<NotificationConfig>, _t: Toke
         }),
         channels: Some(body.channels.clone()),
     });
-    
+
     // Save config to file
     let config_path = match home::home_dir() {
         Some(path) => format!("{}/.opm/config.toml", path.display()),
-        None => return Err(generic_error(Status::InternalServerError, "Cannot determine home directory".to_string())),
+        None => {
+            return Err(generic_error(
+                Status::InternalServerError,
+                "Cannot determine home directory".to_string(),
+            ));
+        }
     };
-    
+
     let contents = match toml::to_string(&full_config) {
         Ok(contents) => contents,
-        Err(err) => return Err(generic_error(Status::InternalServerError, format!("Cannot serialize config: {}", err))),
+        Err(err) => {
+            return Err(generic_error(
+                Status::InternalServerError,
+                format!("Cannot serialize config: {}", err),
+            ));
+        }
     };
-    
+
     if let Err(err) = std::fs::write(&config_path, contents) {
-        return Err(generic_error(Status::InternalServerError, format!("Cannot write config: {}", err)));
+        return Err(generic_error(
+            Status::InternalServerError,
+            format!("Cannot write config: {}", err),
+        ));
     }
-    
+
     timer.observe_duration();
-    Ok(Json(json!({"success": true, "message": "Notification settings saved"})))
+    Ok(Json(
+        json!({"success": true, "message": "Notification settings saved"}),
+    ))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -825,25 +1014,33 @@ pub struct TestNotificationBody {
         )
     )
 )]
-pub async fn test_notification_handler(body: Json<TestNotificationBody>, _t: Token) -> Result<Json<serde_json::Value>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["test_notification"]).start_timer();
-    
+pub async fn test_notification_handler(
+    body: Json<TestNotificationBody>,
+    _t: Token,
+) -> Result<Json<serde_json::Value>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["test_notification"])
+        .start_timer();
+
     HTTP_COUNTER.inc();
-    
+
     // Get notification config
     let config = config::read().daemon.notifications;
-    
+
     if let Some(cfg) = config {
         if !cfg.enabled {
             timer.observe_duration();
-            return Err(generic_error(Status::BadRequest, "Notifications are not enabled".to_string()));
+            return Err(generic_error(
+                Status::BadRequest,
+                "Notifications are not enabled".to_string(),
+            ));
         }
-        
+
         let mut desktop_sent = false;
         let mut channels_sent = false;
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
-        
+
         // Try to send desktop notification (may fail in headless environments)
         match send_test_desktop_notification(&body.title, &body.message).await {
             Ok(_) => {
@@ -857,7 +1054,7 @@ pub async fn test_notification_handler(body: Json<TestNotificationBody>, _t: Tok
                 warnings.push(format!("Desktop: {}", error_msg));
             }
         }
-        
+
         // Send to external channels if configured
         if let Some(channels) = &cfg.channels {
             if !channels.is_empty() {
@@ -872,66 +1069,75 @@ pub async fn test_notification_handler(body: Json<TestNotificationBody>, _t: Tok
                 }
             }
         }
-        
+
         // Return success if at least one notification method succeeded
         if desktop_sent || channels_sent {
             let mut message = "Test notification sent successfully".to_string();
             let mut details = Vec::new();
-            
+
             if desktop_sent {
                 details.push("desktop");
             }
             if channels_sent {
                 details.push("external channels");
             }
-            
+
             if !details.is_empty() {
                 message.push_str(" via ");
                 message.push_str(&details.join(" and "));
             }
-            
+
             // Include warnings if any (e.g., desktop failed but not critical)
             let response = if !warnings.is_empty() {
                 json!({
-                    "success": true, 
+                    "success": true,
                     "message": message,
                     "warnings": warnings
                 })
             } else {
                 json!({
-                    "success": true, 
+                    "success": true,
                     "message": message
                 })
             };
-            
+
             timer.observe_duration();
             Ok(Json(response))
         } else {
             // All notification methods failed
             timer.observe_duration();
-            
+
             // Build clear error message distinguishing expected vs unexpected failures
             let mut error_parts = Vec::new();
-            
+
             if !warnings.is_empty() {
-                error_parts.push(format!("Expected failures (headless environment): {}", warnings.join("; ")));
+                error_parts.push(format!(
+                    "Expected failures (headless environment): {}",
+                    warnings.join("; ")
+                ));
             }
-            
+
             if !errors.is_empty() {
                 error_parts.push(format!("Unexpected failures: {}", errors.join("; ")));
             }
-            
+
             let error_msg = if error_parts.is_empty() {
                 "No notification channels available".to_string()
             } else {
-                format!("All notification methods failed. {}", error_parts.join(" | "))
+                format!(
+                    "All notification methods failed. {}",
+                    error_parts.join(" | ")
+                )
             };
-            
+
             Err(generic_error(Status::InternalServerError, error_msg))
         }
     } else {
         timer.observe_duration();
-        Err(generic_error(Status::BadRequest, "Notifications are not configured".to_string()))
+        Err(generic_error(
+            Status::BadRequest,
+            "Notifications are not configured".to_string(),
+        ))
     }
 }
 
@@ -940,7 +1146,7 @@ async fn send_test_desktop_notification(
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use notify_rust::{Notification, Urgency};
-    
+
     Notification::new()
         .summary(title)
         .body(message)
@@ -948,7 +1154,7 @@ async fn send_test_desktop_notification(
         .appname("OPM")
         .timeout(5000)
         .show()?;
-    
+
     Ok(())
 }
 
@@ -958,11 +1164,11 @@ async fn send_test_channel_notifications(
     channels: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     use reqwest::Client;
-    
+
     let client = Client::new();
     let mut errors = Vec::new();
     let mut success_count = 0;
-    
+
     for channel_url in channels {
         // Parse the shoutrrr URL to determine the service type
         if let Some((service, rest)) = channel_url.split_once("://") {
@@ -976,7 +1182,7 @@ async fn send_test_channel_notifications(
                     continue;
                 }
             };
-            
+
             match result {
                 Ok(_) => success_count += 1,
                 Err(e) => {
@@ -989,7 +1195,7 @@ async fn send_test_channel_notifications(
             errors.push(format!("Invalid URL format: {}", channel_url));
         }
     }
-    
+
     if success_count > 0 {
         Ok(())
     } else if !errors.is_empty() {
@@ -1014,30 +1220,35 @@ async fn send_discord_webhook(
         if let Some((token, id)) = webhook_data.split_once('@') {
             format!("https://discord.com/api/webhooks/{}/{}", id, token)
         } else {
-            return Err("Invalid Discord webhook format: expected 'token@id' or full webhook URL".into());
+            return Err(
+                "Invalid Discord webhook format: expected 'token@id' or full webhook URL".into(),
+            );
         }
     };
-    
+
     let mut payload = HashMap::new();
     payload.insert("content", format!("**{}**\n{}", title, message));
-    
-    let response = client
-        .post(&webhook_url)
-        .json(&payload)
-        .send()
-        .await?;
-    
+
+    let response = client.post(&webhook_url).json(&payload).send().await?;
+
     if !response.status().is_success() {
         let status = response.status();
         // Only read response body for error responses, and limit size to prevent issues
         let body = if status.is_client_error() || status.is_server_error() {
-            response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
+            response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read response body".to_string())
         } else {
             "Non-success status but no error details available".to_string()
         };
-        return Err(format!("Discord webhook failed with status: {} - Response: {}", status, body).into());
+        return Err(format!(
+            "Discord webhook failed with status: {} - Response: {}",
+            status, body
+        )
+        .into());
     }
-    
+
     Ok(())
 }
 
@@ -1053,27 +1264,30 @@ async fn send_slack_webhook(
     } else {
         return Err("Slack webhooks require full URL format (e.g., https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX)".into());
     };
-    
+
     let mut payload = HashMap::new();
     payload.insert("text", format!("*{}*\n{}", title, message));
-    
-    let response = client
-        .post(&webhook_url)
-        .json(&payload)
-        .send()
-        .await?;
-    
+
+    let response = client.post(&webhook_url).json(&payload).send().await?;
+
     if !response.status().is_success() {
         let status = response.status();
         // Only read response body for error responses, and limit size to prevent issues
         let body = if status.is_client_error() || status.is_server_error() {
-            response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
+            response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read response body".to_string())
         } else {
             "Non-success status but no error details available".to_string()
         };
-        return Err(format!("Slack webhook failed with status: {} - Response: {}", status, body).into());
+        return Err(format!(
+            "Slack webhook failed with status: {} - Response: {}",
+            status, body
+        )
+        .into());
     }
-    
+
     Ok(())
 }
 
@@ -1088,38 +1302,41 @@ async fn send_telegram_message(
     let (token, rest) = webhook_data
         .split_once('@')
         .ok_or("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'")?;
-    
+
     let chat_id = if let Some(query) = rest.strip_prefix("telegram?chats=") {
         query
     } else {
         return Err("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'".into());
     };
-    
+
     let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
     let text = format!("<b>{}</b>\n{}", title, message);
-    
+
     let mut payload = HashMap::new();
     payload.insert("chat_id", chat_id);
     payload.insert("text", &text);
     payload.insert("parse_mode", "HTML");
-    
-    let response = client
-        .post(&api_url)
-        .json(&payload)
-        .send()
-        .await?;
-    
+
+    let response = client.post(&api_url).json(&payload).send().await?;
+
     if !response.status().is_success() {
         let status = response.status();
         // Only read response body for error responses, and limit size to prevent issues
         let body = if status.is_client_error() || status.is_server_error() {
-            response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string())
+            response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unable to read response body".to_string())
         } else {
             "Non-success status but no error details available".to_string()
         };
-        return Err(format!("Telegram API failed with status: {} - Response: {}", status, body).into());
+        return Err(format!(
+            "Telegram API failed with status: {} - Response: {}",
+            status, body
+        )
+        .into());
     }
-    
+
     Ok(())
 }
 
@@ -1137,7 +1354,9 @@ pub async fn list_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Json<Vec<ProcessItem>> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["list"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["list"])
+        .start_timer();
     let mut data = Runner::new().fetch();
 
     // Enrich process items with agent names
@@ -1171,7 +1390,11 @@ pub async fn list_handler(
         )
     )
 )]
-pub async fn logs_handler(id: usize, kind: String, _t: Token) -> Result<Json<LogResponse>, NotFound> {
+pub async fn logs_handler(
+    id: usize,
+    kind: String,
+    _t: Token,
+) -> Result<Json<LogResponse>, NotFound> {
     let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["log"]).start_timer();
 
     HTTP_COUNTER.inc();
@@ -1260,7 +1483,9 @@ pub async fn logs_raw_handler(id: usize, kind: String, _t: Token) -> Result<Stri
     )
 )]
 pub async fn info_handler(id: usize, _t: Token) -> Result<Json<ItemSingle>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["info"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["info"])
+        .start_timer();
     let runner = Runner::new();
 
     if runner.exists(id) {
@@ -1289,7 +1514,9 @@ pub async fn info_handler(id: usize, _t: Token) -> Result<Json<ItemSingle>, NotF
     )
 )]
 pub async fn create_handler(body: Json<CreateBody>, _t: Token) -> Result<Json<ActionResponse>, ()> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["create"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["create"])
+        .start_timer();
     let mut runner = Runner::new();
 
     HTTP_COUNTER.inc();
@@ -1299,7 +1526,9 @@ pub async fn create_handler(body: Json<CreateBody>, _t: Token) -> Result<Json<Ac
         None => string!(body.script.split_whitespace().next().unwrap_or_default()),
     };
 
-    runner.start(&name, &body.script, body.path.clone(), &body.watch, 0).save();
+    runner
+        .start(&name, &body.script, body.path.clone(), &body.watch, 0)
+        .save();
     timer.observe_duration();
 
     Ok(Json(attempt(true, "create")))
@@ -1322,8 +1551,14 @@ pub async fn create_handler(body: Json<CreateBody>, _t: Token) -> Result<Json<Ac
         )
     )
 )]
-pub async fn rename_handler(id: usize, body: String, _t: Token) -> Result<Json<ActionResponse>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["rename"]).start_timer();
+pub async fn rename_handler(
+    id: usize,
+    body: String,
+    _t: Token,
+) -> Result<Json<ActionResponse>, NotFound> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["rename"])
+        .start_timer();
     let mut runner = Runner::new();
 
     // Check if process exists and get its running status
@@ -1340,9 +1575,9 @@ pub async fn rename_handler(id: usize, body: String, _t: Token) -> Result<Json<A
     runner.rename(id, body.trim().replace("\n", ""));
     // Restart if needed
     if is_running {
-        runner.restart(id, false, true);  // API rename+restart should increment
+        runner.restart(id, false, true); // API rename+restart should increment
     }
-    runner.save();  // Persist the renamed process to dump file
+    runner.save(); // Persist the renamed process to dump file
     timer.observe_duration();
     Ok(Json(attempt(true, "rename")))
 }
@@ -1391,8 +1626,14 @@ pub async fn env_handler(id: usize, _t: Token) -> Result<EnvList, NotFound> {
         )
     )
 )]
-pub async fn action_handler(id: usize, body: Json<ActionBody>, _t: Token) -> Result<Json<ActionResponse>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["action"]).start_timer();
+pub async fn action_handler(
+    id: usize,
+    body: Json<ActionBody>,
+    _t: Token,
+) -> Result<Json<ActionResponse>, NotFound> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["action"])
+        .start_timer();
     let mut runner = Runner::new();
     let method = body.method.as_str();
 
@@ -1401,21 +1642,21 @@ pub async fn action_handler(id: usize, body: Json<ActionBody>, _t: Token) -> Res
         match method {
             "start" => {
                 let mut item = runner.get(id);
-                item.restart(false);  // start should not increment
+                item.restart(false); // start should not increment
                 item.get_runner().save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
             "restart" => {
                 let mut item = runner.get(id);
-                item.restart(true);  // restart should increment
+                item.restart(true); // restart should increment
                 item.get_runner().save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
             "reload" => {
                 let mut item = runner.get(id);
-                item.reload(true);  // reload should increment
+                item.reload(true); // reload should increment
                 item.get_runner().save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
@@ -1480,18 +1721,23 @@ pub struct BulkActionResponse {
         )
     )
 )]
-pub async fn bulk_action_handler(body: Json<BulkActionBody>, _t: Token) -> Json<BulkActionResponse> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["bulk_action"]).start_timer();
+pub async fn bulk_action_handler(
+    body: Json<BulkActionBody>,
+    _t: Token,
+) -> Json<BulkActionResponse> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["bulk_action"])
+        .start_timer();
     let method = body.method.as_str();
     let mut success = Vec::new();
     let mut failed = Vec::new();
 
     HTTP_COUNTER.inc();
-    
+
     for id in &body.ids {
         // Create a new runner for each iteration to avoid borrow checker issues
         let mut runner = Runner::new();
-        
+
         if runner.exists(*id) {
             match method {
                 "start" => {
@@ -1540,7 +1786,9 @@ pub async fn bulk_action_handler(body: Json<BulkActionBody>, _t: Token) -> Json<
 }
 
 pub async fn get_metrics() -> MetricsRoot {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["metrics"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["metrics"])
+        .start_timer();
     let os_info = crate::globals::get_os_info();
 
     let mut pid: Option<Pid> = None;
@@ -1558,7 +1806,10 @@ pub async fn get_metrics() -> MetricsRoot {
                 if let Some(mem_info) = get_process_memory_with_children(process_id.get::<i64>()) {
                     memory_usage = Some(mem_info.rss);
                 }
-                cpu_percent = Some(get_process_cpu_usage_with_children_from_process(&process, process_id.get::<i64>()));
+                cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
+                    &process,
+                    process_id.get::<i64>(),
+                ));
             }
         }
     }
@@ -1581,12 +1832,19 @@ pub async fn get_metrics() -> MetricsRoot {
     timer.observe_duration();
     MetricsRoot {
         os: os_info.clone(),
-        raw: Raw { memory_usage, cpu_percent },
+        raw: Raw {
+            memory_usage,
+            cpu_percent,
+        },
         version: Version {
             target: env!("PROFILE").into(),
             build_date: env!("BUILD_DATE").into(),
             pkg: format!("v{}", env!("CARGO_PKG_VERSION")),
-            hash: ternary!(env!("GIT_HASH_FULL") == "", None, Some(env!("GIT_HASH_FULL").into())),
+            hash: ternary!(
+                env!("GIT_HASH_FULL") == "",
+                None,
+                Some(env!("GIT_HASH_FULL").into())
+            ),
         },
         daemon: Daemon {
             pid,
@@ -1612,7 +1870,9 @@ pub async fn get_metrics() -> MetricsRoot {
         )
     )
 )]
-pub async fn metrics_handler(_t: Token) -> Json<MetricsRoot> { Json(get_metrics().await) }
+pub async fn metrics_handler(_t: Token) -> Json<MetricsRoot> {
+    Json(get_metrics().await)
+}
 
 #[get("/remote/<name>/metrics")]
 #[utoipa::path(get, tag = "Remote", path = "/remote/{name}/metrics", security((), ("api_key" = [])),
@@ -1626,18 +1886,30 @@ pub async fn metrics_handler(_t: Token) -> Json<MetricsRoot> { Json(get_metrics(
     )
 )]
 pub async fn remote_metrics(name: String, _t: Token) -> Result<Json<MetricsRoot>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["info"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["info"])
+        .start_timer();
 
     if let Some(servers) = config::servers().servers {
         let (address, (client, headers)) = match servers.get(&name) {
             Some(server) => (&server.address, client(&server.token).await),
-            None => return Err(generic_error(Status::NotFound, string!("Server was not found"))),
+            None => {
+                return Err(generic_error(
+                    Status::NotFound,
+                    string!("Server was not found"),
+                ));
+            }
         };
 
         HTTP_COUNTER.inc();
         timer.observe_duration();
 
-        match client.get(fmtstr!("{address}/daemon/metrics")).headers(headers).send().await {
+        match client
+            .get(fmtstr!("{address}/daemon/metrics"))
+            .headers(headers)
+            .send()
+            .await
+        {
             Ok(data) => {
                 if data.status() != 200 {
                     let err = data.json::<ErrorMessage>().await.unwrap();
@@ -1649,7 +1921,10 @@ pub async fn remote_metrics(name: String, _t: Token) -> Result<Json<MetricsRoot>
             Err(err) => Err(generic_error(Status::InternalServerError, err.to_string())),
         }
     } else {
-        Err(generic_error(Status::BadRequest, string!("No servers have been added")))
+        Err(generic_error(
+            Status::BadRequest,
+            string!("No servers have been added"),
+        ))
     }
 }
 
@@ -1769,7 +2044,9 @@ pub async fn agent_register_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Result<Json<serde_json::Value>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_register"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_register"])
+        .start_timer();
     HTTP_COUNTER.inc();
 
     let agent_info = opm::agent::types::AgentInfo {
@@ -1809,7 +2086,9 @@ pub async fn agent_heartbeat_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Result<Json<serde_json::Value>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_heartbeat"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_heartbeat"])
+        .start_timer();
     HTTP_COUNTER.inc();
 
     // Return 404 if agent not found (removed from registry)
@@ -1817,7 +2096,7 @@ pub async fn agent_heartbeat_handler(
         timer.observe_duration();
         return Err(not_found("Agent not found"));
     }
-    
+
     timer.observe_duration();
 
     Ok(Json(json!({
@@ -1840,7 +2119,9 @@ pub async fn agent_list_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Result<Json<Vec<opm::agent::types::AgentInfo>>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_list"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_list"])
+        .start_timer();
     HTTP_COUNTER.inc();
 
     let agents = registry.list();
@@ -1868,7 +2149,9 @@ pub async fn agent_unregister_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Result<Json<serde_json::Value>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_unregister"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_unregister"])
+        .start_timer();
     HTTP_COUNTER.inc();
 
     registry.unregister(&id);
@@ -1899,7 +2182,9 @@ pub async fn agent_get_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Result<Json<opm::agent::types::AgentInfo>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_get"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_get"])
+        .start_timer();
     HTTP_COUNTER.inc();
 
     match registry.get(&id) {
@@ -1933,7 +2218,9 @@ pub async fn agent_processes_handler(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
 ) -> Result<Json<Vec<ProcessItem>>, GenericError> {
-    let timer = HTTP_REQ_HISTOGRAM.with_label_values(&["agent_processes"]).start_timer();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_processes"])
+        .start_timer();
     HTTP_COUNTER.inc();
 
     // Get agent info
@@ -1952,7 +2239,7 @@ pub async fn agent_processes_handler(
             timer.observe_duration();
             return Err(generic_error(
                 Status::InternalServerError,
-                string!("Agent API endpoint not configured")
+                string!("Agent API endpoint not configured"),
             ));
         }
     };
@@ -1967,11 +2254,14 @@ pub async fn agent_processes_handler(
     {
         Ok(response) => {
             if response.status() != 200 {
-                let err_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                let err_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
                 timer.observe_duration();
                 Err(generic_error(
                     Status::InternalServerError,
-                    format!("Failed to fetch processes from agent: {}", err_text)
+                    format!("Failed to fetch processes from agent: {}", err_text),
                 ))
             } else {
                 match response.json::<Vec<ProcessItem>>().await {
@@ -1983,7 +2273,7 @@ pub async fn agent_processes_handler(
                         timer.observe_duration();
                         Err(generic_error(
                             Status::InternalServerError,
-                            format!("Failed to parse agent response: {}", e)
+                            format!("Failed to parse agent response: {}", e),
                         ))
                     }
                 }
@@ -1993,7 +2283,7 @@ pub async fn agent_processes_handler(
             timer.observe_duration();
             Err(generic_error(
                 Status::InternalServerError,
-                format!("Failed to connect to agent API: {}", err)
+                format!("Failed to connect to agent API: {}", err),
             ))
         }
     }

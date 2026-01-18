@@ -44,7 +44,7 @@ pub fn read() -> Config {
             if !Exists::check(&config_path).file() {
                 // Generate a secure token for API protection
                 let secure_token = uuid::Uuid::new_v4().to_string();
-                
+
                 let config = Config {
                     default: string!("local"),
                     runner: Runner {
@@ -95,7 +95,7 @@ pub fn read() -> Config {
             // Read the config and check if secure token needs to be added
             let mut config: Config = file::read(config_path.clone());
             let mut needs_save = false;
-            
+
             // If web.secure is None, generate and add a token
             if config.daemon.web.secure.is_none() {
                 let secure_token = uuid::Uuid::new_v4().to_string();
@@ -106,12 +106,12 @@ pub fn read() -> Config {
                 needs_save = true;
                 log::info!("added secure API token to existing config");
             }
-            
+
             // Save config if it was modified
             if needs_save {
                 config.save();
             }
-            
+
             config
         }
         None => crashln!("{} Impossible to get your home directory", *helpers::FAIL),
@@ -183,10 +183,14 @@ impl Config {
 
     pub fn get_address(&self) -> rocket::Config {
         use std::net::{IpAddr, Ipv4Addr};
-        
-        let address = self.daemon.web.address.parse::<IpAddr>()
+
+        let address = self
+            .daemon
+            .web
+            .address
+            .parse::<IpAddr>()
             .unwrap_or(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-        
+
         rocket::Config {
             address,
             port: self.daemon.web.port as u16,

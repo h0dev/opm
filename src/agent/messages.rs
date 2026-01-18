@@ -12,14 +12,9 @@ pub enum AgentMessage {
         api_endpoint: Option<String>,
     },
     /// Heartbeat/ping message
-    Heartbeat {
-        id: String,
-    },
+    Heartbeat { id: String },
     /// Response message
-    Response {
-        success: bool,
-        message: String,
-    },
+    Response { success: bool, message: String },
     /// Ping message from server to agent
     Ping,
     /// Pong response from agent

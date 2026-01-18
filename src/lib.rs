@@ -1,10 +1,10 @@
+pub mod agent;
 pub mod config;
 pub mod file;
 pub mod helpers;
 pub mod log;
-pub mod process;
-pub mod agent;
 pub mod notifications;
+pub mod process;
 
 // Deprecated
 // #[cxx::bridge]

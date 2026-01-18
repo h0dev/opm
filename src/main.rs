@@ -284,7 +284,7 @@ enum AgentCommand {
 
 fn agent_list() {
     use opm::helpers;
-    
+
     println!("{} Connected Agents", *helpers::INFO);
     println!();
     println!("To view connected agents, use one of the following methods:");
@@ -306,13 +306,13 @@ fn agent_list() {
 }
 
 fn agent_connect(server_url: String, name: Option<String>, token: Option<String>) {
-    use opm::helpers;
     use opm::agent::types::AgentConfig;
-    
+    use opm::helpers;
+
     println!("{} Starting OPM Agent...", *helpers::SUCCESS);
-    
+
     let config = AgentConfig::new(server_url, name, token);
-    
+
     // Save agent config
     match save_agent_config(&config) {
         Ok(_) => println!("{} Agent configuration saved", *helpers::SUCCESS),
@@ -321,7 +321,7 @@ fn agent_connect(server_url: String, name: Option<String>, token: Option<String>
             return;
         }
     }
-    
+
     // Update OPM config to set role as agent
     let mut opm_config = opm::config::read();
     opm_config.role = opm::config::structs::Role::Agent;
@@ -329,28 +329,37 @@ fn agent_connect(server_url: String, name: Option<String>, token: Option<String>
     opm_config.daemon.web.address = config.api_address.clone();
     opm_config.daemon.web.port = config.api_port as u64;
     opm_config.save();
-    
+
     println!("{} Agent ID: {}", *helpers::SUCCESS, config.id);
     println!("{} Agent Name: {}", *helpers::SUCCESS, config.name);
     println!("{} Server URL: {}", *helpers::SUCCESS, config.server_url);
-    println!("{} Agent API: http://{}:{}", *helpers::SUCCESS, config.api_address, config.api_port);
-    
+    println!(
+        "{} Agent API: http://{}:{}",
+        *helpers::SUCCESS,
+        config.api_address,
+        config.api_port
+    );
+
     // Start agent in background
     start_agent_daemon();
 }
 
 fn agent_disconnect() {
     use opm::helpers;
-    
+
     match load_agent_config() {
         Ok(config) => {
-            println!("{} Disconnecting agent '{}'...", *helpers::SUCCESS, config.name);
-            
+            println!(
+                "{} Disconnecting agent '{}'...",
+                *helpers::SUCCESS,
+                config.name
+            );
+
             // Restore role to standalone
             let mut opm_config = opm::config::read();
             opm_config.role = opm::config::structs::Role::Standalone;
             opm_config.save();
-            
+
             // Remove agent config file
             if let Err(e) = remove_agent_config() {
                 eprintln!("{} Failed to remove agent config: {}", *helpers::FAIL, e);
@@ -367,7 +376,7 @@ fn agent_disconnect() {
 
 fn agent_status() {
     use opm::helpers;
-    
+
     match load_agent_config() {
         Ok(config) => {
             println!("{} Agent Status", *helpers::SUCCESS);
@@ -384,39 +393,42 @@ fn agent_status() {
 
 fn save_agent_config(config: &opm::agent::types::AgentConfig) -> Result<(), std::io::Error> {
     use std::fs;
-    
-    let path = home::home_dir()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found"))?;
+
+    let path = home::home_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
+    })?;
     let config_path = path.join(".opm").join("agent.toml");
-    
-    let toml_str = toml::to_string(config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    
+
+    let toml_str =
+        toml::to_string(config).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
     fs::write(config_path, toml_str)?;
     Ok(())
 }
 
 fn load_agent_config() -> Result<opm::agent::types::AgentConfig, std::io::Error> {
     use std::fs;
-    
-    let path = home::home_dir()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found"))?;
+
+    let path = home::home_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
+    })?;
     let config_path = path.join(".opm").join("agent.toml");
-    
+
     let contents = fs::read_to_string(config_path)?;
-    let config: opm::agent::types::AgentConfig = toml::from_str(&contents)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    
+    let config: opm::agent::types::AgentConfig =
+        toml::from_str(&contents).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
     Ok(config)
 }
 
 fn remove_agent_config() -> Result<(), std::io::Error> {
     use std::fs;
-    
-    let path = home::home_dir()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found"))?;
+
+    let path = home::home_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
+    })?;
     let config_path = path.join(".opm").join("agent.toml");
-    
+
     fs::remove_file(config_path)?;
     Ok(())
 }
@@ -425,27 +437,33 @@ fn remove_agent_config() -> Result<(), std::io::Error> {
 const DAEMON_INIT_WAIT_SECS: u64 = 2;
 
 fn start_agent_daemon() {
-    use opm::helpers;
+    use nix::unistd::{ForkResult, fork, setsid};
     use opm::agent::connection::AgentConnection;
-    use nix::unistd::{fork, ForkResult, setsid};
+    use opm::helpers;
     use std::fs::OpenOptions;
     use std::os::unix::io::AsRawFd;
-    
+
     // First, ensure the local daemon is running with API enabled
     if !daemon::pid::exists() {
-        println!("{} Starting local OPM daemon with API enabled...", *helpers::SUCCESS);
+        println!(
+            "{} Starting local OPM daemon with API enabled...",
+            *helpers::SUCCESS
+        );
         daemon::restart(&true, &false, false);
-        
+
         // Wait a bit for daemon to initialize
         std::thread::sleep(std::time::Duration::from_secs(DAEMON_INIT_WAIT_SECS));
     }
-    
+
     // Fork a background process that will run the agent connection
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child: _ }) => {
             // Parent process
             println!("{} Agent daemon started successfully", *helpers::SUCCESS);
-            println!("{} Agent is now connecting to server and will manage local processes", *helpers::SUCCESS);
+            println!(
+                "{} Agent is now connecting to server and will manage local processes",
+                *helpers::SUCCESS
+            );
             println!();
             println!("  View agent logs: tail -f ~/.opm/agent.log");
             println!("  Check agent status: opm agent status");
@@ -453,13 +471,13 @@ fn start_agent_daemon() {
         }
         Ok(ForkResult::Child) => {
             // Child process - run the agent
-            
+
             // Create a new session
             if let Err(e) = setsid() {
                 eprintln!("Failed to create new session: {}", e);
                 std::process::exit(1);
             }
-            
+
             // Redirect stdin to /dev/null
             if let Ok(devnull) = OpenOptions::new().read(true).open("/dev/null") {
                 let fd = devnull.as_raw_fd();
@@ -469,17 +487,13 @@ fn start_agent_daemon() {
                     std::process::exit(1);
                 }
             }
-            
+
             // Redirect stdout and stderr to agent log file
             let log_path = home::home_dir()
                 .map(|p| p.join(".opm").join("agent.log"))
                 .unwrap_or_else(|| std::path::PathBuf::from("/tmp/opm-agent.log"));
-            
-            if let Ok(log_file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
+
+            if let Ok(log_file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let log_fd = log_file.as_raw_fd();
                 let result1 = unsafe { libc::dup2(log_fd, 1) };
                 if result1 == -1 {
@@ -492,7 +506,7 @@ fn start_agent_daemon() {
                     std::process::exit(1);
                 }
             }
-            
+
             // Run agent connection in this child process
             match load_agent_config() {
                 Ok(config) => {
@@ -545,7 +559,16 @@ fn main() {
             reset_env,
             workers,
             port_range,
-        } => cli::start(name, args, watch, max_memory, reset_env, &defaults(server), workers, port_range),
+        } => cli::start(
+            name,
+            args,
+            watch,
+            max_memory,
+            reset_env,
+            &defaults(server),
+            workers,
+            port_range,
+        ),
         Commands::Stop { items, server } => cli::stop(items, &defaults(server)),
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => {
@@ -570,14 +593,14 @@ fn main() {
                     }
                 }
             }
-            
+
             // Auto-start agent if config exists
             if load_agent_config().is_ok() {
                 start_agent_daemon();
             }
-            
+
             Internal::restore(&defaults(server))
-        },
+        }
         Commands::Save { server } => Internal::save(&defaults(server)),
         Commands::Env { item, server } => cli::env(item, &defaults(server)),
         Commands::Details {
@@ -624,9 +647,11 @@ fn main() {
         } => cli::adjust(item, command, name, &defaults(server)),
 
         Commands::Agent { command } => match command {
-            AgentCommand::Connect { server_url, name, token } => {
-                agent_connect(server_url.clone(), name.clone(), token.clone())
-            }
+            AgentCommand::Connect {
+                server_url,
+                name,
+                token,
+            } => agent_connect(server_url.clone(), name.clone(), token.clone()),
             AgentCommand::List => agent_list(),
             AgentCommand::Disconnect => agent_disconnect(),
             AgentCommand::Status => agent_status(),

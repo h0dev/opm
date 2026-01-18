@@ -17,17 +17,35 @@ pub fn create_templates() -> (Tera, String) {
         ])
         .unwrap();
     }
-    
+
     #[cfg(debug_assertions)]
     {
         // For debug builds, add placeholder templates
         tera.add_raw_templates(vec![
-            ("view", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
-            ("login", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
-            ("dashboard", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
-            ("status", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
-            ("servers", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
-            ("notifications", "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>"),
+            (
+                "view",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
+            (
+                "login",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
+            (
+                "dashboard",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
+            (
+                "status",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
+            (
+                "servers",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
+            (
+                "notifications",
+                "<html><body><h1>Debug Mode - WebUI not built</h1></body></html>",
+            ),
         ])
         .unwrap();
     }
