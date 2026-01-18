@@ -322,9 +322,18 @@ fn agent_connect(server_url: String, name: Option<String>, token: Option<String>
         }
     }
     
+    // Update OPM config to set role as agent
+    let mut opm_config = opm::config::read();
+    opm_config.role = opm::config::structs::Role::Agent;
+    opm_config.daemon.web.api = true; // Enable API for agent
+    opm_config.daemon.web.address = config.api_address.clone();
+    opm_config.daemon.web.port = config.api_port as u64;
+    opm_config.save();
+    
     println!("{} Agent ID: {}", *helpers::SUCCESS, config.id);
     println!("{} Agent Name: {}", *helpers::SUCCESS, config.name);
     println!("{} Server URL: {}", *helpers::SUCCESS, config.server_url);
+    println!("{} Agent API: http://{}:{}", *helpers::SUCCESS, config.api_address, config.api_port);
     
     // Start agent in background
     start_agent_daemon();
@@ -337,11 +346,17 @@ fn agent_disconnect() {
         Ok(config) => {
             println!("{} Disconnecting agent '{}'...", *helpers::SUCCESS, config.name);
             
+            // Restore role to standalone
+            let mut opm_config = opm::config::read();
+            opm_config.role = opm::config::structs::Role::Standalone;
+            opm_config.save();
+            
             // Remove agent config file
             if let Err(e) = remove_agent_config() {
                 eprintln!("{} Failed to remove agent config: {}", *helpers::FAIL, e);
             } else {
                 println!("{} Agent disconnected successfully", *helpers::SUCCESS);
+                println!("{} Role restored to standalone", *helpers::SUCCESS);
             }
         }
         Err(_) => {
@@ -413,10 +428,25 @@ fn start_agent_daemon() {
     use std::fs::OpenOptions;
     use std::os::unix::io::AsRawFd;
     
-    // Fork a background process that will run the agent
+    // First, ensure the local daemon is running with API enabled
+    if !daemon::pid::exists() {
+        println!("{} Starting local OPM daemon with API enabled...", *helpers::SUCCESS);
+        daemon::restart(&true, &false, false);
+        
+        // Wait a bit for daemon to initialize
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    
+    // Fork a background process that will run the agent connection
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child: _ }) => {
             // Parent process
+            println!("{} Agent daemon started successfully", *helpers::SUCCESS);
+            println!("{} Agent is now connecting to server and will manage local processes", *helpers::SUCCESS);
+            println!();
+            println!("  View agent logs: tail -f ~/.opm/agent.log");
+            println!("  Check agent status: opm agent status");
+            println!("  Disconnect agent: opm agent disconnect");
         }
         Ok(ForkResult::Child) => {
             // Child process - run the agent
