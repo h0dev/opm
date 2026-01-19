@@ -30,12 +30,29 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 				const processesResponse = await api.get(`${props.base}/daemon/agents/${props.agentId}/processes`).json();
 				setProcesses(Array.isArray(processesResponse) ? processesResponse : []);
 			} catch (e) {
-				// If endpoint doesn't exist yet, set empty array
+				console.warn('Failed to fetch agent processes:', e);
+				// If endpoint fails, set empty array (agent might not have any processes)
 				setProcesses([]);
 			}
 		} catch (error) {
+			const err = error as any;
 			console.error('Failed to fetch agent details:', error);
-			setError((error as Error).message || 'Failed to load agent details');
+			
+			// Provide more specific error messages
+			if (err.response) {
+				const status = err.response.status;
+				if (status === 404) {
+					setError('Agent not found. The agent may have disconnected or never connected to this server.');
+				} else if (status === 401) {
+					setError('Unauthorized. Please check your API token configuration.');
+				} else {
+					setError(`Server error (${status}): ${err.message || 'Failed to load agent details'}`);
+				}
+			} else if (err.message) {
+				setError(err.message);
+			} else {
+				setError('Failed to load agent details. Please check your connection and try again.');
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -75,10 +92,19 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 					</div>
 				</Header>
 				<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
-					<div className="text-center py-8">
-						<div className="text-red-400 text-lg mb-4">Failed to load agent details</div>
-						<div className="text-zinc-400 text-sm">
+					<div className="text-center py-12 px-4">
+						<div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-500/10 mb-4">
+							<svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+							</svg>
+						</div>
+						<div className="text-red-400 text-xl font-semibold mb-3">Failed to Load Agent Details</div>
+						<div className="text-zinc-300 text-base mb-6 max-w-md mx-auto">
 							{error || 'Agent not found or connection failed'}
+						</div>
+						<div className="text-zinc-500 text-sm">
+							<p className="mb-2">Agent ID: <code className="bg-zinc-800 px-2 py-1 rounded text-zinc-300">{props.agentId}</code></p>
+							<p>Make sure the agent is connected and running.</p>
 						</div>
 					</div>
 				</div>
