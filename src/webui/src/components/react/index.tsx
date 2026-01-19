@@ -133,7 +133,16 @@ const Index = (props: { base: string }) => {
 
 	const isRemote = (item: ProcessItem): boolean => item.server !== 'local';
 	const isRunning = (status: string): boolean => !['stopped', 'crashed'].includes(status);
+	const isAgentManaged = (item: ProcessItem): boolean => Boolean(item.agent_api_endpoint);
+	
 	const action = async (item: ProcessItem, name: string) => {
+		// Don't allow actions on agent-managed processes (those with agent_api_endpoint)
+		// These processes are managed by remote agents and can't be controlled from the master UI
+		if (isAgentManaged(item)) {
+			error(`Cannot perform actions on agent-managed processes. Please manage this process directly on the agent.`);
+			return;
+		}
+		
 		const endpoint = getActionEndpoint(item);
 		
 		try {
@@ -442,17 +451,12 @@ const Index = (props: { base: string }) => {
 									/>
 									<div className="flex items-center gap-2 mt-0.5">
 										<span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-											item.server === 'local' 
-												? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
-												: 'bg-green-500/10 text-green-400 border border-green-500/20'
+											item.agent_name
+												? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+												: 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
 										}`}>
-											{item.server}
+											{item.agent_name || 'local'}
 										</span>
-										{item.agent_name && (
-											<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
-												{item.agent_name}
-											</span>
-										)}
 									</div>
 								</div>
 								<span className="relative flex h-2.5 w-2.5 -mt-3.5">
@@ -460,121 +464,130 @@ const Index = (props: { base: string }) => {
 									<span className={`${badge[item.status]} relative inline-flex rounded-full h-2.5 w-2.5 shadow-lg`}></span>
 								</span>
 								<Menu as="div" className="relative">
-									<MenuButton className="transition border focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-0 z-50 shrink-0 border-zinc-700/50 bg-transparent hover:bg-zinc-800 hover:border-zinc-600 p-2 text-sm font-semibold rounded-lg">
+									<MenuButton 
+										disabled={isAgentManaged(item)}
+										className={classNames(
+											"transition border focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-0 z-50 shrink-0 p-2 text-sm font-semibold rounded-lg",
+											isAgentManaged(item)
+												? "border-zinc-800 bg-zinc-900 cursor-not-allowed opacity-50"
+												: "border-zinc-700/50 bg-transparent hover:bg-zinc-800 hover:border-zinc-600"
+										)}>
 										<EllipsisVerticalIcon className="h-5 w-5 text-zinc-300 hover:text-zinc-50 transition-colors" aria-hidden="true" />
 									</MenuButton>
-									<Transition
-										as={Fragment}
-										enter="transition ease-out duration-100"
-										enterFrom="transform opacity-0 scale-95"
-										enterTo="transform opacity-100 scale-100"
-										leave="transition ease-in duration-75"
-										leaveFrom="transform opacity-100 scale-100"
-										leaveTo="transform opacity-0 scale-95">
-										<MenuItems
-											anchor={{ to: 'bottom end', gap: '8px', padding: '16px' }}
-											className="z-10 w-48 origin-top-right rounded-lg bg-zinc-900 border border-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none text-base divide-y divide-zinc-800/50">
-											<div className="p-1.5">
-												{!isRunning(item.status) && (
+									{!isAgentManaged(item) && (
+										<Transition
+											as={Fragment}
+											enter="transition ease-out duration-100"
+											enterFrom="transform opacity-0 scale-95"
+											enterTo="transform opacity-100 scale-100"
+											leave="transition ease-in duration-75"
+											leaveFrom="transform opacity-100 scale-100"
+											leaveTo="transform opacity-0 scale-95">
+											<MenuItems
+												anchor={{ to: 'bottom end', gap: '8px', padding: '16px' }}
+												className="z-10 w-48 origin-top-right rounded-lg bg-zinc-900 border border-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none text-base divide-y divide-zinc-800/50">
+												<div className="p-1.5">
+													{!isRunning(item.status) && (
+														<MenuItem>
+															{({ focus }) => (
+																<a
+																	onClick={() => action(item, 'start')}
+																	className={classNames(
+																		focus ? 'bg-emerald-700/10 text-emerald-500' : 'text-zinc-200',
+																		'rounded-md block px-2 py-2 w-full text-left cursor-pointer'
+																	)}>
+																	Start
+																</a>
+															)}
+														</MenuItem>
+													)}
 													<MenuItem>
 														{({ focus }) => (
 															<a
-																onClick={() => action(item, 'start')}
+																onClick={() => action(item, 'restart')}
 																className={classNames(
-																	focus ? 'bg-emerald-700/10 text-emerald-500' : 'text-zinc-200',
+																	focus ? 'bg-green-700/10 text-green-500' : 'text-zinc-200',
 																	'rounded-md block px-2 py-2 w-full text-left cursor-pointer'
 																)}>
-																Start
+																Restart
 															</a>
 														)}
 													</MenuItem>
-												)}
-												<MenuItem>
-													{({ focus }) => (
-														<a
-															onClick={() => action(item, 'restart')}
-															className={classNames(
-																focus ? 'bg-green-700/10 text-green-500' : 'text-zinc-200',
-																'rounded-md block px-2 py-2 w-full text-left cursor-pointer'
-															)}>
-															Restart
-														</a>
-													)}
-												</MenuItem>
-												<MenuItem>
-													{({ focus }) => (
-														<a
-															onClick={() => action(item, 'reload')}
-															className={classNames(
-																focus ? 'bg-blue-700/10 text-blue-500' : 'text-zinc-200',
-																'rounded-md block px-2 py-2 w-full text-left cursor-pointer'
-															)}>
-															Reload
-														</a>
-													)}
-												</MenuItem>
-												<MenuItem>
-													{({ focus }) => (
-														<a
-															onClick={() => action(item, 'stop')}
-															className={classNames(
-																focus ? 'bg-yellow-400/10 text-amber-500' : 'text-zinc-200',
-																'rounded-md block p-2 w-full text-left cursor-pointer'
-															)}>
-															Terminate
-														</a>
-													)}
-												</MenuItem>
-											</div>
-											<div className="p-1.5">
-												<MenuItem>
-													{({ _ }) => (
-														<a
-															onClick={() => action(item, 'flush')}
-															className="text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-zinc-800/80 hover:text-zinc-50">
-															Clean Logs
-														</a>
-													)}
-												</MenuItem>
-											</div>
-											<div className="p-1.5">
-												<MenuItem>
-													{({ focus, close }) => (
-														<button
-															onClick={(e) => {
-																e.preventDefault();
-																e.stopPropagation();
-																const ref = renameRefs.current.get(item.id);
-																if (ref) {
-																	ref.triggerEdit();
-																}
-																close();
-															}}
-															className={classNames(
-																focus ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-200',
-																'rounded-md block p-2 w-full text-left cursor-pointer'
-															)}>
-															Rename
-														</button>
-													)}
-												</MenuItem>
-											</div>
-											<div className="p-1.5">
-												<MenuItem>
-													{({ focus }) => (
-														<a
-															onClick={() => action(item, 'delete')}
-															className={classNames(
-																focus ? 'bg-red-700/10 text-red-500' : 'text-red-400',
-																'rounded-md block p-2 w-full text-left cursor-pointer'
-															)}>
-															Delete
-														</a>
-													)}
-												</MenuItem>
-											</div>
-										</MenuItems>
-									</Transition>
+													<MenuItem>
+														{({ focus }) => (
+															<a
+																onClick={() => action(item, 'reload')}
+																className={classNames(
+																	focus ? 'bg-blue-700/10 text-blue-500' : 'text-zinc-200',
+																	'rounded-md block px-2 py-2 w-full text-left cursor-pointer'
+																)}>
+																Reload
+															</a>
+														)}
+													</MenuItem>
+													<MenuItem>
+														{({ focus }) => (
+															<a
+																onClick={() => action(item, 'stop')}
+																className={classNames(
+																	focus ? 'bg-yellow-400/10 text-amber-500' : 'text-zinc-200',
+																	'rounded-md block p-2 w-full text-left cursor-pointer'
+																)}>
+																Terminate
+															</a>
+														)}
+													</MenuItem>
+												</div>
+												<div className="p-1.5">
+													<MenuItem>
+														{({ _ }) => (
+															<a
+																onClick={() => action(item, 'flush')}
+																className="text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-zinc-800/80 hover:text-zinc-50">
+																Clean Logs
+															</a>
+														)}
+													</MenuItem>
+												</div>
+												<div className="p-1.5">
+													<MenuItem>
+														{({ focus, close }) => (
+															<button
+																onClick={(e) => {
+																	e.preventDefault();
+																	e.stopPropagation();
+																	const ref = renameRefs.current.get(item.id);
+																	if (ref) {
+																		ref.triggerEdit();
+																	}
+																	close();
+																}}
+																className={classNames(
+																	focus ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-200',
+																	'rounded-md block p-2 w-full text-left cursor-pointer'
+																)}>
+																Rename
+															</button>
+														)}
+													</MenuItem>
+												</div>
+												<div className="p-1.5">
+													<MenuItem>
+														{({ focus }) => (
+															<a
+																onClick={() => action(item, 'delete')}
+																className={classNames(
+																	focus ? 'bg-red-700/10 text-red-500' : 'text-red-400',
+																	'rounded-md block p-2 w-full text-left cursor-pointer'
+																)}>
+																Delete
+															</a>
+														)}
+													</MenuItem>
+												</div>
+											</MenuItems>
+										</Transition>
+									)}
 								</Menu>
 							</div>
 							{item.agent_api_endpoint ? (
