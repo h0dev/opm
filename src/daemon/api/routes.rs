@@ -2520,9 +2520,12 @@ pub async fn agent_action_handler(
             timer.observe_duration();
             Err(generic_error(
                 Status::BadRequest,
-                string!("Agent does not have an accessible API endpoint configured. Process management actions are not available. \
-                        The agent may be using localhost binding and unable to determine its network address. \
-                        To fix this, restart the agent with: opm agent connect <server-url> --api-address <accessible-ip-or-hostname>"),
+                format!(
+                    "Agent does not have an accessible API endpoint configured. \
+                     Process management actions are not available. \
+                     The agent may be using localhost binding and unable to determine its network address. \
+                     To fix this, restart the agent with: opm agent connect <server-url> --api-address <accessible-ip-or-hostname>"
+                ),
             ))
         }
     }

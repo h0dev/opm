@@ -10,6 +10,16 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
+	// Fix instruction for API endpoint issues
+	const API_ENDPOINT_FIX = (
+		<>
+			<strong>To fix:</strong> Restart the agent with:{' '}
+			<code className="bg-zinc-800 px-1 py-0.5 rounded">
+				opm agent connect &lt;server-url&gt; --api-address &lt;agent-ip-or-hostname&gt;
+			</code>
+		</>
+	);
+
 	const badge = {
 		online: 'bg-emerald-400/10 text-emerald-400',
 		offline: 'bg-red-500/10 text-red-500',
@@ -153,7 +163,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 									This agent doesn't have an accessible API endpoint configured. Process management actions (start, stop, restart) will not be available.
 								</div>
 								<div className="text-zinc-400 text-xs mt-2">
-									<strong>To fix:</strong> Restart the agent with: <code className="bg-zinc-800 px-1 py-0.5 rounded">opm agent connect &lt;server-url&gt; --api-address &lt;agent-ip-or-hostname&gt;</code>
+									{API_ENDPOINT_FIX}
 								</div>
 							</div>
 						</div>
@@ -173,7 +183,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 									This agent's API endpoint uses "localhost" which is not accessible from the server. Process management actions will fail.
 								</div>
 								<div className="text-zinc-400 text-xs mt-2">
-									<strong>To fix:</strong> Restart the agent with: <code className="bg-zinc-800 px-1 py-0.5 rounded">opm agent connect &lt;server-url&gt; --api-address &lt;agent-ip-or-hostname&gt;</code>
+									{API_ENDPOINT_FIX}
 								</div>
 							</div>
 						</div>
