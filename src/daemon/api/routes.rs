@@ -2038,102 +2038,71 @@ pub async fn stream_info(server: String, id: usize, _t: Token) -> EventStream![]
     }
 }
 
-// Agent Management Endpoints
-
-#[derive(Serialize, Deserialize, ToSchema)]
-#[serde(crate = "rocket::serde")]
-pub struct AgentRegisterBody {
-    pub id: String,
-    pub name: String,
-    pub hostname: Option<String>,
-    pub api_endpoint: Option<String>,
-    pub system_info: Option<opm::agent::types::SystemInfo>,
-}
-
-#[derive(Serialize, Deserialize, ToSchema)]
-#[serde(crate = "rocket::serde")]
-pub struct AgentHeartbeatBody {
-    pub id: String,
-}
-
-/// Register a new agent
-#[utoipa::path(
-    post,
-    path = "/daemon/agents/register",
-    request_body = AgentRegisterBody,
-    responses(
-        (status = 200, description = "Agent registered successfully"),
-        (status = 400, description = "Bad request")
-    ),
-    security(("api_key" = []))
-)]
-#[post("/daemon/agents/register", data = "<body>")]
-pub async fn agent_register_handler(
-    body: Json<AgentRegisterBody>,
+/// Stream agent list in real-time using Server-Sent Events
+#[get("/live/agents")]
+pub async fn stream_agents(
     registry: &State<opm::agent::registry::AgentRegistry>,
     _t: Token,
-) -> Result<Json<serde_json::Value>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["agent_register"])
-        .start_timer();
-    HTTP_COUNTER.inc();
-
-    let agent_info = opm::agent::types::AgentInfo {
-        id: body.id.clone(),
-        name: body.name.clone(),
-        hostname: body.hostname.clone(),
-        status: opm::agent::types::AgentStatus::Online,
-        connection_type: opm::agent::types::ConnectionType::In,
-        last_seen: std::time::SystemTime::now(),
-        connected_at: std::time::SystemTime::now(),
-        api_endpoint: body.api_endpoint.clone(),
-        system_info: body.system_info.clone(),
-    };
-
-    registry.register(agent_info);
-    timer.observe_duration();
-
-    Ok(Json(json!({
-        "success": true,
-        "message": "Agent registered successfully"
-    })))
-}
-
-/// Agent heartbeat
-#[utoipa::path(
-    post,
-    path = "/daemon/agents/heartbeat",
-    request_body = AgentHeartbeatBody,
-    responses(
-        (status = 200, description = "Heartbeat received"),
-        (status = 404, description = "Agent not found")
-    ),
-    security(("api_key" = []))
-)]
-#[post("/daemon/agents/heartbeat", data = "<body>")]
-pub async fn agent_heartbeat_handler(
-    body: Json<AgentHeartbeatBody>,
-    registry: &State<opm::agent::registry::AgentRegistry>,
-    _t: Token,
-) -> Result<Json<serde_json::Value>, NotFound> {
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["agent_heartbeat"])
-        .start_timer();
-    HTTP_COUNTER.inc();
-
-    // Return 404 if agent not found (removed from registry)
-    if !registry.update_heartbeat(&body.id) {
-        timer.observe_duration();
-        return Err(not_found("Agent not found"));
+) -> EventStream![] {
+    let registry = registry.inner().clone();
+    
+    EventStream! {
+        loop {
+            let mut agents = registry.list();
+            // Insert local agent at the beginning
+            agents.insert(0, create_local_agent_info());
+            
+            yield Event::data(serde_json::to_string(&agents).unwrap());
+            sleep(Duration::from_millis(1000));
+        }
     }
-
-    timer.observe_duration();
-
-    Ok(Json(json!({
-        "success": true,
-        "message": "Heartbeat received"
-    })))
 }
+
+/// Stream agent details in real-time using Server-Sent Events
+#[get("/live/agent/<id>")]
+pub async fn stream_agent_detail(
+    id: String,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> EventStream![] {
+    let registry = registry.inner().clone();
+    
+    EventStream! {
+        loop {
+            // Get agent info
+            let agent_info = if id == "local" {
+                Some(create_local_agent_info())
+            } else {
+                registry.get(&id)
+            };
+            
+            if let Some(agent) = agent_info {
+                // Get processes for this agent
+                let processes = if id == "local" {
+                    Runner::new().fetch()
+                } else {
+                    registry.get_processes(&id).unwrap_or_default()
+                };
+                
+                let response = json!({
+                    "agent": agent,
+                    "processes": processes
+                });
+                
+                yield Event::data(serde_json::to_string(&response).unwrap());
+            } else {
+                yield Event::data(json!({"error": "Agent not found"}).to_string());
+                break;
+            }
+            
+            sleep(Duration::from_millis(1000));
+        }
+    }
+}
+
+// Agent Management Endpoints
+// Note: Agent registration and heartbeat are now handled via WebSocket (/ws/agent)
+// Legacy HTTP endpoints have been removed as they are no longer used
 
 /// Helper function to create local agent info
 fn create_local_agent_info() -> opm::agent::types::AgentInfo {
@@ -2297,8 +2266,8 @@ pub async fn agent_processes_handler(
         return Ok(Json(processes));
     }
 
-    // Get agent info
-    let agent = match registry.get(&id) {
+    // Get agent info to verify it exists
+    let _agent = match registry.get(&id) {
         Some(agent) => agent,
         None => {
             timer.observe_duration();
@@ -2312,60 +2281,12 @@ pub async fn agent_processes_handler(
         return Ok(Json(processes));
     }
 
-    // Fallback: Check if agent has an API endpoint configured (legacy support)
-    if let Some(api_endpoint) = &agent.api_endpoint {
-        // Fetch processes from agent's API
-        let (client, headers) = client(&None).await;
-        match client
-            .get(fmtstr!("{api_endpoint}/list"))
-            .headers(headers)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status() != 200 {
-                    let err_text = response
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
-                    timer.observe_duration();
-                    Err(generic_error(
-                        Status::InternalServerError,
-                        format!("Failed to fetch processes from agent: {}", err_text),
-                    ))
-                } else {
-                    match response.json::<Vec<ProcessItem>>().await {
-                        Ok(processes) => {
-                            timer.observe_duration();
-                            Ok(Json(processes))
-                        }
-                        Err(e) => {
-                            timer.observe_duration();
-                            Err(generic_error(
-                                Status::InternalServerError,
-                                format!("Failed to parse agent response: {}", e),
-                            ))
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                timer.observe_duration();
-                Err(generic_error(
-                    Status::InternalServerError,
-                    format!("Failed to connect to agent API: {}", err),
-                ))
-            }
-        }
-    } else {
-        // No API endpoint and no process data - try local Runner by agent_id
-        // Note: Creating a new Runner instance is the standard pattern in this codebase
-        // to ensure fresh data is loaded from disk on each request
-        let runner = Runner::new();
-        let processes = runner.fetch_by_agent(&id);
-        timer.observe_duration();
-        Ok(Json(processes))
-    }
+    // Agent is registered but hasn't sent process data yet
+    timer.observe_duration();
+    Err(generic_error(
+        Status::ServiceUnavailable,
+        format!("Agent '{}' has not sent process data yet. Process updates are sent every 10 seconds via WebSocket.", id)
+    ))
 }
 
 /// Proxy action to agent process
@@ -2465,8 +2386,8 @@ pub async fn agent_action_handler(
             ))
         }
     } else {
-        // Get agent info for remote agents
-        let agent = match registry.get(&agent_id) {
+        // Get agent info to verify it exists
+        let _agent = match registry.get(&agent_id) {
             Some(agent) => agent,
             None => {
                 timer.observe_duration();
@@ -2474,59 +2395,35 @@ pub async fn agent_action_handler(
             }
         };
 
-        // If agent has an API endpoint, proxy the action there
-        if let Some(api_endpoint) = &agent.api_endpoint {
-            let (client, headers) = client(&None).await;
-            
-            match client
-                .post(fmtstr!("{api_endpoint}/process/{process_id}/action"))
-                .json(&body.0)
-                .headers(headers)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    timer.observe_duration();
-                    if response.status() != 200 {
-                        let err_text = response
-                            .text()
-                            .await
-                            .unwrap_or_else(|_| "Unknown error".to_string());
-                        Err(generic_error(
-                            Status::InternalServerError,
-                            format!("Failed to execute action on agent: {}", err_text),
-                        ))
-                    } else {
-                        match response.json::<ActionResponse>().await {
-                            Ok(action_response) => Ok(Json(action_response)),
-                            Err(e) => Err(generic_error(
-                                Status::InternalServerError,
-                                format!("Failed to parse agent response: {}", e),
-                            )),
-                        }
-                    }
-                }
-                Err(err) => {
-                    timer.observe_duration();
-                    Err(generic_error(
-                        Status::InternalServerError,
-                        format!("Failed to connect to agent API: {}", err),
-                    ))
-                }
+        // Try to send action via WebSocket first
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let action_request = opm::agent::messages::AgentMessage::ActionRequest {
+            request_id: request_id.clone(),
+            process_id,
+            method: body.method.clone(),
+        };
+
+        if let Ok(action_json) = serde_json::to_string(&action_request) {
+            if let Ok(()) = registry.send_to_agent(&agent_id, action_json) {
+                log::info!("[WebSocket] Action request sent to agent {}: {} on process {}", 
+                    agent_id, body.method, process_id);
+                
+                // TODO: Wait for ActionResponse instead of returning immediately
+                // Current implementation returns success once message is sent
+                // A full implementation would use a pending requests map with timeouts
+                timer.observe_duration();
+                return Ok(Json(attempt(true, &body.method)));
             }
-        } else {
-            // Agent doesn't have an API endpoint - actions not supported
-            // This can happen when the agent can't determine its network-accessible address
-            timer.observe_duration();
-            
-            let error_msg = format!(
-                "Agent does not have an accessible API endpoint configured.\n\n\
-                 CAUSE: The agent may be using localhost binding and cannot determine its network address.\n\n\
-                 SOLUTION: Restart the agent with an accessible address:\n  \
-                 opm agent connect <server-url> --api-address <accessible-ip-or-hostname>"
-            );
-            
-            Err(generic_error(Status::BadRequest, error_msg))
         }
+
+        // Agent is registered but not connected via WebSocket
+        timer.observe_duration();
+        Err(generic_error(
+            Status::ServiceUnavailable,
+            format!(
+                "Agent '{}' is not connected via WebSocket. Please ensure the agent is running and connected to the server.",
+                agent_id
+            )
+        ))
     }
 }

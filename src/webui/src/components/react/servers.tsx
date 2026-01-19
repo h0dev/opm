@@ -11,6 +11,7 @@ const Index = (props: { base: string }) => {
 	const agents = useArray([]);
 	const [loading, setLoading] = useState(true);
 	const [serverHost, setServerHost] = useState('localhost');
+	const [retryTrigger, setRetryTrigger] = useState(0);
 
 	const badge = {
 		online: 'bg-emerald-400/10 text-emerald-400',
@@ -24,38 +25,52 @@ const Index = (props: { base: string }) => {
 		setServerHost(`${hostname}:${port}`);
 	}, []);
 
-	async function fetchAgents() {
-		try {
-			const response = await api.get(props.base + '/daemon/agents/list').json();
-			agents.clear();
-			if (Array.isArray(response)) {
-				response.forEach((agent: any) => agents.push(agent));
-			}
-		} catch (error) {
-			console.error('Failed to fetch agents:', error);
-			agents.clear();
-		} finally {
-			setLoading(false);
-		}
-	}
+	const handleRefresh = () => {
+		setLoading(true);
+		setRetryTrigger(prev => prev + 1);
+	};
 
 	const removeAgent = async (agentId: string, agentName: string) => {
 		if (!confirm(`Are you sure you want to remove agent "${agentName}"?`)) return;
 
 		try {
 			await api.delete(`${props.base}/daemon/agents/${agentId}`);
-			fetchAgents();
+			// Agent list will automatically update via SSE
 		} catch (err) {
 			error('Failed to remove agent: ' + (err as Error).message);
 		}
 	};
 
 	useEffect(() => {
-		fetchAgents();
-		// Auto-refresh every 10 seconds
-		const interval = setInterval(fetchAgents, 10000);
-		return () => clearInterval(interval);
-	}, []);
+		// Use Server-Sent Events for real-time updates instead of polling
+		setLoading(true);
+		
+		const eventSource = new EventSource(`${props.base}/live/agents`);
+		
+		eventSource.onmessage = (event) => {
+			try {
+				const data = JSON.parse(event.data);
+				agents.clear();
+				if (Array.isArray(data)) {
+					data.forEach((agent: any) => agents.push(agent));
+				}
+				setLoading(false);
+			} catch (err) {
+				console.error('Failed to parse SSE data:', err);
+				setLoading(false);
+			}
+		};
+		
+		eventSource.onerror = (err) => {
+			console.error('SSE connection error:', err);
+			setLoading(false);
+			// EventSource will automatically reconnect
+		};
+		
+		return () => {
+			eventSource.close();
+		};
+	}, [retryTrigger]);
 
 	if (loading) {
 		return <Loader />;
@@ -68,7 +83,7 @@ const Index = (props: { base: string }) => {
 				<div className="flex gap-2">
 					<button
 						type="button"
-						onClick={fetchAgents}
+						onClick={handleRefresh}
 						className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-zinc-800 bg-zinc-950 text-zinc-50 hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
 						Refresh
 					</button>

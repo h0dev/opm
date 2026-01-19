@@ -2,12 +2,15 @@ use super::types::AgentInfo;
 use crate::process::ProcessItem;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio::sync::mpsc;
 
 /// Registry for managing connected agents on the server side
 #[derive(Clone)]
 pub struct AgentRegistry {
     agents: Arc<RwLock<HashMap<String, AgentInfo>>>,
     agent_processes: Arc<RwLock<HashMap<String, Vec<ProcessItem>>>>,
+    /// Channel senders for communicating with agent WebSocket connections
+    agent_senders: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<String>>>>,
 }
 
 impl AgentRegistry {
@@ -15,12 +18,22 @@ impl AgentRegistry {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             agent_processes: Arc::new(RwLock::new(HashMap::new())),
+            agent_senders: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub fn register(&self, agent: AgentInfo) {
         let mut agents = self.agents.write().unwrap();
         agents.insert(agent.id.clone(), agent);
+    }
+    
+    pub fn register_with_sender(&self, agent: AgentInfo, sender: mpsc::UnboundedSender<String>) {
+        let agent_id = agent.id.clone();
+        let mut agents = self.agents.write().unwrap();
+        agents.insert(agent_id.clone(), agent);
+        
+        let mut senders = self.agent_senders.write().unwrap();
+        senders.insert(agent_id, sender);
     }
 
     pub fn unregister(&self, id: &str) {
@@ -29,6 +42,9 @@ impl AgentRegistry {
         // Also remove process data
         let mut processes = self.agent_processes.write().unwrap();
         processes.remove(id);
+        // Remove sender
+        let mut senders = self.agent_senders.write().unwrap();
+        senders.remove(id);
     }
 
     pub fn get(&self, id: &str) -> Option<AgentInfo> {
@@ -68,6 +84,16 @@ impl AgentRegistry {
                 })
                 .collect()
         })
+    }
+    
+    /// Send a message to an agent via its WebSocket connection
+    pub fn send_to_agent(&self, agent_id: &str, message: String) -> Result<(), String> {
+        let senders = self.agent_senders.read().unwrap();
+        if let Some(sender) = senders.get(agent_id) {
+            sender.send(message).map_err(|e| format!("Failed to send message: {}", e))
+        } else {
+            Err(format!("Agent {} not connected via WebSocket", agent_id))
+        }
     }
 }
 

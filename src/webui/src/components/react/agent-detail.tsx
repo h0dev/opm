@@ -9,6 +9,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [processes, setProcesses] = useState<any[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [retryTrigger, setRetryTrigger] = useState(0);
 
 	// Fix instruction for API endpoint issues
 	const API_ENDPOINT_FIX = (
@@ -27,54 +28,50 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		stopped: 'bg-red-700/40 text-red-400'
 	};
 
-	async function fetchAgentDetails() {
+	const handleRetry = () => {
 		setLoading(true);
 		setError(null);
-		try {
-			// Fetch agent info
-			const agentResponse = await api.get(`${props.base}/daemon/agents/${props.agentId}`).json();
-			setAgent(agentResponse);
-
-			// Fetch processes for this agent
-			try {
-				const processesResponse = await api.get(`${props.base}/daemon/agents/${props.agentId}/processes`).json();
-				setProcesses(Array.isArray(processesResponse) ? processesResponse : []);
-			} catch (e) {
-				console.warn('Failed to fetch agent processes:', e);
-				// If endpoint fails, set empty array (agent might not have any processes)
-				setProcesses([]);
-			}
-		} catch (error) {
-			const err = error as any;
-			console.error('Failed to fetch agent details:', error);
-			
-			// Provide more specific error messages
-			// ky HTTPError has response property with status code
-			if (err.response?.status) {
-				const status = err.response.status;
-				if (status === 404) {
-					setError('Agent not found. The agent may have disconnected or never connected to this server.');
-				} else if (status === 401 || status === 403) {
-					setError('Unauthorized. Please check your API token configuration.');
-				} else {
-					setError(`Server error (${status}): ${err.message || 'Failed to load agent details'}`);
-				}
-			} else if (err.message) {
-				setError(err.message);
-			} else {
-				setError('Failed to load agent details. Please check your connection and try again.');
-			}
-		} finally {
-			setLoading(false);
-		}
-	}
+		setRetryTrigger(prev => prev + 1);
+	};
 
 	useEffect(() => {
-		fetchAgentDetails();
-		// Auto-refresh every 5 seconds
-		const interval = setInterval(fetchAgentDetails, 5000);
-		return () => clearInterval(interval);
-	}, [props.agentId]);
+		// Use Server-Sent Events for real-time updates instead of polling
+		setLoading(true);
+		setError(null);
+		
+		const eventSource = new EventSource(`${props.base}/live/agent/${props.agentId}`);
+		
+		eventSource.onmessage = (event) => {
+			try {
+				const data = JSON.parse(event.data);
+				
+				if (data.error) {
+					setError(data.error);
+					setLoading(false);
+					eventSource.close();
+				} else {
+					setAgent(data.agent);
+					setProcesses(Array.isArray(data.processes) ? data.processes : []);
+					setLoading(false);
+				}
+			} catch (err) {
+				console.error('Failed to parse SSE data:', err);
+				setError('Failed to parse server data');
+				setLoading(false);
+			}
+		};
+		
+		eventSource.onerror = (err) => {
+			console.error('SSE connection error:', err);
+			setError('Lost connection to server. Retrying...');
+			setLoading(false);
+			// EventSource will automatically reconnect
+		};
+		
+		return () => {
+			eventSource.close();
+		};
+	}, [props.agentId, retryTrigger]);
 
 	if (loading) {
 		return (
@@ -91,7 +88,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 					<div className="flex gap-2">
 						<button
 							type="button"
-							onClick={fetchAgentDetails}
+							onClick={handleRetry}
 							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-zinc-800 bg-zinc-950 text-zinc-50 hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
 							Retry
 						</button>
@@ -134,7 +131,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 				<div className="flex gap-2">
 					<button
 						type="button"
-						onClick={fetchAgentDetails}
+						onClick={handleRetry}
 						className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-zinc-800 bg-zinc-950 text-zinc-50 hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
 						Refresh
 					</button>
