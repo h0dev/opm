@@ -2009,7 +2009,7 @@ pub async fn stream_info(server: String, id: usize, _t: Token) -> EventStream![]
                         "local" | "internal" => loop {
                             let item = runner.refresh().get(id);
                             yield Event::data(serde_json::to_string(&item.fetch()).unwrap());
-                            sleep(Duration::from_millis(1000));
+                            sleep(Duration::from_millis(2000));
                         },
                         _ => return yield Event::data(format!("{{\"error\": \"server does not exist\"}}")),
                     }
@@ -2032,7 +2032,7 @@ pub async fn stream_info(server: String, id: usize, _t: Token) -> EventStream![]
             None => loop {
                 let item = runner.refresh().get(id);
                 yield Event::data(serde_json::to_string(&item.fetch()).unwrap());
-                sleep(Duration::from_millis(1000));
+                sleep(Duration::from_millis(2000));
             }
         };
     }
@@ -2053,7 +2053,7 @@ pub async fn stream_agents(
             agents.insert(0, create_local_agent_info());
             
             yield Event::data(serde_json::to_string(&agents).unwrap());
-            sleep(Duration::from_millis(1000));
+            sleep(Duration::from_millis(2000));
         }
     }
 }
@@ -2095,7 +2095,7 @@ pub async fn stream_agent_detail(
                 break;
             }
             
-            sleep(Duration::from_millis(1000));
+            sleep(Duration::from_millis(2000));
         }
     }
 }

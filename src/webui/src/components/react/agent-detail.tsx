@@ -269,7 +269,10 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 								<div className="text-sm text-zinc-400 mb-1">Total Memory</div>
 								<div className="text-zinc-200">
 									{/* sys-info returns memory in KB, formatMemory expects bytes */}
-									{formatMemory(agent.system_info.total_memory * 1024)}
+									{(() => {
+										const [value, unit] = formatMemory(agent.system_info.total_memory * 1024);
+										return `${value} ${unit.toUpperCase()}`;
+									})()}
 								</div>
 							</div>
 						)}
@@ -331,7 +334,10 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 								</div>
 								{agent.system_info.resource_usage.memory_used && (
 									<div className="text-xs text-zinc-500 mt-1">
-										{formatMemory(agent.system_info.resource_usage.memory_used * 1024)} used
+										{(() => {
+											const [value, unit] = formatMemory(agent.system_info.resource_usage.memory_used * 1024);
+											return `${value} ${unit.toUpperCase()} used`;
+										})()}
 									</div>
 								)}
 							</div>
@@ -361,7 +367,11 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 								</div>
 								{agent.system_info.resource_usage.disk_free && agent.system_info.resource_usage.disk_total && (
 									<div className="text-xs text-zinc-500 mt-1">
-										{formatMemory(agent.system_info.resource_usage.disk_free * 1024)} free of {formatMemory(agent.system_info.resource_usage.disk_total * 1024)}
+										{(() => {
+											const [freeValue, freeUnit] = formatMemory(agent.system_info.resource_usage.disk_free * 1024);
+											const [totalValue, totalUnit] = formatMemory(agent.system_info.resource_usage.disk_total * 1024);
+											return `${freeValue} ${freeUnit.toUpperCase()} free of ${totalValue} ${totalUnit.toUpperCase()}`;
+										})()}
 									</div>
 								)}
 							</div>
@@ -448,7 +458,10 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 									</td>
 									<td className="hidden py-3 pl-0 pr-8 md:table-cell">
 										<div className="text-sm text-zinc-400">
-											{process.memory ? formatMemory(process.memory) : 'N/A'}
+											{process.memory ? (() => {
+												const [value, unit] = formatMemory(process.memory);
+												return `${value} ${unit.toUpperCase()}`;
+											})() : 'N/A'}
 										</div>
 									</td>
 									<td className="py-3 pl-0 pr-4 text-right">
