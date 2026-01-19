@@ -248,6 +248,74 @@ impl AgentConnection {
                                             let _ = ws_sender.send(Message::Text(pong_json)).await;
                                         }
                                     }
+                                    AgentMessage::ActionRequest { request_id, process_id, method } => {
+                                        log::info!("[Agent] Received action request: {} for process {}", method, process_id);
+                                        
+                                        // Execute the action locally
+                                        use crate::process::Runner;
+                                        let mut runner = Runner::new();
+                                        
+                                        let (success, message) = if runner.exists(process_id) {
+                                            match method.as_str() {
+                                                "start" => {
+                                                    let mut item = runner.get(process_id);
+                                                    item.restart(false);
+                                                    item.get_runner().save();
+                                                    (true, format!("Process {} started", process_id))
+                                                }
+                                                "restart" => {
+                                                    let mut item = runner.get(process_id);
+                                                    item.restart(true);
+                                                    item.get_runner().save();
+                                                    (true, format!("Process {} restarted", process_id))
+                                                }
+                                                "reload" => {
+                                                    let mut item = runner.get(process_id);
+                                                    item.reload(true);
+                                                    item.get_runner().save();
+                                                    (true, format!("Process {} reloaded", process_id))
+                                                }
+                                                "stop" | "kill" => {
+                                                    let mut item = runner.get(process_id);
+                                                    item.stop();
+                                                    item.get_runner().save();
+                                                    (true, format!("Process {} stopped", process_id))
+                                                }
+                                                "reset_env" | "clear_env" => {
+                                                    let mut item = runner.get(process_id);
+                                                    item.clear_env();
+                                                    item.get_runner().save();
+                                                    (true, format!("Process {} environment cleared", process_id))
+                                                }
+                                                "remove" | "delete" => {
+                                                    runner.remove(process_id);
+                                                    (true, format!("Process {} removed", process_id))
+                                                }
+                                                "flush" | "clean" => {
+                                                    runner.flush(process_id);
+                                                    (true, format!("Process {} logs flushed", process_id))
+                                                }
+                                                _ => {
+                                                    (false, format!("Unknown action: {}", method))
+                                                }
+                                            }
+                                        } else {
+                                            (false, format!("Process {} not found", process_id))
+                                        };
+                                        
+                                        // Send response back to server
+                                        let response_msg = AgentMessage::ActionResponse {
+                                            request_id,
+                                            success,
+                                            message,
+                                        };
+                                        
+                                        if let Ok(response_json) = serde_json::to_string(&response_msg) {
+                                            if let Err(e) = ws_sender.send(Message::Text(response_json)).await {
+                                                eprintln!("[Agent] Failed to send action response: {}", e);
+                                            }
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }

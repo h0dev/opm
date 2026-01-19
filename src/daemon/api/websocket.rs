@@ -4,6 +4,7 @@ use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
 use opm::process::ProcessItem;
 use rocket::{State, get};
 use rocket_ws::{Message, Stream, WebSocket};
+use tokio::sync::mpsc;
 
 /// WebSocket route handler for agent connections
 /// 
@@ -12,18 +13,27 @@ use rocket_ws::{Message, Stream, WebSocket};
 /// - Registration (AgentMessage::Register)
 /// - Heartbeat (AgentMessage::Heartbeat)
 /// - Process updates (AgentMessage::ProcessUpdate)
+/// - Action requests (AgentMessage::ActionRequest) - server to agent
+/// - Action responses (AgentMessage::ActionResponse) - agent to server
 /// - Ping/Pong for connection health checks
 /// 
-/// Legacy HTTP endpoints (/daemon/agents/register, /daemon/agents/heartbeat)
-/// have been removed as all communication is now handled via WebSocket.
+/// All agent communication including process actions is now handled via WebSocket.
 #[get("/ws/agent")]
 pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stream!['static] {
     let registry = registry.inner().clone();
 
     Stream! { ws =>
         let mut agent_id: Option<String> = None;
+        
+        // Create a channel for sending messages to the agent
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
         for await message in ws {
+            // First check if there are any outgoing messages to send
+            while let Ok(outgoing_msg) = rx.try_recv() {
+                yield Message::Text(outgoing_msg);
+            }
+            
             match message {
                 Ok(Message::Text(text)) => {
                     match serde_json::from_str::<AgentMessage>(&text) {
@@ -41,10 +51,11 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                         last_seen: std::time::SystemTime::now(),
                                         connected_at: std::time::SystemTime::now(),
                                         api_endpoint,
-                                        system_info: None, // System info can be updated via separate message
+                                        system_info: None,
                                     };
 
-                                    registry.register(agent_info);
+                                    // Register agent with sender channel for bidirectional communication
+                                    registry.register_with_sender(agent_info, tx.clone());
                                     agent_id = Some(id);
 
                                     // Send success response
@@ -105,6 +116,12 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                     if let Ok(response_json) = serde_json::to_string(&response) {
                                         yield Message::Text(response_json);
                                     }
+                                }
+                                AgentMessage::ActionResponse { request_id, success, message } => {
+                                    log::info!("[WebSocket] Action response: request_id={}, success={}, message={}", 
+                                        request_id, success, message);
+                                    // Action responses are logged
+                                    // In a full implementation, this would resolve a pending Future
                                 }
                                 AgentMessage::Pong => {
                                     log::debug!("[WebSocket] Pong received from agent");

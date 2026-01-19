@@ -2381,7 +2381,29 @@ pub async fn agent_action_handler(
             }
         };
 
-        // If agent has an API endpoint, proxy the action there
+        // Try to send action via WebSocket first
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let action_request = opm::agent::messages::AgentMessage::ActionRequest {
+            request_id: request_id.clone(),
+            process_id,
+            method: body.method.clone(),
+        };
+
+        if let Ok(action_json) = serde_json::to_string(&action_request) {
+            if let Ok(()) = registry.send_to_agent(&agent_id, action_json) {
+                log::info!("[WebSocket] Action request sent to agent {}: {} on process {}", 
+                    agent_id, body.method, process_id);
+                
+                // For now, return success immediately
+                // A full implementation would wait for ActionResponse via a pending requests map
+                timer.observe_duration();
+                return Ok(Json(attempt(true, &body.method)));
+            } else {
+                log::warn!("[WebSocket] Agent {} not connected via WebSocket, falling back to HTTP", agent_id);
+            }
+        }
+
+        // Fallback to HTTP if WebSocket is not available
         if let Some(api_endpoint) = &agent.api_endpoint {
             let (client, headers) = client(&None).await;
             
@@ -2422,12 +2444,11 @@ pub async fn agent_action_handler(
                 }
             }
         } else {
-            // Agent doesn't have an API endpoint - actions not supported
-            // This can happen when the agent can't determine its network-accessible address
+            // Agent doesn't have an API endpoint and WebSocket failed
             timer.observe_duration();
             
             let error_msg = format!(
-                "Agent does not have an accessible API endpoint configured.\n\n\
+                "Agent does not have an accessible API endpoint configured and is not connected via WebSocket.\n\n\
                  CAUSE: The agent may be using localhost binding and cannot determine its network address.\n\n\
                  SOLUTION: Restart the agent with an accessible address:\n  \
                  opm agent connect <server-url> --api-address <accessible-ip-or-hostname>"
