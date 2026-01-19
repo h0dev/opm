@@ -8,6 +8,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [agent, setAgent] = useState<any>(null);
 	const [processes, setProcesses] = useState<any[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
 
 	const badge = {
 		online: 'bg-emerald-400/10 text-emerald-400',
@@ -17,6 +18,8 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	};
 
 	async function fetchAgentDetails() {
+		setLoading(true);
+		setError(null);
 		try {
 			// Fetch agent info
 			const agentResponse = await api.get(`${props.base}/daemon/agents/${props.agentId}`).json();
@@ -32,6 +35,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 			}
 		} catch (error) {
 			console.error('Failed to fetch agent details:', error);
+			setError((error as Error).message || 'Failed to load agent details');
 		} finally {
 			setLoading(false);
 		}
@@ -44,8 +48,38 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		return () => clearInterval(interval);
 	}, [props.agentId]);
 
-	if (loading || !agent) {
+	if (loading) {
 		return <Loader />;
+	}
+
+	if (error || !agent) {
+		return (
+			<Fragment>
+				<Header name="Agent Details" description="Detailed information about this agent and its processes.">
+					<div className="flex gap-2">
+						<button
+							type="button"
+							onClick={fetchAgentDetails}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-zinc-800 bg-zinc-950 text-zinc-50 hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
+							Retry
+						</button>
+						<a
+							href={`${props.base}/servers`}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-700 hover:border-zinc-600 bg-zinc-800 text-zinc-50 hover:bg-zinc-700 px-4 py-2 text-sm font-semibold rounded-lg">
+							Back to Agents
+						</a>
+					</div>
+				</Header>
+				<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
+					<div className="text-center py-8">
+						<div className="text-red-400 text-lg mb-4">Failed to load agent details</div>
+						<div className="text-zinc-400 text-sm">
+							{error || 'Agent not found or connection failed'}
+						</div>
+					</div>
+				</div>
+			</Fragment>
+		);
 	}
 
 	// Backend sends last_seen as seconds since UNIX epoch

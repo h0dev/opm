@@ -9,12 +9,18 @@ const AgentDetailPage = (props: { base: string }) => {
 	useEffect(() => {
 		// Get agent ID from URL hash
 		const hash = window.location.hash.substring(1);
+		if (import.meta.env.DEV) {
+			console.log('Agent detail page - hash:', hash);
+		}
 		setAgentId(hash || '');
 		setIsInitialized(true);
 
 		// Listen for hash changes
 		const handleHashChange = () => {
 			const newHash = window.location.hash.substring(1);
+			if (import.meta.env.DEV) {
+				console.log('Agent detail page - hash change:', newHash);
+			}
 			setAgentId(newHash || '');
 		};
 
@@ -30,7 +36,7 @@ const AgentDetailPage = (props: { base: string }) => {
 	// Show error if no agent ID
 	if (!agentId) {
 		return (
-			<div className="text-center py-12 px-4">
+			<div className="px-4 sm:px-6 lg:px-8 text-center py-12">
 				<div className="text-zinc-400 text-lg mb-4">No agent selected</div>
 				<div className="text-zinc-500 text-sm">
 					Please select an agent from the{' '}
@@ -42,7 +48,11 @@ const AgentDetailPage = (props: { base: string }) => {
 		);
 	}
 
-	return <AgentDetail agentId={agentId} base={props.base} />;
+	return (
+		<div className="px-4 sm:px-6 lg:px-8">
+			<AgentDetail agentId={agentId} base={props.base} />
+		</div>
+	);
 };
 
 export default AgentDetailPage;

@@ -113,11 +113,20 @@ const Index = (props: { base: string }) => {
 	const getActionEndpoint = (item: ProcessItem): string => {
 		// If process has an agent_api_endpoint, use it (agent-managed process)
 		if (item.agent_api_endpoint) {
+			if (import.meta.env.DEV) {
+				console.log(`Using agent endpoint for process ${item.name}:`, item.agent_api_endpoint);
+			}
 			return `${item.agent_api_endpoint}/process/${item.id}/action`;
 		}
 		// Otherwise, use server-based routing (local or remote server)
 		if (item.server === 'local') {
+			if (import.meta.env.DEV) {
+				console.log(`Using local endpoint for process ${item.name}`);
+			}
 			return `${props.base}/process/${item.id}/action`;
+		}
+		if (import.meta.env.DEV) {
+			console.log(`Using remote server endpoint for process ${item.name}:`, item.server);
 		}
 		return `${props.base}/remote/${item.server}/action/${item.id}`;
 	};
@@ -388,7 +397,7 @@ const Index = (props: { base: string }) => {
 							aria-label="Filter processes by agent"
 							className="w-full sm:w-auto px-4 py-2.5 bg-zinc-900/50 border border-zinc-700/50 rounded-lg text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all">
 							<option value="all">All Agents</option>
-							<option value="local">Local Only</option>
+							<option value="local">Local</option>
 							{agents.map((agent) => (
 								<option key={agent.id} value={agent.id}>
 									{agent.name}
@@ -432,7 +441,13 @@ const Index = (props: { base: string }) => {
 										onError={error} 
 									/>
 									<div className="flex items-center gap-2 mt-0.5">
-										<div className="text-xs font-medium text-zinc-400">{item.server != 'local' ? item.server : 'local'}</div>
+										<span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+											item.server === 'local' 
+												? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
+												: 'bg-green-500/10 text-green-400 border border-green-500/20'
+										}`}>
+											{item.server}
+										</span>
 										{item.agent_name && (
 											<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
 												{item.agent_name}

@@ -326,11 +326,17 @@ const View = (props: { id: string; base: string }) => {
 				<ToastContainer toasts={toasts} onClose={closeToast} />
 				<div className="absolute top-2 right-3 z-[200]">
 					<span className="text-xs text-zinc-500 mr-2">{liveReload ? 'Fetching logs live' : 'Live logs paused'}</span>
-					<span className="inline-flex items-center gap-x-1.5 rounded-md px-2 py-1 text-xs font-medium text-white ring-1 ring-inset ring-zinc-800">
-						<svg viewBox="0 0 6 6" aria-hidden="true" className="h-1.5 w-1.5 fill-green-400">
+					<span className={`inline-flex items-center gap-x-1.5 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${
+						server === 'local' 
+							? 'bg-blue-500/10 text-blue-400 ring-blue-500/20' 
+							: 'bg-green-500/10 text-green-400 ring-green-500/20'
+					}`}>
+						<svg viewBox="0 0 6 6" aria-hidden="true" className={`h-1.5 w-1.5 ${
+							server === 'local' ? 'fill-blue-400' : 'fill-green-400'
+						}`}>
 							<circle r={3} cx={3} cy={3} />
 						</svg>
-						{server != 'local' ? server : 'local'}
+						{server}
 					</span>
 				</div>
 				<div className="flex items-start justify-between gap-x-8 gap-y-4 bg-zinc-700/10 px-4 py-4 flex-row items-center sm:px-6 lg:px-8">
