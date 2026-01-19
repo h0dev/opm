@@ -111,12 +111,12 @@ const Index = (props: { base: string }) => {
 	};
 
 	const getActionEndpoint = (item: ProcessItem): string => {
-		// If process has an agent_api_endpoint, use it (agent-managed process)
-		if (item.agent_api_endpoint) {
+		// If process has agent_id, use the agent action proxy endpoint
+		if (item.agent_id) {
 			if (import.meta.env.DEV) {
-				console.log(`Using agent endpoint for process ${item.name}:`, item.agent_api_endpoint);
+				console.log(`Using agent proxy endpoint for process ${item.name}, agent: ${item.agent_id}`);
 			}
-			return `${item.agent_api_endpoint}/process/${item.id}/action`;
+			return `${props.base}/daemon/agents/${item.agent_id}/process/${item.id}/action`;
 		}
 		// Otherwise, use server-based routing (local or remote server)
 		if (item.server === 'local') {
@@ -133,16 +133,8 @@ const Index = (props: { base: string }) => {
 
 	const isRemote = (item: ProcessItem): boolean => item.server !== 'local';
 	const isRunning = (status: string): boolean => !['stopped', 'crashed'].includes(status);
-	const isAgentManaged = (item: ProcessItem): boolean => Boolean(item.agent_api_endpoint);
 	
 	const action = async (item: ProcessItem, name: string) => {
-		// Don't allow actions on agent-managed processes (those with agent_api_endpoint)
-		// These processes are managed by remote agents and can't be controlled from the master UI
-		if (isAgentManaged(item)) {
-			error(`Cannot perform actions on agent-managed processes. Please manage this process directly on the agent.`);
-			return;
-		}
-		
 		const endpoint = getActionEndpoint(item);
 		
 		try {
@@ -464,28 +456,20 @@ const Index = (props: { base: string }) => {
 									<span className={`${badge[item.status]} relative inline-flex rounded-full h-2.5 w-2.5 shadow-lg`}></span>
 								</span>
 								<Menu as="div" className="relative">
-									<MenuButton 
-										disabled={isAgentManaged(item)}
-										className={classNames(
-											"transition border focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-0 z-50 shrink-0 p-2 text-sm font-semibold rounded-lg",
-											isAgentManaged(item)
-												? "border-zinc-800 bg-zinc-900 cursor-not-allowed opacity-50"
-												: "border-zinc-700/50 bg-transparent hover:bg-zinc-800 hover:border-zinc-600"
-										)}>
+									<MenuButton className="transition border focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-0 z-50 shrink-0 border-zinc-700/50 bg-transparent hover:bg-zinc-800 hover:border-zinc-600 p-2 text-sm font-semibold rounded-lg">
 										<EllipsisVerticalIcon className="h-5 w-5 text-zinc-300 hover:text-zinc-50 transition-colors" aria-hidden="true" />
 									</MenuButton>
-									{!isAgentManaged(item) && (
-										<Transition
-											as={Fragment}
-											enter="transition ease-out duration-100"
-											enterFrom="transform opacity-0 scale-95"
-											enterTo="transform opacity-100 scale-100"
-											leave="transition ease-in duration-75"
-											leaveFrom="transform opacity-100 scale-100"
-											leaveTo="transform opacity-0 scale-95">
-											<MenuItems
-												anchor={{ to: 'bottom end', gap: '8px', padding: '16px' }}
-												className="z-10 w-48 origin-top-right rounded-lg bg-zinc-900 border border-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none text-base divide-y divide-zinc-800/50">
+									<Transition
+										as={Fragment}
+										enter="transition ease-out duration-100"
+										enterFrom="transform opacity-0 scale-95"
+										enterTo="transform opacity-100 scale-100"
+										leave="transition ease-in duration-75"
+										leaveFrom="transform opacity-100 scale-100"
+										leaveTo="transform opacity-0 scale-95">
+										<MenuItems
+											anchor={{ to: 'bottom end', gap: '8px', padding: '16px' }}
+											className="z-10 w-48 origin-top-right rounded-lg bg-zinc-900 border border-zinc-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none text-base divide-y divide-zinc-800/50">
 												<div className="p-1.5">
 													{!isRunning(item.status) && (
 														<MenuItem>
@@ -587,7 +571,6 @@ const Index = (props: { base: string }) => {
 												</div>
 											</MenuItems>
 										</Transition>
-									)}
 								</Menu>
 							</div>
 							{item.agent_api_endpoint ? (
