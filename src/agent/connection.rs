@@ -86,16 +86,29 @@ impl AgentConnection {
         // Construct the API endpoint URL
         // Agents expose an API server so the main server can send action requests
         let api_endpoint = {
-            // Determine the external IP address or use a placeholder
-            // In practice, agents should detect their external/LAN IP
-            // For now, we'll use localhost as a placeholder - agents can be configured
-            // with their actual accessible address
-            let address = if self.config.api_address == "0.0.0.0" || self.config.api_address == "127.0.0.1" {
-                // Try to get actual hostname/IP
+            // Determine the external IP address
+            // Check if the configured address is a bind-all address (0.0.0.0, ::, 127.0.0.1, ::1)
+            const BIND_ALL_IPV4: &str = "0.0.0.0";
+            const LOCALHOST_IPV4: &str = "127.0.0.1";
+            
+            let address = if self.config.api_address == BIND_ALL_IPV4 || 
+                           self.config.api_address == LOCALHOST_IPV4 ||
+                           self.config.api_address == "::" ||
+                           self.config.api_address == "::1" {
+                // Try to get the hostname for better network accessibility
+                // In containerized or complex network environments, the hostname
+                // might need to be configured explicitly via the agent config
                 hostname::get()
                     .ok()
                     .and_then(|h| h.into_string().ok())
-                    .unwrap_or_else(|| "localhost".to_string())
+                    .unwrap_or_else(|| {
+                        log::warn!(
+                            "Could not determine hostname for agent API endpoint. \
+                            Using localhost, which may not be accessible from the server. \
+                            Consider configuring api_address with an accessible IP/hostname."
+                        );
+                        "localhost".to_string()
+                    })
             } else {
                 self.config.api_address.clone()
             };
