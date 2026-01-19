@@ -2516,10 +2516,11 @@ pub async fn agent_action_handler(
             }
         } else {
             // Agent doesn't have an API endpoint - actions not supported
+            // This shouldn't happen for properly configured agents
             timer.observe_duration();
             Err(generic_error(
                 Status::BadRequest,
-                string!("Agent does not support actions (no API endpoint configured)"),
+                string!("Agent does not support actions: no API endpoint configured. Ensure the agent is running with API server enabled."),
             ))
         }
     }

@@ -83,8 +83,24 @@ impl AgentConnection {
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-        // Construct the API endpoint URL (optional - for backward compatibility)
-        let api_endpoint = None; // Agents no longer need to expose API endpoint
+        // Construct the API endpoint URL
+        // Agents expose an API server so the main server can send action requests
+        let api_endpoint = {
+            // Determine the external IP address or use a placeholder
+            // In practice, agents should detect their external/LAN IP
+            // For now, we'll use localhost as a placeholder - agents can be configured
+            // with their actual accessible address
+            let address = if self.config.api_address == "0.0.0.0" || self.config.api_address == "127.0.0.1" {
+                // Try to get actual hostname/IP
+                hostname::get()
+                    .ok()
+                    .and_then(|h| h.into_string().ok())
+                    .unwrap_or_else(|| "localhost".to_string())
+            } else {
+                self.config.api_address.clone()
+            };
+            Some(format!("http://{}:{}", address, self.config.api_port))
+        };
 
         // Send registration message
         let register_msg = AgentMessage::Register {
