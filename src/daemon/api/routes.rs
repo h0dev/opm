@@ -2321,3 +2321,91 @@ pub async fn agent_processes_handler(
         Ok(Json(processes))
     }
 }
+
+/// Proxy action to agent process
+#[utoipa::path(
+    post,
+    path = "/daemon/agents/{agent_id}/process/{process_id}/action",
+    params(
+        ("agent_id" = String, Path, description = "Agent ID"),
+        ("process_id" = usize, Path, description = "Process ID")
+    ),
+    request_body = ActionBody,
+    responses(
+        (status = 200, description = "Action executed successfully", body = ActionResponse),
+        (status = 404, description = "Agent or process not found"),
+        (status = 500, description = "Failed to execute action")
+    ),
+    security(("api_key" = []))
+)]
+#[post("/daemon/agents/<agent_id>/process/<process_id>/action", format = "json", data = "<body>")]
+pub async fn agent_action_handler(
+    agent_id: String,
+    process_id: usize,
+    body: Json<ActionBody>,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> Result<Json<ActionResponse>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_action"])
+        .start_timer();
+    HTTP_COUNTER.inc();
+
+    // Get agent info
+    let agent = match registry.get(&agent_id) {
+        Some(agent) => agent,
+        None => {
+            timer.observe_duration();
+            return Err(generic_error(Status::NotFound, string!("Agent not found")));
+        }
+    };
+
+    // If agent has an API endpoint, proxy the action there
+    if let Some(api_endpoint) = &agent.api_endpoint {
+        let (client, headers) = client(&None).await;
+        
+        match client
+            .post(fmtstr!("{api_endpoint}/process/{process_id}/action"))
+            .json(&body.0)
+            .headers(headers)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                timer.observe_duration();
+                if response.status() != 200 {
+                    let err_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    Err(generic_error(
+                        Status::InternalServerError,
+                        format!("Failed to execute action on agent: {}", err_text),
+                    ))
+                } else {
+                    match response.json::<ActionResponse>().await {
+                        Ok(action_response) => Ok(Json(action_response)),
+                        Err(e) => Err(generic_error(
+                            Status::InternalServerError,
+                            format!("Failed to parse agent response: {}", e),
+                        )),
+                    }
+                }
+            }
+            Err(err) => {
+                timer.observe_duration();
+                Err(generic_error(
+                    Status::InternalServerError,
+                    format!("Failed to connect to agent API: {}", err),
+                ))
+            }
+        }
+    } else {
+        // Agent doesn't have an API endpoint - actions not supported
+        timer.observe_duration();
+        Err(generic_error(
+            Status::BadRequest,
+            string!("Agent does not support actions (no API endpoint configured)"),
+        ))
+    }
+}

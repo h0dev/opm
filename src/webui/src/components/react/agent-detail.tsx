@@ -49,7 +49,11 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	}, [props.agentId]);
 
 	if (loading) {
-		return <Loader />;
+		return (
+			<div className="min-h-screen flex items-center justify-center">
+				<Loader />
+			</div>
+		);
 	}
 
 	if (error || !agent) {
