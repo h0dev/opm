@@ -2266,8 +2266,8 @@ pub async fn agent_processes_handler(
         return Ok(Json(processes));
     }
 
-    // Get agent info
-    let agent = match registry.get(&id) {
+    // Get agent info to verify it exists
+    let _agent = match registry.get(&id) {
         Some(agent) => agent,
         None => {
             timer.observe_duration();
@@ -2281,60 +2281,12 @@ pub async fn agent_processes_handler(
         return Ok(Json(processes));
     }
 
-    // Fallback: Check if agent has an API endpoint configured (legacy support)
-    if let Some(api_endpoint) = &agent.api_endpoint {
-        // Fetch processes from agent's API
-        let (client, headers) = client(&None).await;
-        match client
-            .get(fmtstr!("{api_endpoint}/list"))
-            .headers(headers)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status() != 200 {
-                    let err_text = response
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Unknown error".to_string());
-                    timer.observe_duration();
-                    Err(generic_error(
-                        Status::InternalServerError,
-                        format!("Failed to fetch processes from agent: {}", err_text),
-                    ))
-                } else {
-                    match response.json::<Vec<ProcessItem>>().await {
-                        Ok(processes) => {
-                            timer.observe_duration();
-                            Ok(Json(processes))
-                        }
-                        Err(e) => {
-                            timer.observe_duration();
-                            Err(generic_error(
-                                Status::InternalServerError,
-                                format!("Failed to parse agent response: {}", e),
-                            ))
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                timer.observe_duration();
-                Err(generic_error(
-                    Status::InternalServerError,
-                    format!("Failed to connect to agent API: {}", err),
-                ))
-            }
-        }
-    } else {
-        // No API endpoint and no process data - try local Runner by agent_id
-        // Note: Creating a new Runner instance is the standard pattern in this codebase
-        // to ensure fresh data is loaded from disk on each request
-        let runner = Runner::new();
-        let processes = runner.fetch_by_agent(&id);
-        timer.observe_duration();
-        Ok(Json(processes))
-    }
+    // Agent is registered but hasn't sent process data yet
+    timer.observe_duration();
+    Err(generic_error(
+        Status::ServiceUnavailable,
+        format!("Agent '{}' has not sent process data yet. Process updates are sent every 10 seconds via WebSocket.", id)
+    ))
 }
 
 /// Proxy action to agent process
@@ -2434,8 +2386,8 @@ pub async fn agent_action_handler(
             ))
         }
     } else {
-        // Get agent info for remote agents
-        let agent = match registry.get(&agent_id) {
+        // Get agent info to verify it exists
+        let _agent = match registry.get(&agent_id) {
             Some(agent) => agent,
             None => {
                 timer.observe_duration();
@@ -2461,63 +2413,17 @@ pub async fn agent_action_handler(
                 // A full implementation would use a pending requests map with timeouts
                 timer.observe_duration();
                 return Ok(Json(attempt(true, &body.method)));
-            } else {
-                log::warn!("[WebSocket] Agent {} not connected via WebSocket, falling back to HTTP", agent_id);
             }
         }
 
-        // Fallback to HTTP if WebSocket is not available
-        if let Some(api_endpoint) = &agent.api_endpoint {
-            let (client, headers) = client(&None).await;
-            
-            match client
-                .post(fmtstr!("{api_endpoint}/process/{process_id}/action"))
-                .json(&body.0)
-                .headers(headers)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    timer.observe_duration();
-                    if response.status() != 200 {
-                        let err_text = response
-                            .text()
-                            .await
-                            .unwrap_or_else(|_| "Unknown error".to_string());
-                        Err(generic_error(
-                            Status::InternalServerError,
-                            format!("Failed to execute action on agent: {}", err_text),
-                        ))
-                    } else {
-                        match response.json::<ActionResponse>().await {
-                            Ok(action_response) => Ok(Json(action_response)),
-                            Err(e) => Err(generic_error(
-                                Status::InternalServerError,
-                                format!("Failed to parse agent response: {}", e),
-                            )),
-                        }
-                    }
-                }
-                Err(err) => {
-                    timer.observe_duration();
-                    Err(generic_error(
-                        Status::InternalServerError,
-                        format!("Failed to connect to agent API: {}", err),
-                    ))
-                }
-            }
-        } else {
-            // Agent doesn't have an API endpoint and WebSocket failed
-            timer.observe_duration();
-            
-            let error_msg = format!(
-                "Agent does not have an accessible API endpoint configured and is not connected via WebSocket.\n\n\
-                 CAUSE: The agent may be using localhost binding and cannot determine its network address.\n\n\
-                 SOLUTION: Restart the agent with an accessible address:\n  \
-                 opm agent connect <server-url> --api-address <accessible-ip-or-hostname>"
-            );
-            
-            Err(generic_error(Status::BadRequest, error_msg))
-        }
+        // Agent is registered but not connected via WebSocket
+        timer.observe_duration();
+        Err(generic_error(
+            Status::ServiceUnavailable,
+            format!(
+                "Agent '{}' is not connected via WebSocket. Please ensure the agent is running and connected to the server.",
+                agent_id
+            )
+        ))
     }
 }
