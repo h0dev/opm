@@ -10,6 +10,16 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
+	// Fix instruction for API endpoint issues
+	const API_ENDPOINT_FIX = (
+		<>
+			<strong>To fix:</strong> Restart the agent with:{' '}
+			<code className="bg-zinc-800 px-1 py-0.5 rounded">
+				opm agent connect {'<'}server-url{'>'} --api-address {'<'}agent-ip-or-hostname{'>'}
+			</code>
+		</>
+	);
+
 	const badge = {
 		online: 'bg-emerald-400/10 text-emerald-400',
 		offline: 'bg-red-500/10 text-red-500',
@@ -148,10 +158,36 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
 							</svg>
 							<div>
-								<div className="text-amber-400 font-medium text-sm">Limited Functionality</div>
+								<div className="text-amber-400 font-medium text-sm">Limited Functionality - No API Endpoint</div>
 								<div className="text-zinc-300 text-sm mt-1">
-									This agent doesn't have an API endpoint configured. Process management actions (start, stop, restart) will not be available. 
-									Ensure the agent is running with the API server enabled on port 9877 or configure a custom API port.
+									This agent doesn't have an accessible API endpoint configured. Process management actions (start, stop, restart) will not be available.
+								</div>
+								<div className="text-zinc-400 text-xs mt-2">
+									{API_ENDPOINT_FIX}
+								</div>
+							</div>
+						</div>
+					</div>
+				)}
+
+				{/* Warning if agent has localhost API endpoint (unreachable) */}
+				{agent.api_endpoint && (
+					agent.api_endpoint.includes('://localhost:') || 
+					agent.api_endpoint.includes('://localhost/') ||
+					agent.api_endpoint.endsWith('://localhost')
+				) && !isLocalAgent(agent) && (
+					<div className="mb-4 p-3 bg-red-900/20 border border-red-700/50 rounded-lg">
+						<div className="flex items-start gap-3">
+							<svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+							</svg>
+							<div>
+								<div className="text-red-400 font-medium text-sm">Unreachable API Endpoint</div>
+								<div className="text-zinc-300 text-sm mt-1">
+									This agent's API endpoint uses "localhost" which is not accessible from the server. Process management actions will fail.
+								</div>
+								<div className="text-zinc-400 text-xs mt-2">
+									{API_ENDPOINT_FIX}
 								</div>
 							</div>
 						</div>

@@ -91,28 +91,45 @@ impl AgentConnection {
             const BIND_ALL_IPV4: &str = "0.0.0.0";
             const LOCALHOST_IPV4: &str = "127.0.0.1";
             
-            let address = if self.config.api_address == BIND_ALL_IPV4 || 
-                           self.config.api_address == LOCALHOST_IPV4 ||
-                           self.config.api_address == "::" ||
-                           self.config.api_address == "::1" {
+            if self.config.api_address == BIND_ALL_IPV4 || 
+               self.config.api_address == LOCALHOST_IPV4 ||
+               self.config.api_address == "::" ||
+               self.config.api_address == "::1" {
                 // Try to get the hostname for better network accessibility
                 // In containerized or complex network environments, the hostname
                 // might need to be configured explicitly via the agent config
-                hostname::get()
+                let detected_hostname = hostname::get()
                     .ok()
-                    .and_then(|h| h.into_string().ok())
-                    .unwrap_or_else(|| {
+                    .and_then(|h| h.into_string().ok());
+                
+                match detected_hostname {
+                    Some(hostname) if hostname != "localhost" && !hostname.is_empty() => {
+                        Some(format!("http://{}:{}", hostname, self.config.api_port))
+                    }
+                    _ => {
+                        // Could not determine a valid hostname
+                        // Don't report localhost as the API endpoint since it won't be reachable
+                        // from the server in most network configurations
                         log::warn!(
-                            "Could not determine hostname for agent API endpoint. \
-                            Using localhost, which may not be accessible from the server. \
-                            Consider configuring api_address with an accessible IP/hostname."
+                            "Could not determine a network-accessible hostname for agent API endpoint. \
+                            Process management actions will not be available from the server UI. \
+                            To enable actions, configure the agent with an accessible IP address \
+                            or hostname using the --api-address option."
                         );
-                        "localhost".to_string()
-                    })
+                        eprintln!(
+                            "[Agent] WARNING: API endpoint cannot be determined. \
+                            Process actions from server will not work."
+                        );
+                        eprintln!(
+                            "[Agent] To fix this, start the agent with: \
+                            --api-address <your-ip-or-hostname>"
+                        );
+                        None // Return None to indicate no API endpoint available
+                    }
+                }
             } else {
-                self.config.api_address.clone()
-            };
-            Some(format!("http://{}:{}", address, self.config.api_port))
+                Some(format!("http://{}:{}", self.config.api_address, self.config.api_port))
+            }
         };
 
         // Send registration message
