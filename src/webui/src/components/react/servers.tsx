@@ -2,7 +2,7 @@ import { api } from '@/api';
 import { useEffect, Fragment, useState } from 'react';
 import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
-import { useArray, classNames, startDuration } from '@/helpers';
+import { useArray, classNames, startDuration, isLocalAgent } from '@/helpers';
 import ToastContainer from '@/components/react/toast';
 import { useToast } from '@/components/react/useToast';
 
@@ -182,7 +182,7 @@ const Index = (props: { base: string }) => {
 										</div>
 									</td>
 									<td className="py-4 pl-0 pr-4 text-right sm:pr-6 lg:pr-8" onClick={(e) => e.stopPropagation()}>
-										{agent.id !== 'local' && (
+										{!isLocalAgent(agent) && (
 											<button
 												onClick={() => removeAgent(agent.id, agent.name)}
 												className="text-red-400 hover:text-red-300 text-sm font-medium transition">

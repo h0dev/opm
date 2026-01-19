@@ -2,7 +2,7 @@ import { api } from '@/api';
 import { useEffect, Fragment, useState } from 'react';
 import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
-import { useArray, classNames, startDuration, formatMemory } from '@/helpers';
+import { useArray, classNames, startDuration, formatMemory, isLocalAgent } from '@/helpers';
 
 const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [agent, setAgent] = useState<any>(null);
@@ -141,7 +141,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 				<h2 className="text-lg font-semibold text-zinc-200 mb-4">Agent Information</h2>
 				
 				{/* Warning if agent doesn't have API endpoint */}
-				{!agent.api_endpoint && agent.id !== 'local' && (
+				{!agent.api_endpoint && !isLocalAgent(agent) && (
 					<div className="mb-4 p-3 bg-amber-900/20 border border-amber-700/50 rounded-lg">
 						<div className="flex items-start gap-3">
 							<svg className="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

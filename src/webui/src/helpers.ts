@@ -44,6 +44,11 @@ export const isVersionTooFar = (currentVersion: string, newVersion: string): boo
 	return false;
 };
 
+export const isLocalAgent = (agentIdOrAgent: string | { id: string }): boolean => {
+	const agentId = typeof agentIdOrAgent === 'string' ? agentIdOrAgent : agentIdOrAgent.id;
+	return agentId === 'local';
+};
+
 export const useArray = (initialValue = [], maxSize = 5) => {
 	const [value, setValue] = useState(initialValue);
 
