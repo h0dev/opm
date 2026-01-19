@@ -183,6 +183,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 							<div>
 								<div className="text-sm text-zinc-400 mb-1">Total Memory</div>
 								<div className="text-zinc-200">
+									{/* sys-info returns memory in KB, formatMemory expects bytes */}
 									{formatMemory(agent.system_info.total_memory * 1024)}
 								</div>
 							</div>

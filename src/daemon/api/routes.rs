@@ -2135,6 +2135,30 @@ pub async fn agent_heartbeat_handler(
     })))
 }
 
+/// Helper function to create local agent info
+fn create_local_agent_info() -> opm::agent::types::AgentInfo {
+    let os_info = crate::globals::get_os_info();
+    opm::agent::types::AgentInfo {
+        id: "local".to_string(),
+        name: "Local Server".to_string(),
+        hostname: hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok()),
+        status: opm::agent::types::AgentStatus::Online,
+        connection_type: opm::agent::types::ConnectionType::In,
+        last_seen: std::time::SystemTime::now(),
+        connected_at: std::time::SystemTime::now(),
+        api_endpoint: None, // Local agent doesn't need an API endpoint
+        system_info: Some(opm::agent::types::SystemInfo {
+            os_name: format!("{:?}", os_info.name),
+            os_version: os_info.version.clone(),
+            arch: os_info.arch.clone(),
+            cpu_count: Some(num_cpus::get()),
+            total_memory: sys_info::mem_info().ok().map(|m| m.total),
+        }),
+    }
+}
+
 /// List all connected agents
 #[utoipa::path(
     get,
@@ -2156,30 +2180,8 @@ pub async fn agent_list_handler(
 
     let mut agents = registry.list();
     
-    // Add local agent (representing this daemon/server)
-    let os_info = crate::globals::get_os_info();
-    let local_agent = opm::agent::types::AgentInfo {
-        id: "local".to_string(),
-        name: "Local Server".to_string(),
-        hostname: hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok()),
-        status: opm::agent::types::AgentStatus::Online,
-        connection_type: opm::agent::types::ConnectionType::In,
-        last_seen: std::time::SystemTime::now(),
-        connected_at: std::time::SystemTime::now(),
-        api_endpoint: None, // Local agent doesn't need an API endpoint
-        system_info: Some(opm::agent::types::SystemInfo {
-            os_name: format!("{:?}", os_info.name),
-            os_version: os_info.version.clone(),
-            arch: os_info.arch.clone(),
-            cpu_count: Some(num_cpus::get()),
-            total_memory: sys_info::mem_info().ok().map(|m| m.total),
-        }),
-    };
-    
     // Insert local agent at the beginning
-    agents.insert(0, local_agent);
+    agents.insert(0, create_local_agent_info());
     
     timer.observe_duration();
 
@@ -2245,28 +2247,8 @@ pub async fn agent_get_handler(
 
     // Handle local agent specially
     if id == "local" {
-        let os_info = crate::globals::get_os_info();
-        let local_agent = opm::agent::types::AgentInfo {
-            id: "local".to_string(),
-            name: "Local Server".to_string(),
-            hostname: hostname::get()
-                .ok()
-                .and_then(|h| h.into_string().ok()),
-            status: opm::agent::types::AgentStatus::Online,
-            connection_type: opm::agent::types::ConnectionType::In,
-            last_seen: std::time::SystemTime::now(),
-            connected_at: std::time::SystemTime::now(),
-            api_endpoint: None,
-            system_info: Some(opm::agent::types::SystemInfo {
-                os_name: format!("{:?}", os_info.name),
-                os_version: os_info.version.clone(),
-                arch: os_info.arch.clone(),
-                cpu_count: Some(num_cpus::get()),
-                total_memory: sys_info::mem_info().ok().map(|m| m.total),
-            }),
-        };
         timer.observe_duration();
-        return Ok(Json(local_agent));
+        return Ok(Json(create_local_agent_info()));
     }
 
     match registry.get(&id) {
