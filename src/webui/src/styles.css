@@ -42,8 +42,8 @@ nav a {
 
 /* Toggle switch precision alignment - prevent misalignment */
 /* Note: !important used to ensure immediate application and prevent FOUC */
-/* Mobile: width 2.25rem (36px), height 1.25rem (20px) - compact for mobile screens */
-/* Desktop: width 2.75rem (44px), height 1.5rem (24px) - 1.833:1 ratio for compact pill shape */
+/* Mobile: width 2.75rem (44px), height 1.25rem (20px) - proper pill shape with 2.2:1 ratio */
+/* Desktop: width 3.25rem (52px), height 2rem (32px) - 1.625:1 ratio for iOS-style pill shape */
 button[role="switch"],
 .toggle-switch {
 	display: inline-flex !important;
@@ -52,8 +52,8 @@ button[role="switch"],
 	vertical-align: middle !important;
 	flex-shrink: 0 !important;
 	position: relative !important;
-	width: 2.25rem !important; /* 36px - mobile compact width */
-	height: 1.25rem !important; /* 20px - mobile compact height */
+	width: 2.75rem !important; /* 44px - mobile pill width */
+	height: 1.25rem !important; /* 20px - mobile pill height */
 	border-radius: 9999px !important; /* rounded-full */
 }
 
@@ -79,31 +79,31 @@ button[role="switch"] > span,
 }
 
 /* Pin translation when checked - mobile */
-/* Translation: 1rem moves pin from left (0.125rem) to right with padding */
-/* Total movement: track width (2.25rem) - pin width (1rem) - total padding (0.25rem) = 1rem */
+/* Translation: 1.5rem moves pin from left (0.125rem) to right with padding */
+/* Total movement: track width (2.75rem) - pin width (1rem) - total padding (0.25rem) = 1.5rem */
 button[role="switch"][aria-checked="true"] > span,
 .toggle-switch[aria-checked="true"] > span {
-	transform: translateY(-50%) translateX(1rem) !important;
+	transform: translateY(-50%) translateX(1.5rem) !important;
 }
 
 /* Desktop toggle dimensions */
 @media (min-width: 640px) {
 	button[role="switch"],
 	.toggle-switch {
-		width: 2.75rem !important; /* 44px - compact width */
-		height: 1.5rem !important; /* 24px - compact height */
+		width: 3.25rem !important; /* 52px - iOS-style width */
+		height: 2rem !important; /* 32px - iOS-style height */
 	}
 
-	/* Desktop pin dimensions: 1.25rem x 1.25rem (20px x 20px) */
+	/* Desktop pin dimensions: 1.75rem x 1.75rem (28px x 28px) */
 	button[role="switch"] > span,
 	.toggle-switch > span {
-		width: 1.25rem !important; /* 20px */
-		height: 1.25rem !important; /* 20px */
+		width: 1.75rem !important; /* 28px */
+		height: 1.75rem !important; /* 28px */
 	}
 
 	/* Pin translation when checked - desktop */
 	/* Translation: 1.25rem moves pin from left (0.125rem) to right with padding */
-	/* Total movement: track width (2.75rem) - pin width (1.25rem) - total padding (0.25rem) = 1.25rem */
+	/* Total movement: track width (3.25rem) - pin width (1.75rem) - total padding (0.25rem) = 1.25rem */
 	button[role="switch"][aria-checked="true"] > span,
 	.toggle-switch[aria-checked="true"] > span {
 		transform: translateY(-50%) translateX(1.25rem) !important;
