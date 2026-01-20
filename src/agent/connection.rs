@@ -338,13 +338,19 @@ impl AgentConnection {
                                         }
                                         
                                         // Immediately send process update after action to ensure UI reflects changes quickly
-                                        if success {
+                                        // Only send immediate updates for actions that modify process state
+                                        if success && matches!(method.as_str(), "start" | "restart" | "reload" | "stop" | "kill" | "remove" | "delete") {
                                             let runner = Runner::new();
                                             let processes = runner.fetch();
                                             
                                             let process_values: Vec<serde_json::Value> = processes
                                                 .into_iter()
-                                                .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
+                                                .filter_map(|p| {
+                                                    serde_json::to_value(p).map_err(|e| {
+                                                        log::warn!("[Agent] Failed to serialize process: {}", e);
+                                                        e
+                                                    }).ok()
+                                                })
                                                 .collect();
 
                                             let process_update_msg = AgentMessage::ProcessUpdate {
