@@ -13,12 +13,15 @@ html {
 	touch-action: manipulation;
 }
 
-/* CRITICAL: Prevent FOUC - must be early in cascade */
+/* ========================================================================
+   CRITICAL: Prevent FOUC - Navigation Alignment Fix
+   ======================================================================== */
 /* Force navigation left alignment from first render */
 nav {
 	display: flex !important;
 	justify-content: flex-start !important;
 	align-items: center !important;
+	width: 100% !important; /* Ensure nav container takes full width */
 }
 
 nav > div {
@@ -27,6 +30,9 @@ nav > div {
 	align-items: center !important;
 	gap: 0.75rem;
 	width: 100% !important;
+	max-width: 100% !important; /* Override layout constraints */
+	margin-left: 0 !important;
+	margin-right: 0 !important;
 }
 
 /* Prevent flex-1 from causing centering */
@@ -40,10 +46,14 @@ nav a {
 	flex-shrink: 0;
 }
 
-/* Toggle switch precision alignment - prevent misalignment */
-/* Note: !important used to ensure immediate application and prevent FOUC */
-/* Mobile: width 2.25rem (36px), height 1.25rem (20px) - border-radius 0.625rem (10px) matches pin radius */
-/* Desktop: width 3.25rem (52px), height 2rem (32px) - 1.625:1 ratio for iOS-style pill shape */
+/* ========================================================================
+   TOGGLE SWITCH (Pill Shape with Gap)
+   ======================================================================== */
+/* Logic căn chỉnh:
+   - Sử dụng border-radius: 9999px để luôn tròn viên thuốc.
+   - Sử dụng padding (khoảng hở) giữa cục tròn và viền ngoài.
+*/
+
 button[role="switch"],
 .toggle-switch {
 	display: inline-flex !important;
@@ -52,64 +62,86 @@ button[role="switch"],
 	vertical-align: middle !important;
 	flex-shrink: 0 !important;
 	position: relative !important;
-	width: 2.25rem !important; /* 36px - mobile width */
-	height: 1.25rem !important; /* 20px - mobile height matches pin diameter */
-	border-radius: 0.625rem !important; /* 10px - exactly half height for perfect pill shape */
+	cursor: pointer;
+	
+	/* Shape */
+	border-radius: 9999px !important;
+	border: 1px solid transparent !important;
+	box-sizing: border-box !important;
+
+	/* Mobile: width 2.25rem (36px), height 1.25rem (20px) */
+	width: 2.25rem !important; 
+	height: 1.25rem !important; 
+	
+	/* Smooth transition for background */
+	transition-property: background-color, border-color, color;
+	transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+	transition-duration: 200ms;
 }
 
-/* Ensure toggle pin is perfectly centered within track */
-/* Mobile: Pin dimensions: 1.25rem x 1.25rem (20px x 20px) - height matches track height */
-/* Horizontal offset: 0.125rem (2px) provides visual padding from track edge */
-/* Vertical centering: 50% + translateY(-50%) for perfect alignment */
+/* Knob (Cục tròn) */
 button[role="switch"] > span,
 .toggle-switch > span {
 	margin: 0 !important;
 	position: absolute !important;
 	top: 50% !important;
-	left: 0.125rem !important; /* 2px visual padding */
 	transform: translateY(-50%) !important;
 	display: inline-block !important;
-	width: 1.25rem !important; /* 20px - mobile pin size */
-	height: 1.25rem !important; /* 20px - mobile pin size */
-	border-radius: 9999px !important; /* rounded-full */
+	
+	border-radius: 9999px !important;
 	background-color: white !important;
 	line-height: 1 !important;
 	vertical-align: middle !important;
-	transition: transform 200ms ease-in-out !important;
+	pointer-events: none;
+	
+	/* Animation di chuyển */
+	transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+
+	/* --- MOBILE SPECS --- */
+	/* Padding trái: 2px (0.125rem) */
+	left: 0.125rem !important;
+	/* Size: Track(20px) - Padding(4px) = 16px (1rem) */
+	width: 1rem !important; 
+	height: 1rem !important; 
 }
 
-/* Pin translation when checked - mobile */
-/* Translation: 0.75rem moves pin from left (0.125rem) to right with padding */
-/* Total movement: track width (2.25rem) - pin width (1.25rem) - total padding (0.25rem) = 0.75rem */
+/* Pin translation when checked - Mobile */
 button[role="switch"][aria-checked="true"] > span,
 .toggle-switch[aria-checked="true"] > span {
-	transform: translateY(-50%) translateX(0.75rem) !important;
+	/* Move: Track(2.25) - Pin(1.0) - PadL(0.125) - PadR(0.125) = 1rem */
+	transform: translateY(-50%) translateX(1rem) !important;
 }
 
 /* Desktop toggle dimensions */
 @media (min-width: 640px) {
 	button[role="switch"],
 	.toggle-switch {
-		width: 3.25rem !important; /* 52px - iOS-style width */
-		height: 2rem !important; /* 32px - iOS-style height */
-		border-radius: 1rem !important; /* 16px - exactly half height for perfect pill shape */
+		/* Desktop: width 3.25rem (52px), height 2rem (32px) */
+		width: 3.25rem !important; 
+		height: 2rem !important; 
 	}
 
-	/* Desktop pin dimensions: 1.75rem x 1.75rem (28px x 28px) */
 	button[role="switch"] > span,
 	.toggle-switch > span {
-		width: 1.75rem !important; /* 28px */
-		height: 1.75rem !important; /* 28px */
+		/* Padding trái: ~3px (0.1875rem) cho thoáng */
+		left: 0.1875rem !important;
+		
+		/* Size: Track(32px) - Padding(6px) = 26px (1.625rem) */
+		width: 1.625rem !important; 
+		height: 1.625rem !important; 
 	}
 
-	/* Pin translation when checked - desktop */
-	/* Translation: 1.25rem moves pin from left (0.125rem) to right with padding */
-	/* Total movement: track width (3.25rem) - pin width (1.75rem) - total padding (0.25rem) = 1.25rem */
+	/* Pin translation when checked - Desktop */
 	button[role="switch"][aria-checked="true"] > span,
 	.toggle-switch[aria-checked="true"] > span {
+		/* Move: Track(3.25) - Pin(1.625) - PadL(0.1875)*2 = 1.25rem */
 		transform: translateY(-50%) translateX(1.25rem) !important;
 	}
 }
+
+/* ========================================================================
+   RESPONSIVE & UTILITIES (Original functionality preserved)
+   ======================================================================== */
 
 /* Mobile-first responsive adjustments */
 @media (max-width: 768px) {
@@ -313,4 +345,3 @@ button, a, input, select {
 		animation: none;
 	}
 }
-
