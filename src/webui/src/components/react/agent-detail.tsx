@@ -39,11 +39,27 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		setLoading(true);
 		setError(null);
 		
+		// Add timeout to prevent infinite loading
+		const timeoutId = setTimeout(() => {
+			if (import.meta.env.DEV) {
+				console.log('SSE connection timeout after 10 seconds');
+			}
+			setError('Connection timeout - agent did not respond within 10 seconds');
+			setLoading(false);
+		}, 10000); // 10 second timeout
+		
 		const source = new SSE(`${props.base}/live/agent/${props.agentId}`, { headers });
 		
 		source.onmessage = (event) => {
+			// Clear timeout once we receive data
+			clearTimeout(timeoutId);
+			
 			try {
 				const data = JSON.parse(event.data);
+				
+				if (import.meta.env.DEV) {
+					console.log('SSE data received:', data);
+				}
 				
 				if (data.error) {
 					setError(data.error);
@@ -62,15 +78,16 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		};
 		
 		source.onerror = (err) => {
+			clearTimeout(timeoutId);
 			console.error('SSE connection error:', err);
-			setError('Lost connection to server. Retrying...');
+			setError('Lost connection to server. Click Retry to reconnect.');
 			setLoading(false);
-			// SSE will automatically reconnect
 		};
 		
 		source.stream();
 		
 		return () => {
+			clearTimeout(timeoutId);
 			source.close();
 		};
 	}, [props.agentId, retryTrigger]);

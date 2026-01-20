@@ -18,6 +18,9 @@ export default {
 			},
 			transformOrigin: {
 				'left-right': '0% 50%'
+			},
+			boxShadow: {
+				'glow': '0 0 20px rgba(168, 85, 247, 0.4), 0 0 40px rgba(168, 85, 247, 0.2)'
 			}
 		}
 	},
