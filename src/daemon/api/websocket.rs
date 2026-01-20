@@ -96,6 +96,15 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                         break;
                                     }
                                 }
+                                AgentMessage::SystemInfoUpdate { id, system_info } => {
+                                    log::debug!("[WebSocket] System info update from agent {}", id);
+
+                                    if registry.update_system_info(&id, system_info) {
+                                        log::debug!("[WebSocket] System info updated for agent {}", id);
+                                    } else {
+                                        log::warn!("[WebSocket] Failed to update system info for agent {}", id);
+                                    }
+                                }
                                 AgentMessage::ProcessUpdate { id, processes } => {
                                     log::debug!("[WebSocket] Process update from agent {}", id);
 

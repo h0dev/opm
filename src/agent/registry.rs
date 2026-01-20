@@ -67,6 +67,16 @@ impl AgentRegistry {
         }
     }
 
+    pub fn update_system_info(&self, id: &str, system_info: super::types::SystemInfo) -> bool {
+        let mut agents = self.agents.write().unwrap();
+        if let Some(agent) = agents.get_mut(id) {
+            agent.system_info = Some(system_info);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn update_processes(&self, id: &str, processes: Vec<ProcessItem>) {
         let mut agent_processes = self.agent_processes.write().unwrap();
         agent_processes.insert(id.to_string(), processes);

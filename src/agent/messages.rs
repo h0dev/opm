@@ -13,6 +13,11 @@ pub enum AgentMessage {
     },
     /// Heartbeat/ping message
     Heartbeat { id: String },
+    /// System information update message
+    SystemInfoUpdate {
+        id: String,
+        system_info: super::types::SystemInfo,
+    },
     /// Process list update message
     ProcessUpdate {
         id: String,
