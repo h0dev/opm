@@ -4,6 +4,9 @@ import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
 import { useArray, classNames, startDuration, formatMemory, isLocalAgent } from '@/helpers';
 
+// SSE connection timeout in milliseconds
+const SSE_TIMEOUT_MS = 10000; // 10 seconds
+
 const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [agent, setAgent] = useState<any>(null);
 	const [processes, setProcesses] = useState<any[]>([]);
@@ -42,11 +45,11 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		// Add timeout to prevent infinite loading
 		const timeoutId = setTimeout(() => {
 			if (import.meta.env.DEV) {
-				console.log('SSE connection timeout after 10 seconds');
+				console.log(`SSE connection timeout after ${SSE_TIMEOUT_MS / 1000} seconds`);
 			}
-			setError('Connection timeout - agent did not respond within 10 seconds');
+			setError(`Connection timeout - agent did not respond within ${SSE_TIMEOUT_MS / 1000} seconds`);
 			setLoading(false);
-		}, 10000); // 10 second timeout
+		}, SSE_TIMEOUT_MS);
 		
 		const source = new SSE(`${props.base}/live/agent/${props.agentId}`, { headers });
 		
@@ -143,6 +146,17 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	// Heartbeat interval is 30s by default, so we use 60s threshold (2x) to account for network delays
 	const isOnline = agent.last_seen && 
 		(Date.now() - agent.last_seen * 1000) < 60000; // 60 seconds threshold (2x 30s heartbeat interval)
+
+	// Check if resource usage card should be shown (at least one metric available)
+	const resourceUsage = agent.system_info?.resource_usage;
+	const hasResourceMetrics = resourceUsage && (
+		resourceUsage.cpu_usage != null ||
+		resourceUsage.memory_percent != null ||
+		resourceUsage.disk_percent != null ||
+		resourceUsage.load_avg_1 != null ||
+		resourceUsage.load_avg_5 != null ||
+		resourceUsage.load_avg_15 != null
+	);
 
 	return (
 		<Fragment>
@@ -300,20 +314,8 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 			)}
 
 			{/* Resource Usage Card */}
-			{(() => {
-				// Only show resource usage card if at least one metric is available
-				const resourceUsage = agent.system_info?.resource_usage;
-				const hasResourceMetrics = resourceUsage && (
-					resourceUsage.cpu_usage != null ||
-					resourceUsage.memory_percent != null ||
-					resourceUsage.disk_percent != null ||
-					resourceUsage.load_avg_1 != null ||
-					resourceUsage.load_avg_5 != null ||
-					resourceUsage.load_avg_15 != null
-				);
-
-				return hasResourceMetrics && (
-					<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
+			{hasResourceMetrics && (
+				<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
 						<h2 className="text-lg font-semibold text-zinc-200 mb-4">Resource Usage</h2>
 						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 						{/* CPU Usage */}
@@ -426,8 +428,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 						)}
 					</div>
 				</div>
-				);
-			})()}
+			)}
 
 			{/* Processes Section */}
 			<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
