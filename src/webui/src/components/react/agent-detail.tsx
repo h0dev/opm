@@ -16,9 +16,13 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 
 	// Log component mount for debugging
 	useEffect(() => {
-		console.log('[AgentDetail] Component mounted with agentId:', props.agentId);
+		if (import.meta.env.DEV) {
+			console.log('[AgentDetail] Component mounted with agentId:', props.agentId);
+		}
 		return () => {
-			console.log('[AgentDetail] Component unmounting');
+			if (import.meta.env.DEV) {
+				console.log('[AgentDetail] Component unmounting');
+			}
 		};
 	}, []);
 
@@ -104,7 +108,9 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	}, [props.agentId, retryTrigger]);
 
 	if (loading) {
-		console.log('[AgentDetail] Rendering loading state');
+		if (import.meta.env.DEV) {
+			console.log('[AgentDetail] Rendering loading state');
+		}
 		return (
 			<div className="min-h-screen flex items-center justify-center">
 				<Loader />
@@ -113,7 +119,9 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	}
 
 	if (error || !agent) {
-		console.log('[AgentDetail] Rendering error state:', { error, hasAgent: !!agent });
+		if (import.meta.env.DEV) {
+			console.log('[AgentDetail] Rendering error state:', { error, hasAgent: !!agent });
+		}
 		return (
 			<Fragment>
 				<Header name="Agent Details" description="Detailed information about this agent and its processes.">
@@ -168,12 +176,14 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		resourceUsage.load_avg_15
 	].some(metric => metric != null);
 
-	console.log('[AgentDetail] Rendering agent details:', { 
-		agentName: agent.name, 
-		agentId: agent.id, 
-		hasResourceMetrics,
-		processCount: processes.length 
-	});
+	if (import.meta.env.DEV) {
+		console.log('[AgentDetail] Rendering agent details:', { 
+			agentName: agent.name, 
+			agentId: agent.id, 
+			hasResourceMetrics,
+			processCount: processes.length 
+		});
+	}
 
 	return (
 		<Fragment>
