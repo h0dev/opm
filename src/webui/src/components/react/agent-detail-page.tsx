@@ -37,13 +37,15 @@ const AgentDetailPage = (props: { base: string }) => {
 	if (!agentId) {
 		return (
 			<div className="px-4 sm:px-6 lg:px-8 text-center py-12">
-				<div className="text-zinc-400 text-lg mb-4">No agent selected</div>
-				<div className="text-zinc-500 text-sm">
-					Please select an agent from the{' '}
-					<a href={`${props.base}/servers`} className="text-blue-500 hover:text-blue-400">
-						agents list
-					</a>
+				<div className="text-zinc-200 text-xl font-semibold mb-4">No Agent Selected</div>
+				<div className="text-zinc-300 text-base mb-6">
+					Please select an agent from the agents list to view details.
 				</div>
+				<a 
+					href={`${props.base}/servers`} 
+					className="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition">
+					Go to Agents List
+				</a>
 			</div>
 		);
 	}

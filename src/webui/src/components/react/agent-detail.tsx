@@ -4,12 +4,27 @@ import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
 import { useArray, classNames, startDuration, formatMemory, isLocalAgent } from '@/helpers';
 
+// SSE connection timeout in milliseconds
+const SSE_TIMEOUT_MS = 10000; // 10 seconds
+
 const AgentDetail = (props: { agentId: string; base: string }) => {
 	const [agent, setAgent] = useState<any>(null);
 	const [processes, setProcesses] = useState<any[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [retryTrigger, setRetryTrigger] = useState(0);
+
+	// Log component mount for debugging
+	useEffect(() => {
+		if (import.meta.env.DEV) {
+			console.log('[AgentDetail] Component mounted with agentId:', props.agentId);
+		}
+		return () => {
+			if (import.meta.env.DEV) {
+				console.log('[AgentDetail] Component unmounting');
+			}
+		};
+	}, []);
 
 	// Fix instruction for API endpoint issues
 	const API_ENDPOINT_FIX = (
@@ -39,11 +54,27 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		setLoading(true);
 		setError(null);
 		
+		// Add timeout to prevent infinite loading
+		const timeoutId = setTimeout(() => {
+			if (import.meta.env.DEV) {
+				console.log(`SSE connection timeout after ${SSE_TIMEOUT_MS / 1000} seconds`);
+			}
+			setError(`Connection timeout - agent did not respond within ${SSE_TIMEOUT_MS / 1000} seconds`);
+			setLoading(false);
+		}, SSE_TIMEOUT_MS);
+		
 		const source = new SSE(`${props.base}/live/agent/${props.agentId}`, { headers });
 		
 		source.onmessage = (event) => {
+			// Clear timeout once we receive data
+			clearTimeout(timeoutId);
+			
 			try {
 				const data = JSON.parse(event.data);
+				
+				if (import.meta.env.DEV) {
+					console.log('SSE data received:', data);
+				}
 				
 				if (data.error) {
 					setError(data.error);
@@ -62,20 +93,24 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 		};
 		
 		source.onerror = (err) => {
+			clearTimeout(timeoutId);
 			console.error('SSE connection error:', err);
-			setError('Lost connection to server. Retrying...');
+			setError('Lost connection to server. Click Retry to reconnect.');
 			setLoading(false);
-			// SSE will automatically reconnect
 		};
 		
 		source.stream();
 		
 		return () => {
+			clearTimeout(timeoutId);
 			source.close();
 		};
 	}, [props.agentId, retryTrigger]);
 
 	if (loading) {
+		if (import.meta.env.DEV) {
+			console.log('[AgentDetail] Rendering loading state');
+		}
 		return (
 			<div className="min-h-screen flex items-center justify-center">
 				<Loader />
@@ -84,6 +119,9 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	}
 
 	if (error || !agent) {
+		if (import.meta.env.DEV) {
+			console.log('[AgentDetail] Rendering error state:', { error, hasAgent: !!agent });
+		}
 		return (
 			<Fragment>
 				<Header name="Agent Details" description="Detailed information about this agent and its processes.">
@@ -126,6 +164,26 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	// Heartbeat interval is 30s by default, so we use 60s threshold (2x) to account for network delays
 	const isOnline = agent.last_seen && 
 		(Date.now() - agent.last_seen * 1000) < 60000; // 60 seconds threshold (2x 30s heartbeat interval)
+
+	// Check if resource usage card should be shown (at least one metric available)
+	const resourceUsage = agent.system_info?.resource_usage;
+	const hasResourceMetrics = resourceUsage && [
+		resourceUsage.cpu_usage,
+		resourceUsage.memory_percent,
+		resourceUsage.disk_percent,
+		resourceUsage.load_avg_1,
+		resourceUsage.load_avg_5,
+		resourceUsage.load_avg_15
+	].some(metric => metric != null);
+
+	if (import.meta.env.DEV) {
+		console.log('[AgentDetail] Rendering agent details:', { 
+			agentName: agent.name, 
+			agentId: agent.id, 
+			hasResourceMetrics,
+			processCount: processes.length 
+		});
+	}
 
 	return (
 		<Fragment>
@@ -283,7 +341,7 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 			)}
 
 			{/* Resource Usage Card */}
-			{agent.system_info?.resource_usage && (
+			{hasResourceMetrics && (
 				<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
 					<h2 className="text-lg font-semibold text-zinc-200 mb-4">Resource Usage</h2>
 					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

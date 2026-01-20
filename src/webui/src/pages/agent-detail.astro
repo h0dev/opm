@@ -9,6 +9,14 @@ import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
 	<Navbar active={"servers"} />
 	<main class="min-h-screen bg-zinc-950 pt-20">
 		<div class="py-8">
+			<noscript>
+				<div class="px-4 sm:px-6 lg:px-8 text-center py-12">
+					<div class="text-red-400 text-xl font-semibold mb-4">JavaScript Required</div>
+					<div class="text-zinc-300 text-base">
+						This page requires JavaScript to be enabled in your browser.
+					</div>
+				</div>
+			</noscript>
 			<AgentDetailPage base={"{{base_path | safe}}"} client:only="@astrojs/react" />
 		</div>
 	</main>
