@@ -149,14 +149,14 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 
 	// Check if resource usage card should be shown (at least one metric available)
 	const resourceUsage = agent.system_info?.resource_usage;
-	const hasResourceMetrics = resourceUsage && (
-		resourceUsage.cpu_usage != null ||
-		resourceUsage.memory_percent != null ||
-		resourceUsage.disk_percent != null ||
-		resourceUsage.load_avg_1 != null ||
-		resourceUsage.load_avg_5 != null ||
-		resourceUsage.load_avg_15 != null
-	);
+	const hasResourceMetrics = resourceUsage && [
+		resourceUsage.cpu_usage,
+		resourceUsage.memory_percent,
+		resourceUsage.disk_percent,
+		resourceUsage.load_avg_1,
+		resourceUsage.load_avg_5,
+		resourceUsage.load_avg_15
+	].some(metric => metric != null);
 
 	return (
 		<Fragment>
