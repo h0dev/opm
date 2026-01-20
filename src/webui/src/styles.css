@@ -42,7 +42,7 @@ nav a {
 
 /* Toggle switch precision alignment - prevent misalignment */
 /* Note: !important used to ensure immediate application and prevent FOUC */
-/* Mobile: width 2.5rem (40px), height 1.5rem (24px) - matches desktop proportions with 1.667:1 ratio */
+/* Mobile: width 2.25rem (36px), height 1.25rem (20px) - height matches pin diameter for perfect rounded edges */
 /* Desktop: width 3.25rem (52px), height 2rem (32px) - 1.625:1 ratio for iOS-style pill shape */
 button[role="switch"],
 .toggle-switch {
@@ -52,13 +52,13 @@ button[role="switch"],
 	vertical-align: middle !important;
 	flex-shrink: 0 !important;
 	position: relative !important;
-	width: 2.5rem !important; /* 40px - mobile width matching desktop proportions */
-	height: 1.5rem !important; /* 24px - mobile height */
+	width: 2.25rem !important; /* 36px - mobile width */
+	height: 1.25rem !important; /* 20px - mobile height matches pin diameter */
 	border-radius: 9999px !important; /* rounded-full */
 }
 
 /* Ensure toggle pin is perfectly centered within track */
-/* Mobile: Pin dimensions: 1.25rem x 1.25rem (20px x 20px) - matching desktop ratio */
+/* Mobile: Pin dimensions: 1.25rem x 1.25rem (20px x 20px) - height matches track height */
 /* Horizontal offset: 0.125rem (2px) provides visual padding from track edge */
 /* Vertical centering: 50% + translateY(-50%) for perfect alignment */
 button[role="switch"] > span,
@@ -79,11 +79,11 @@ button[role="switch"] > span,
 }
 
 /* Pin translation when checked - mobile */
-/* Translation: 1rem moves pin from left (0.125rem) to right with padding */
-/* Total movement: track width (2.5rem) - pin width (1.25rem) - total padding (0.25rem) = 1rem */
+/* Translation: 0.75rem moves pin from left (0.125rem) to right with padding */
+/* Total movement: track width (2.25rem) - pin width (1.25rem) - total padding (0.25rem) = 0.75rem */
 button[role="switch"][aria-checked="true"] > span,
 .toggle-switch[aria-checked="true"] > span {
-	transform: translateY(-50%) translateX(1rem) !important;
+	transform: translateY(-50%) translateX(0.75rem) !important;
 }
 
 /* Desktop toggle dimensions */

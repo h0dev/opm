@@ -6,9 +6,9 @@ import ToastContainer from '@/components/react/toast';
 import { useToast } from '@/components/react/useToast';
 
 // Toggle switch common styles - rely on CSS from styles.css for positioning and transforms
-// Mobile: h-6 w-10 (1.5rem/24px × 2.5rem/40px) matches desktop proportions with 1.667:1 ratio
+// Mobile: h-5 w-9 (1.25rem/20px × 2.25rem/36px) - height matches pin diameter for perfect rounded edges
 // Desktop: h-8 w-13 (2rem/32px × 3.25rem/52px) creates iOS-style pill shape with 1.625:1 ratio
-const TOGGLE_BASE_CLASSES = "relative inline-flex h-6 w-10 sm:h-8 sm:w-13 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900";
+const TOGGLE_BASE_CLASSES = "relative inline-flex h-5 w-9 sm:h-8 sm:w-13 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-zinc-900";
 const TOGGLE_PIN_CLASSES = "inline-block h-5 w-5 sm:h-7 sm:w-7 rounded-full bg-white transition-transform duration-200";
 const getToggleClasses = (enabled: boolean) => `${TOGGLE_BASE_CLASSES} ${enabled ? 'bg-blue-600' : 'bg-zinc-700'}`;
 const getTogglePinClasses = (enabled: boolean) => TOGGLE_PIN_CLASSES;
