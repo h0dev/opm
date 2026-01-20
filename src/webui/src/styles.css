@@ -42,7 +42,7 @@ nav a {
 
 /* Toggle switch precision alignment - prevent misalignment */
 /* Note: !important used to ensure immediate application and prevent FOUC */
-/* Mobile: width 2rem (32px), height 1.25rem (20px) - matches desktop proportions with 1.6:1 ratio */
+/* Mobile: width 2.5rem (40px), height 1.5rem (24px) - matches desktop proportions with 1.667:1 ratio */
 /* Desktop: width 3.25rem (52px), height 2rem (32px) - 1.625:1 ratio for iOS-style pill shape */
 button[role="switch"],
 .toggle-switch {
@@ -52,13 +52,13 @@ button[role="switch"],
 	vertical-align: middle !important;
 	flex-shrink: 0 !important;
 	position: relative !important;
-	width: 2rem !important; /* 32px - mobile width matching desktop proportions */
-	height: 1.25rem !important; /* 20px - mobile height */
+	width: 2.5rem !important; /* 40px - mobile width matching desktop proportions */
+	height: 1.5rem !important; /* 24px - mobile height */
 	border-radius: 9999px !important; /* rounded-full */
 }
 
 /* Ensure toggle pin is perfectly centered within track */
-/* Mobile: Pin dimensions: 1rem x 1rem (16px x 16px) - compact for mobile */
+/* Mobile: Pin dimensions: 1.25rem x 1.25rem (20px x 20px) - matching desktop ratio */
 /* Horizontal offset: 0.125rem (2px) provides visual padding from track edge */
 /* Vertical centering: 50% + translateY(-50%) for perfect alignment */
 button[role="switch"] > span,
@@ -69,8 +69,8 @@ button[role="switch"] > span,
 	left: 0.125rem !important; /* 2px visual padding */
 	transform: translateY(-50%) !important;
 	display: inline-block !important;
-	width: 1rem !important; /* 16px - mobile compact size */
-	height: 1rem !important; /* 16px - mobile compact size */
+	width: 1.25rem !important; /* 20px - mobile pin size */
+	height: 1.25rem !important; /* 20px - mobile pin size */
 	border-radius: 9999px !important; /* rounded-full */
 	background-color: white !important;
 	line-height: 1 !important;
@@ -79,11 +79,11 @@ button[role="switch"] > span,
 }
 
 /* Pin translation when checked - mobile */
-/* Translation: 0.75rem moves pin from left (0.125rem) to right with padding */
-/* Total movement: track width (2rem) - pin width (1rem) - total padding (0.25rem) = 0.75rem */
+/* Translation: 1rem moves pin from left (0.125rem) to right with padding */
+/* Total movement: track width (2.5rem) - pin width (1.25rem) - total padding (0.25rem) = 1rem */
 button[role="switch"][aria-checked="true"] > span,
 .toggle-switch[aria-checked="true"] > span {
-	transform: translateY(-50%) translateX(0.75rem) !important;
+	transform: translateY(-50%) translateX(1rem) !important;
 }
 
 /* Desktop toggle dimensions */
