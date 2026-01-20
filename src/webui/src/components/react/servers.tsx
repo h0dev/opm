@@ -1,4 +1,4 @@
-import { api } from '@/api';
+import { SSE, api, headers } from '@/api';
 import { useEffect, Fragment, useState } from 'react';
 import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
@@ -42,12 +42,12 @@ const Index = (props: { base: string }) => {
 	};
 
 	useEffect(() => {
-		// Use Server-Sent Events for real-time updates instead of polling
+		// Use Server-Sent Events for real-time updates with authentication
 		setLoading(true);
 		
-		const eventSource = new EventSource(`${props.base}/live/agents`);
+		const source = new SSE(`${props.base}/live/agents`, { headers });
 		
-		eventSource.onmessage = (event) => {
+		source.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data);
 				agents.clear();
@@ -61,14 +61,16 @@ const Index = (props: { base: string }) => {
 			}
 		};
 		
-		eventSource.onerror = (err) => {
+		source.onerror = (err) => {
 			console.error('SSE connection error:', err);
 			setLoading(false);
-			// EventSource will automatically reconnect
+			// SSE will automatically reconnect
 		};
 		
+		source.stream();
+		
 		return () => {
-			eventSource.close();
+			source.close();
 		};
 	}, [retryTrigger]);
 

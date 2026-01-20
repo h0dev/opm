@@ -1,4 +1,4 @@
-import { api } from '@/api';
+import { SSE, api, headers } from '@/api';
 import { useEffect, Fragment, useState } from 'react';
 import Loader from '@/components/react/loader';
 import Header from '@/components/react/header';
@@ -35,20 +35,20 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 	};
 
 	useEffect(() => {
-		// Use Server-Sent Events for real-time updates instead of polling
+		// Use Server-Sent Events for real-time updates with authentication
 		setLoading(true);
 		setError(null);
 		
-		const eventSource = new EventSource(`${props.base}/live/agent/${props.agentId}`);
+		const source = new SSE(`${props.base}/live/agent/${props.agentId}`, { headers });
 		
-		eventSource.onmessage = (event) => {
+		source.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data);
 				
 				if (data.error) {
 					setError(data.error);
 					setLoading(false);
-					eventSource.close();
+					source.close();
 				} else {
 					setAgent(data.agent);
 					setProcesses(Array.isArray(data.processes) ? data.processes : []);
@@ -61,15 +61,17 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 			}
 		};
 		
-		eventSource.onerror = (err) => {
+		source.onerror = (err) => {
 			console.error('SSE connection error:', err);
 			setError('Lost connection to server. Retrying...');
 			setLoading(false);
-			// EventSource will automatically reconnect
+			// SSE will automatically reconnect
 		};
 		
+		source.stream();
+		
 		return () => {
-			eventSource.close();
+			source.close();
 		};
 	}, [props.agentId, retryTrigger]);
 

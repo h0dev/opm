@@ -57,6 +57,12 @@ path = "/"      # Optional: Base path for the API/UI
 [daemon.web.secure]
 enabled = true
 token = "your-secret-token"
+
+# Optional: Restore cleanup (clean logs on restore)
+[daemon.restore_cleanup]
+process_logs = true  # Delete process logs on restore (default: true)
+daemon_log = true    # Delete daemon.log on restore (default: true)
+agent_log = true     # Delete agent.log on restore (default: true)
 ```
 
 ### API Endpoints

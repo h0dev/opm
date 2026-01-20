@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod prelude {
-    pub use super::{Config, Daemon, Notifications, Role, Runner, Secure, Server, Servers, Web};
+    pub use super::{Config, Daemon, Notifications, RestoreCleanup, Role, Runner, Secure, Server, Servers, Web};
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -47,6 +47,22 @@ pub struct Daemon {
     pub web: Web,
     #[serde(default)]
     pub notifications: Option<Notifications>,
+    #[serde(default)]
+    pub restore_cleanup: Option<RestoreCleanup>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct RestoreCleanup {
+    #[serde(default = "default_true")]
+    pub process_logs: bool,
+    #[serde(default = "default_true")]
+    pub daemon_log: bool,
+    #[serde(default = "default_true")]
+    pub agent_log: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize)]

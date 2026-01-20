@@ -51,6 +51,10 @@ opm logs <id/name>
 The daemon can be configured in `~/.opm/config.toml`:
 
 ```toml
+[daemon]
+restarts = 10      # Maximum restart attempts for a process
+interval = 1000    # Interval between restart attempts (ms)
+
 [daemon.web]
 ui = false      # Enable/disable web UI
 api = false     # Enable/disable API server
@@ -61,7 +65,23 @@ port = 9876
 [daemon.web.secure]
 enabled = true
 token = "your-secret-token"
+
+# Optional: Restore cleanup configuration
+[daemon.restore_cleanup]
+process_logs = true  # Delete process logs on restore (default: true)
+daemon_log = true    # Delete daemon.log on restore (default: true)
+agent_log = true     # Delete agent.log on restore (default: true)
 ```
+
+### Restore Cleanup Configuration
+
+When the daemon is restored (e.g., after system reboot), you can control which logs are automatically cleaned:
+
+- **process_logs**: Cleans all process log files in the logs directory (e.g., `0-out.log`, `1-error.log`)
+- **daemon_log**: Cleans the daemon's own log file (`~/.opm/daemon.log`)
+- **agent_log**: Cleans the agent connection log file (`~/.opm/agent.log`)
+
+All cleanup options default to `true` (enabled). Set them to `false` if you want to preserve logs across restores.
 
 ## API Endpoints
 

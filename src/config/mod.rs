@@ -69,6 +69,11 @@ pub fn read() -> Config {
                             path: None,
                         },
                         notifications: None,
+                        restore_cleanup: Some(structs::RestoreCleanup {
+                            process_logs: true,
+                            daemon_log: true,
+                            agent_log: true,
+                        }),
                     },
                     role: structs::Role::Standalone,
                 };

@@ -768,6 +768,70 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         .start_timer();
     HTTP_COUNTER.inc();
 
+    // Get restore cleanup configuration
+    let config = config::read();
+    let restore_cleanup = config.daemon.restore_cleanup.as_ref();
+    
+    // Clear process logs if enabled (default: true)
+    let should_cleanup_process_logs = restore_cleanup
+        .map(|rc| rc.process_logs)
+        .unwrap_or(true);
+    
+    if should_cleanup_process_logs {
+        let log_path = &config.runner.log_path;
+        if std::path::Path::new(log_path).exists() {
+            // Remove all log files in the log directory
+            if let Ok(entries) = fs::read_dir(log_path) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            let path = entry.path();
+                            if let Some(ext) = path.extension() {
+                                if ext == "log" {
+                                    if let Err(e) = fs::remove_file(&path) {
+                                        log::warn!("Failed to delete process log {:?}: {}", path, e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Clear daemon log if enabled (default: true)
+    let should_cleanup_daemon_log = restore_cleanup
+        .map(|rc| rc.daemon_log)
+        .unwrap_or(true);
+    
+    if should_cleanup_daemon_log {
+        if let Some(path) = home::home_dir() {
+            let daemon_log_path = path.join(".opm").join("daemon.log");
+            if daemon_log_path.exists() {
+                if let Err(e) = fs::remove_file(&daemon_log_path) {
+                    log::warn!("Failed to delete daemon.log: {}", e);
+                }
+            }
+        }
+    }
+    
+    // Clear agent log if enabled (default: true)
+    let should_cleanup_agent_log = restore_cleanup
+        .map(|rc| rc.agent_log)
+        .unwrap_or(true);
+    
+    if should_cleanup_agent_log {
+        if let Some(path) = home::home_dir() {
+            let agent_log_path = path.join(".opm").join("agent.log");
+            if agent_log_path.exists() {
+                if let Err(e) = fs::remove_file(&agent_log_path) {
+                    log::warn!("Failed to delete agent.log: {}", e);
+                }
+            }
+        }
+    }
+
     let runner = Runner::new();
 
     // Collect IDs of processes that were running when saved
