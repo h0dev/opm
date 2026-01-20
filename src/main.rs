@@ -273,36 +273,338 @@ enum AgentCommand {
         #[arg(long)]
         token: Option<String>,
     },
-    /// List connected agents (view via API/Web UI)
+    /// List connected agents
     #[command(visible_alias = "ls")]
-    List,
+    List {
+        /// Format output
+        #[arg(long, default_value_t = string!("default"))]
+        format: String,
+        /// Server connection (defaults to local)
+        #[arg(short, long)]
+        server: Option<String>,
+    },
+    /// List processes from all agents or a specific agent
+    #[command(visible_alias = "ps")]
+    Processes {
+        /// Agent ID or name (optional, shows all if not provided)
+        agent: Option<String>,
+        /// Format output
+        #[arg(long, default_value_t = string!("default"))]
+        format: String,
+        /// Server connection (defaults to local)
+        #[arg(short, long)]
+        server: Option<String>,
+    },
     /// Disconnect agent
     Disconnect,
     /// Show agent status
     Status,
 }
 
-fn agent_list() {
-    use opm::helpers;
+fn agent_list(format: &String, server_name: &String) {
+    use opm::{helpers, process::http};
+    use serde_json::json;
+    use tabled::{Table, Tabled, settings::{Style, Modify, Color, themes::Colorization, object::{Rows, Segment}, style::BorderColor}};
+    use colored::Colorize as ColorizeStr;
+    
+    #[derive(Tabled, Debug)]
+    struct AgentItem {
+        id: String,
+        name: String,
+        hostname: String,
+        status: String,
+        #[tabled(rename = "CPU")]
+        cpu: String,
+        #[tabled(rename = "Mem")]
+        memory: String,
+        #[tabled(rename = "Processes")]
+        process_count: String,
+    }
 
-    println!("{} Connected Agents", *helpers::INFO);
-    println!();
-    println!("To view connected agents, use one of the following methods:");
-    println!();
-    println!("  1. Web UI:");
-    println!("     • Start the daemon with Web UI enabled:");
-    println!("       opm daemon restore --webui");
-    println!("     • Open your browser to: http://localhost:9876");
-    println!("     • Navigate to the 'Agents' page");
-    println!();
-    println!("  2. API Endpoint:");
-    println!("     • Start the daemon with API enabled:");
-    println!("       opm daemon restore --api");
-    println!("     • Query: curl http://localhost:9876/daemon/agents/list");
-    println!();
-    println!("  3. Connect an agent:");
-    println!("     • On a remote machine: opm agent connect <server-url>");
-    println!("     • Example: opm agent connect http://192.168.1.100:9876");
+    impl serde::Serialize for AgentItem {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let trimmed_json = json!({
+                "id": &self.id.trim(),
+                "name": &self.name.trim(),
+                "hostname": &self.hostname.trim(),
+                "status": &self.status.trim(),
+                "cpu": &self.cpu.trim(),
+                "memory": &self.memory.trim(),
+                "process_count": &self.process_count.trim(),
+            });
+            trimmed_json.serialize(serializer)
+        }
+    }
+
+    // Get server config to connect to API
+    let config = opm::config::read();
+    let server = if matches!(&**server_name, "internal" | "local") {
+        format!("http://{}:{}", config.daemon.web.address, config.daemon.web.port)
+    } else if let Some(servers) = opm::config::servers().servers {
+        if let Some(srv) = servers.get(server_name) {
+            srv.address.clone()
+        } else {
+            eprintln!("{} Server '{}' not found", *helpers::FAIL, server_name);
+            return;
+        }
+    } else {
+        eprintln!("{} No servers configured", *helpers::FAIL);
+        return;
+    };
+
+    // Make API call to get agent list
+    match http::agent_list(&server) {
+        Ok(response) => {
+            match response.json::<Vec<opm::agent::types::AgentInfo>>() {
+                Ok(agents) => {
+                    let mut agent_items: Vec<AgentItem> = Vec::new();
+                    
+                    for agent in agents {
+                        let status_str = match agent.status {
+                            opm::agent::types::AgentStatus::Online => "online".green().to_string(),
+                            opm::agent::types::AgentStatus::Offline => "offline".red().to_string(),
+                            opm::agent::types::AgentStatus::Connecting => "connecting".yellow().to_string(),
+                            opm::agent::types::AgentStatus::Reconnecting => "reconnecting".yellow().to_string(),
+                        };
+                        
+                        let (cpu, memory) = if let Some(ref sys_info) = agent.system_info {
+                            if let Some(ref usage) = sys_info.resource_usage {
+                                let cpu_str = usage.cpu_usage
+                                    .map(|c| format!("{:.1}%", c))
+                                    .unwrap_or_else(|| "N/A".to_string());
+                                let mem_str = usage.memory_percent
+                                    .map(|m| format!("{:.1}%", m))
+                                    .unwrap_or_else(|| "N/A".to_string());
+                                (cpu_str, mem_str)
+                            } else {
+                                ("N/A".to_string(), "N/A".to_string())
+                            }
+                        } else {
+                            ("N/A".to_string(), "N/A".to_string())
+                        };
+
+                        // Get process count by fetching processes for this agent
+                        let process_count = match http::agent_processes(&server, &agent.id) {
+                            Ok(resp) => {
+                                match resp.json::<Vec<opm::process::ProcessItem>>() {
+                                    Ok(processes) => processes.len().to_string(),
+                                    Err(_) => "N/A".to_string(),
+                                }
+                            }
+                            Err(_) => "N/A".to_string(),
+                        };
+                        
+                        agent_items.push(AgentItem {
+                            id: agent.id.clone(),
+                            name: agent.name.clone(),
+                            hostname: agent.hostname.unwrap_or_else(|| "N/A".to_string()),
+                            status: status_str,
+                            cpu,
+                            memory,
+                            process_count,
+                        });
+                    }
+
+                    if agent_items.is_empty() {
+                        println!("{} No connected agents", *helpers::SUCCESS);
+                    } else {
+                        match format.as_str() {
+                            "raw" => println!("{:?}", agent_items),
+                            "json" => {
+                                if let Ok(json) = serde_json::to_string(&agent_items) {
+                                    println!("{}", json);
+                                }
+                            }
+                            "default" => {
+                                let table = Table::new(&agent_items)
+                                    .with(Style::rounded().remove_verticals())
+                                    .with(Modify::new(Segment::all())
+                                        .with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
+                                    .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
+                                    .to_string();
+                                println!("{}", table);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to parse agent list: {}", *helpers::FAIL, e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{} Failed to fetch agent list: {}", *helpers::FAIL, e);
+            eprintln!("{} Make sure the daemon is running with API enabled:", *helpers::INFO);
+            eprintln!("   opm daemon restore --api");
+        }
+    }
+}
+
+/// Truncate agent name to 3-5 characters for compact display
+fn truncate_agent_name(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let len = chars.len().min(5).max(3);
+    chars.iter().take(len).collect()
+}
+
+fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: &String) {
+    use opm::{helpers, process::http};
+    use serde_json::json;
+    use tabled::{Table, Tabled, settings::{Style, Modify, Color, themes::Colorization, Width, object::{Rows, Columns, Segment}, style::BorderColor}};
+    use colored::Colorize as ColorizeStr;
+    
+    #[derive(Tabled, Debug)]
+    struct ProcessDisplayItem {
+        id: String,
+        name: String,
+        agent: String,
+        pid: String,
+        status: String,
+        cpu: String,
+        mem: String,
+        uptime: String,
+    }
+
+    impl serde::Serialize for ProcessDisplayItem {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let trimmed_json = json!({
+                "id": &self.id.trim(),
+                "name": &self.name.trim(),
+                "agent": &self.agent.trim(),
+                "pid": &self.pid.trim(),
+                "status": &self.status.trim(),
+                "cpu": &self.cpu.trim(),
+                "mem": &self.mem.trim(),
+                "uptime": &self.uptime.trim(),
+            });
+            trimmed_json.serialize(serializer)
+        }
+    }
+
+    // Get server config to connect to API
+    let config = opm::config::read();
+    let server = if matches!(&**server_name, "internal" | "local") {
+        format!("http://{}:{}", config.daemon.web.address, config.daemon.web.port)
+    } else if let Some(servers) = opm::config::servers().servers {
+        if let Some(srv) = servers.get(server_name) {
+            srv.address.clone()
+        } else {
+            eprintln!("{} Server '{}' not found", *helpers::FAIL, server_name);
+            return;
+        }
+    } else {
+        eprintln!("{} No servers configured", *helpers::FAIL);
+        return;
+    };
+
+    // First, get list of agents
+    let agents = match http::agent_list(&server) {
+        Ok(response) => {
+            match response.json::<Vec<opm::agent::types::AgentInfo>>() {
+                Ok(agents) => agents,
+                Err(e) => {
+                    eprintln!("{} Failed to parse agent list: {}", *helpers::FAIL, e);
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{} Failed to fetch agent list: {}", *helpers::FAIL, e);
+            eprintln!("{} Make sure the daemon is running with API enabled:", *helpers::INFO);
+            eprintln!("   opm daemon restore --api");
+            return;
+        }
+    };
+
+    // Filter agents if specified
+    let agents_to_query: Vec<_> = if let Some(filter) = agent_filter {
+        // Filter by ID or name
+        agents.into_iter()
+            .filter(|a| a.id == *filter || a.name == *filter)
+            .collect()
+    } else {
+        agents
+    };
+
+    if agents_to_query.is_empty() {
+        eprintln!("{} No agents found", *helpers::FAIL);
+        if let Some(filter) = agent_filter {
+            eprintln!("   No agent matching '{}'", filter);
+        }
+        return;
+    }
+
+    let mut all_processes: Vec<ProcessDisplayItem> = Vec::new();
+    let is_multi_agent = agents_to_query.len() > 1;
+
+    // Fetch processes from each agent
+    for agent in agents_to_query.iter() {
+        match http::agent_processes(&server, &agent.id) {
+            Ok(resp) => {
+                match resp.json::<Vec<opm::process::ProcessItem>>() {
+                    Ok(processes) => {
+                        let agent_prefix = if is_multi_agent {
+                            format!("[{}]", truncate_agent_name(&agent.name))
+                        } else {
+                            String::new()
+                        };
+
+                        for process in processes {
+                            let process_name = if is_multi_agent {
+                                format!("{}{}", agent_prefix, process.name)
+                            } else {
+                                process.name.clone()
+                            };
+
+                            all_processes.push(ProcessDisplayItem {
+                                id: process.id.to_string().cyan().to_string(),
+                                name: process_name,
+                                agent: agent.name.clone(),
+                                pid: process.pid.to_string(),
+                                status: process.status.clone(),
+                                cpu: process.cpu.clone(),
+                                mem: process.mem.clone(),
+                                uptime: process.uptime.clone(),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("{} Failed to parse processes for agent '{}': {}", 
+                            *helpers::WARN, agent.name, e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{} Failed to fetch processes for agent '{}': {}", 
+                    *helpers::WARN, agent.name, e);
+            }
+        }
+    }
+
+    if all_processes.is_empty() {
+        println!("{} No processes found", *helpers::SUCCESS);
+    } else {
+        match format.as_str() {
+            "raw" => println!("{:?}", all_processes),
+            "json" => {
+                if let Ok(json) = serde_json::to_string(&all_processes) {
+                    println!("{}", json);
+                }
+            }
+            "default" => {
+                let table = Table::new(&all_processes)
+                    .with(Style::rounded().remove_verticals())
+                    .with(Modify::new(Segment::all())
+                        .with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
+                    .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
+                    .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
+                    .to_string();
+                println!("{}", table);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn agent_connect(server_url: String, name: Option<String>, token: Option<String>) {
@@ -638,7 +940,10 @@ fn main() {
                 name,
                 token,
             } => agent_connect(server_url.clone(), name.clone(), token.clone()),
-            AgentCommand::List => agent_list(),
+            AgentCommand::List { format, server } => agent_list(format, &defaults(server)),
+            AgentCommand::Processes { agent, format, server } => {
+                agent_processes(agent, format, &defaults(server))
+            }
             AgentCommand::Disconnect => agent_disconnect(),
             AgentCommand::Status => agent_status(),
         },

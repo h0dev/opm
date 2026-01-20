@@ -222,3 +222,21 @@ pub fn clear_env(
         .headers(headers)
         .send()?)
 }
+
+/// Get list of connected agents from server
+pub fn agent_list(address: &str) -> Result<sync::Response, anyhow::Error> {
+    let (client, headers) = sync::client(&None);
+    Ok(client
+        .get(fmtstr!("{address}/daemon/agents/list"))
+        .headers(headers)
+        .send()?)
+}
+
+/// Get processes for a specific agent
+pub fn agent_processes(address: &str, agent_id: &str) -> Result<sync::Response, anyhow::Error> {
+    let (client, headers) = sync::client(&None);
+    Ok(client
+        .get(fmtstr!("{address}/daemon/agents/{agent_id}/processes"))
+        .headers(headers)
+        .send()?)
+}
