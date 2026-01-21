@@ -548,10 +548,10 @@ impl Runner {
                 }
                 process.children = vec![];
                 
-                // Always increment crash counter for restart failures to count against restart limit
-                // This ensures manual restarts that fail also count toward the crash limit
-                // and prevents the counter from getting stuck
-                self.handle_restart_failure(id, &name, max_restarts);
+                // Increment crash counter for restart failures to count against restart limit
+                // When dead=true (daemon restart): don't increment (daemon already incremented)
+                // When dead=false (manual restart): increment (first time counting this failure)
+                self.handle_restart_failure(id, &name, max_restarts, !dead);
                 // Note: handle_restart_failure sets crashed=true, so we don't need to set it here
 
                 log::error!(
@@ -612,10 +612,10 @@ impl Runner {
                     }
                     process.children = vec![];
                     
-                    // Always increment crash counter for restart failures to count against restart limit
-                    // This ensures manual restarts that fail also count toward the crash limit
-                    // and prevents the counter from getting stuck
-                    self.handle_restart_failure(id, &name, max_restarts);
+                    // Increment crash counter for restart failures to count against restart limit
+                    // When dead=true (daemon restart): don't increment (daemon already incremented)
+                    // When dead=false (manual restart): increment (first time counting this failure)
+                    self.handle_restart_failure(id, &name, max_restarts, !dead);
                     // Note: handle_restart_failure sets crashed=true, so we don't need to set it here
 
                     log::error!("Failed to restart process '{}' (id={}): {}", name, id, err);
@@ -708,10 +708,10 @@ impl Runner {
                 }
                 process.children = vec![];
                 
-                // Always increment crash counter for reload failures to count against restart limit
-                // This ensures manual reloads that fail also count toward the crash limit
-                // and prevents the counter from getting stuck
-                self.handle_restart_failure(id, &name, max_restarts);
+                // Increment crash counter for reload failures to count against restart limit
+                // When dead=true (daemon reload): don't increment (daemon already incremented)
+                // When dead=false (manual reload): increment (first time counting this failure)
+                self.handle_restart_failure(id, &name, max_restarts, !dead);
                 // Note: handle_restart_failure sets crashed=true, so we don't need to set it here
 
                 log::error!(
@@ -772,10 +772,10 @@ impl Runner {
                     }
                     process.children = vec![];
                     
-                    // Always increment crash counter for reload failures to count against restart limit
-                    // This ensures manual reloads that fail also count toward the crash limit
-                    // and prevents the counter from getting stuck
-                    self.handle_restart_failure(id, &name, max_restarts);
+                    // Increment crash counter for reload failures to count against restart limit
+                    // When dead=true (daemon reload): don't increment (daemon already incremented)
+                    // When dead=false (manual reload): increment (first time counting this failure)
+                    self.handle_restart_failure(id, &name, max_restarts, !dead);
                     // Note: handle_restart_failure sets crashed=true, so we don't need to set it here
 
                     log::error!("Failed to reload process '{}' (id={}): {}", name, id, err);
@@ -972,11 +972,18 @@ impl Runner {
         return self;
     }
 
-    /// Handle restart/reload failure by incrementing crash counter and checking limit
+    /// Handle restart/reload failure by optionally incrementing crash counter and checking limit
     /// Sets running=false if the limit is exceeded
-    fn handle_restart_failure(&mut self, id: usize, process_name: &str, max_restarts: u64) {
+    /// 
+    /// # Arguments
+    /// * `increment_counter` - Whether to increment crash counter. Set to false if counter was already incremented by daemon.
+    fn handle_restart_failure(&mut self, id: usize, process_name: &str, max_restarts: u64, increment_counter: bool) {
         let process = self.process(id);
-        process.crash.value += 1;
+        
+        // Only increment if not already incremented by caller (e.g., daemon)
+        if increment_counter {
+            process.crash.value += 1;
+        }
         process.crash.crashed = true;
 
         // Check if we've reached or exceeded max restart limit
@@ -2682,9 +2689,13 @@ mod tests {
     #[test]
     #[ignore = "Requires config file which doesn't exist in test environment"]
     fn test_restart_failure_increments_crash_counter() {
-        // Test that when restart() fails repeatedly, the crash counter is incremented
-        // and eventually the process is stopped after exceeding max_restarts.
-        // This prevents infinite retry loops when restart repeatedly fails.
+        // Test that when restart() fails repeatedly due to bad config (e.g., bad working directory),
+        // the crash counter is NOT double-incremented (bug fix for counter stopping at 8).
+        // 
+        // OLD BEHAVIOR (BUG): Daemon increments + restart failure increments = counter jumps by 2
+        // NEW BEHAVIOR (FIX): Only daemon increments, restart failure does NOT increment for dead=true
+        //
+        // This ensures counter reaches limit of 10 correctly instead of stopping at 8.
 
         let mut runner = setup_test_runner();
         let id = runner.id.next();
@@ -2703,7 +2714,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: true, // Already marked as crashed, so restart will be attempted
-                value: 1,      // First crash detected
+                value: 1,      // First crash detected by daemon
             },
             watch: Watch {
                 enabled: false,
@@ -2718,15 +2729,16 @@ mod tests {
 
         runner.list.insert(id, process);
 
-        // Simulate daemon calling restart with dead=true (auto-restart)
+        // Simulate daemon calling restart with dead=true (auto-restart after crash)
         // This should fail due to invalid working directory
+        // With our fix: counter should NOT increment again (daemon already incremented to 1)
         runner.restart(id, true, true);
 
-        // Verify that crash.value was incremented due to restart failure
+        // Verify that crash.value was NOT double-incremented
         let process = runner.info(id).unwrap();
         assert_eq!(
-            process.crash.value, 2,
-            "Restart failure should increment crash counter from 1 to 2"
+            process.crash.value, 1,
+            "After daemon restart failure, counter should stay at 1 (no double increment)"
         );
         assert_eq!(
             process.crash.crashed, true,
@@ -2737,13 +2749,23 @@ mod tests {
             "Restart failure should keep running=true so daemon will retry (not yet at limit)"
         );
 
-        // Simulate multiple restart failures up to the limit (default is 10)
-        for expected_crash_value in 3..=10 {
+        // Simulate daemon detecting more crashes and restart failures up to the limit
+        // Each iteration: daemon increments, then restart fails (no additional increment)
+        for expected_crash_value in 2..=10 {
+            // Daemon detects another crash and increments
+            {
+                let process = runner.process(id);
+                process.crash.value += 1;
+            }
+            
+            // Daemon tries to restart (will fail)
             runner.restart(id, true, true);
+            
             let process = runner.info(id).unwrap();
             assert_eq!(
                 process.crash.value, expected_crash_value,
-                "Crash counter should increment with each restart failure"
+                "After daemon crash detection #{}, counter should be {} (single increment)",
+                expected_crash_value, expected_crash_value
             );
             assert_eq!(
                 process.running, true,
@@ -2751,8 +2773,13 @@ mod tests {
             );
         }
 
-        // One more restart failure should exceed the limit
+        // At 10, we've reached the limit - next daemon increment should stop it
+        {
+            let process = runner.process(id);
+            process.crash.value += 1; // 11
+        }
         runner.restart(id, true, true);
+        
         let process = runner.info(id).unwrap();
         assert_eq!(
             process.crash.value, 11,
