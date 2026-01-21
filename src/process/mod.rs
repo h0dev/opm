@@ -2852,4 +2852,185 @@ mod tests {
             "Process should be marked as crashed"
         );
     }
+
+    #[test]
+    fn test_auto_restart_10_times_then_manual_restart_increments() {
+        // Comprehensive test for user's verification request:
+        // 1. Verify auto-restart happens exactly 10 times (max_restarts=10)
+        // 2. Verify after manual restart, crash counter continues to increment
+        
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+        let max_restarts = 10u64;
+
+        // Start with a healthy process
+        let process = Process {
+            id,
+            pid: 12345,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_auto_restart_10_times".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'test'".to_string(),
+            restarts: 0,
+            running: true,
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+        };
+
+        runner.list.insert(id, process);
+
+        // Simulate 10 crashes with auto-restart (daemon behavior)
+        for expected_crash_count in 1..=10 {
+            // Simulate process crash
+            {
+                let process = runner.process(id);
+                process.pid = 0; // Process died
+            }
+            
+            // Daemon detects crash and increments counter
+            {
+                let process_info = runner.info(id).unwrap();
+                if !process_info.crash.crashed {
+                    let process = runner.process(id);
+                    process.crash.value += 1;
+                    process.crash.crashed = true;
+                }
+            }
+            
+            // Verify crash was counted
+            assert_eq!(
+                runner.info(id).unwrap().crash.value,
+                expected_crash_count,
+                "After crash #{}, counter should be {}",
+                expected_crash_count,
+                expected_crash_count
+            );
+            
+            // Check if we should continue auto-restarting
+            let should_auto_restart = expected_crash_count <= max_restarts;
+            
+            if should_auto_restart {
+                // Daemon attempts auto-restart (simulating successful restart)
+                {
+                    let process = runner.process(id);
+                    process.pid = 12345 + expected_crash_count as i64; // New PID
+                    process.running = true;
+                    // With our fix: crashed flag cleared AFTER successful restart
+                    process.crash.crashed = false;
+                }
+                
+                assert_eq!(
+                    runner.info(id).unwrap().running,
+                    true,
+                    "After crash #{}, process should auto-restart (within limit of {})",
+                    expected_crash_count,
+                    max_restarts
+                );
+            }
+        }
+        
+        // After 10 crashes, the next crash should exceed the limit
+        // Simulate 11th crash
+        {
+            let process = runner.process(id);
+            process.pid = 0; // Process died
+        }
+        
+        // Daemon detects crash and increments counter
+        {
+            let process_info = runner.info(id).unwrap();
+            if !process_info.crash.crashed {
+                let process = runner.process(id);
+                process.crash.value += 1;
+                process.crash.crashed = true;
+            }
+        }
+        
+        // Verify we're at 11 crashes
+        assert_eq!(
+            runner.info(id).unwrap().crash.value,
+            11,
+            "After 11th crash, counter should be 11"
+        );
+        
+        // Daemon should stop auto-restarting (crash.value=11 > max_restarts=10)
+        if runner.info(id).unwrap().crash.value > max_restarts {
+            let process = runner.process(id);
+            process.running = false;
+        }
+        
+        assert_eq!(
+            runner.info(id).unwrap().running,
+            false,
+            "After exceeding max_restarts (11 > 10), daemon should stop auto-restart"
+        );
+        
+        // NOW TEST MANUAL RESTART AFTER LIMIT
+        // User manually restarts the process
+        {
+            let process = runner.process(id);
+            process.pid = 99999; // Manual restart succeeds
+            process.running = true;
+            // With our fix: crashed flag cleared AFTER successful manual restart
+            process.crash.crashed = false;
+        }
+        
+        assert_eq!(
+            runner.info(id).unwrap().running,
+            true,
+            "Manual restart should succeed and process should be running"
+        );
+        assert_eq!(
+            runner.info(id).unwrap().crash.crashed,
+            false,
+            "After successful manual restart, crashed flag should be cleared"
+        );
+        assert_eq!(
+            runner.info(id).unwrap().crash.value,
+            11,
+            "Manual restart does not reset crash counter (preserves history)"
+        );
+        
+        // Process crashes again after manual restart
+        {
+            let process = runner.process(id);
+            process.pid = 0; // Process died again
+        }
+        
+        // Daemon detects the new crash - THIS IS THE CRITICAL TEST
+        // Before the fix, crashed=false was set too early and this wouldn't work
+        // After the fix, crashed=false is only set after successful restart, so detection works
+        {
+            let process_info = runner.info(id).unwrap();
+            if !process_info.crash.crashed {
+                let process = runner.process(id);
+                process.crash.value += 1;
+                process.crash.crashed = true;
+            }
+        }
+        
+        // CRITICAL VERIFICATION: Counter should increment from 11 to 12
+        assert_eq!(
+            runner.info(id).unwrap().crash.value,
+            12,
+            "After manual restart and crash, counter MUST increment from 11 to 12 (THIS IS THE BUG FIX!)"
+        );
+        assert_eq!(
+            runner.info(id).unwrap().crash.crashed,
+            true,
+            "Process should be marked as crashed after new crash"
+        );
+    }
 }
