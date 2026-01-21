@@ -415,6 +415,6 @@ async fn embed() -> (ContentType, String) {
 }
 
 #[rocket::get("/health")]
-async fn health() -> Value {
+async fn health(_t: routes::Token) -> Value {
     json!({"healthy": true})
 }
