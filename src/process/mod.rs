@@ -2861,12 +2861,14 @@ mod tests {
         
         let mut runner = setup_test_runner();
         let id = runner.id.next();
-        let max_restarts = 10u64;
+        const MAX_RESTARTS: u64 = 10;
+        const INITIAL_PID: i64 = 12345;
+        const MANUAL_RESTART_PID: i64 = 99999;
 
         // Start with a healthy process
         let process = Process {
             id,
-            pid: 12345,
+            pid: INITIAL_PID,
             shell_pid: None,
             env: BTreeMap::new(),
             name: "test_auto_restart_10_times".to_string(),
@@ -2919,13 +2921,14 @@ mod tests {
             );
             
             // Check if we should continue auto-restarting
-            let should_auto_restart = expected_crash_count <= max_restarts;
+            let should_auto_restart = expected_crash_count <= MAX_RESTARTS;
             
             if should_auto_restart {
                 // Daemon attempts auto-restart (simulating successful restart)
                 {
                     let process = runner.process(id);
-                    process.pid = 12345 + expected_crash_count as i64; // New PID
+                    // Use unique PID for each restart
+                    process.pid = INITIAL_PID + (expected_crash_count as i64 * 100);
                     process.running = true;
                     // With our fix: crashed flag cleared AFTER successful restart
                     process.crash.crashed = false;
@@ -2936,7 +2939,7 @@ mod tests {
                     true,
                     "After crash #{}, process should auto-restart (within limit of {})",
                     expected_crash_count,
-                    max_restarts
+                    MAX_RESTARTS
                 );
             }
         }
@@ -2966,7 +2969,7 @@ mod tests {
         );
         
         // Daemon should stop auto-restarting (crash.value=11 > max_restarts=10)
-        if runner.info(id).unwrap().crash.value > max_restarts {
+        if runner.info(id).unwrap().crash.value > MAX_RESTARTS {
             let process = runner.process(id);
             process.running = false;
         }
@@ -2981,7 +2984,7 @@ mod tests {
         // User manually restarts the process
         {
             let process = runner.process(id);
-            process.pid = 99999; // Manual restart succeeds
+            process.pid = MANUAL_RESTART_PID; // Manual restart succeeds
             process.running = true;
             // With our fix: crashed flag cleared AFTER successful manual restart
             process.crash.crashed = false;
