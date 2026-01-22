@@ -1,6 +1,7 @@
 use opm::agent::messages::AgentMessage;
 use opm::agent::registry::AgentRegistry;
 use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
+use opm::notifications::{NotificationManager, NotificationEvent};
 use opm::process::ProcessItem;
 use rocket::{State, get};
 use rocket_ws::{Message, Stream, WebSocket};
@@ -19,8 +20,13 @@ use tokio::sync::mpsc;
 /// 
 /// All agent communication including process actions is now handled via WebSocket.
 #[get("/ws/agent")]
-pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stream!['static] {
+pub fn websocket_handler(
+    ws: WebSocket, 
+    registry: &State<AgentRegistry>,
+    notif_mgr: &State<std::sync::Arc<NotificationManager>>
+) -> Stream!['static] {
     let registry = registry.inner().clone();
+    let notif_mgr = notif_mgr.inner().clone();
 
     Stream! { ws =>
         let mut agent_id: Option<String> = None;
@@ -42,6 +48,9 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                 AgentMessage::Register { id, name, hostname, api_endpoint } => {
                                     log::info!("[WebSocket] Agent registration: {} ({})", name, id);
 
+                                    // Clone hostname once for notification
+                                    let hostname_for_notif = hostname.clone();
+
                                     let agent_info = AgentInfo {
                                         id: id.clone(),
                                         name: name.clone(),
@@ -56,7 +65,20 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
 
                                     // Register agent with sender channel for bidirectional communication
                                     registry.register_with_sender(agent_info, tx.clone());
-                                    agent_id = Some(id);
+                                    agent_id = Some(id.clone());
+
+                                    // Send notification about agent connection
+                                    let notif_title = "Agent Connected";
+                                    let notif_message = format!(
+                                        "Agent '{}' (ID: {}) has connected{}",
+                                        name,
+                                        id,
+                                        hostname_for_notif.map(|h| format!(" from {}", h)).unwrap_or_default()
+                                    );
+                                    let nm = notif_mgr.clone();
+                                    tokio::spawn(async move {
+                                        nm.send(NotificationEvent::AgentConnect, &notif_title, &notif_message).await;
+                                    });
 
                                     // Send success response
                                     let response = AgentMessage::Response {
@@ -181,7 +203,20 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
         // Cleanup: unregister agent on disconnect
         if let Some(id) = agent_id {
             log::info!("[WebSocket] Unregistering agent {}", id);
+            
+            // Get agent info before unregistering for notification
+            let agent_name = registry.get(&id).map(|a| a.name.clone());
+            
             registry.unregister(&id);
+            
+            // Send notification about agent disconnection
+            if let Some(name) = agent_name {
+                let notif_title = "Agent Disconnected";
+                let notif_message = format!("Agent '{}' (ID: {}) has disconnected", name, id);
+                tokio::spawn(async move {
+                    notif_mgr.send(NotificationEvent::AgentDisconnect, &notif_title, &notif_message).await;
+                });
+            }
         }
     }
 }

@@ -33,6 +33,7 @@ use opm::{
         ItemSingle, ProcessItem, Runner, dump, get_process_cpu_usage_with_children_from_process,
         get_process_memory_with_children, http::client,
     },
+    notifications::{NotificationManager, NotificationEvent},
 };
 
 use crate::daemon::{
@@ -1776,6 +1777,7 @@ pub async fn action_handler(
     id: usize,
     body: Json<ActionBody>,
     _t: Token,
+    notif_mgr: &State<std::sync::Arc<NotificationManager>>,
 ) -> Result<Json<ActionResponse>, NotFound> {
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["action"])
@@ -1785,12 +1787,29 @@ pub async fn action_handler(
 
     if runner.exists(id) {
         HTTP_COUNTER.inc();
+        
+        // Get process info for notifications
+        let process_info = runner.info(id).cloned();
+        
         match method {
             "start" => {
                 let mut item = runner.get(id);
                 item.restart(false); // start should not increment
                 item.get_runner().save();
                 timer.observe_duration();
+                
+                // Send notification
+                if let Some(info) = process_info {
+                    let nm = notif_mgr.inner().clone();
+                    tokio::spawn(async move {
+                        nm.send(
+                            NotificationEvent::ProcessStart,
+                            "Process Started",
+                            &format!("Process '{}' (ID: {}) has been started", info.name, id),
+                        ).await;
+                    });
+                }
+                
                 Ok(Json(attempt(true, method)))
             }
             "restart" => {
@@ -1798,6 +1817,19 @@ pub async fn action_handler(
                 item.restart(true); // restart should increment
                 item.get_runner().save();
                 timer.observe_duration();
+                
+                // Send notification
+                if let Some(info) = process_info {
+                    let nm = notif_mgr.inner().clone();
+                    tokio::spawn(async move {
+                        nm.send(
+                            NotificationEvent::ProcessRestart,
+                            "Process Restarted",
+                            &format!("Process '{}' (ID: {}) has been restarted", info.name, id),
+                        ).await;
+                    });
+                }
+                
                 Ok(Json(attempt(true, method)))
             }
             "reload" => {
@@ -1812,6 +1844,19 @@ pub async fn action_handler(
                 item.stop();
                 item.get_runner().save();
                 timer.observe_duration();
+                
+                // Send notification
+                if let Some(info) = process_info {
+                    let nm = notif_mgr.inner().clone();
+                    tokio::spawn(async move {
+                        nm.send(
+                            NotificationEvent::ProcessStop,
+                            "Process Stopped",
+                            &format!("Process '{}' (ID: {}) has been stopped", info.name, id),
+                        ).await;
+                    });
+                }
+                
                 Ok(Json(attempt(true, method)))
             }
             "reset_env" | "clear_env" => {
