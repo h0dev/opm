@@ -266,7 +266,7 @@ pub async fn start(webui: bool) {
     log::info!("API start: Initializing notification manager");
     // Initialize notification manager
     let notif_config = config::read().daemon.notifications.clone();
-    let _notification_manager =
+    let notification_manager =
         std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
 
     log::info!("API start: Initializing agent registry");
@@ -339,6 +339,7 @@ pub async fn start(webui: bool) {
             tera: tera.0,
         })
         .manage(agent_registry)
+        .manage(notification_manager)
         .mount(format!("{s_path}/"), routes)
         .register(
             "/",

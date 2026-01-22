@@ -15,12 +15,15 @@ use serde::Serialize;
 use serde_json::json;
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{process, thread::sleep, time::Duration};
+use tokio::sync::OnceCell;
 
 use opm::{
     config,
     helpers::{self, ColoredString},
     process::{Runner, get_process_cpu_usage_with_children_from_process, hash, id::Id},
+    notifications::NotificationManager,
 };
 
 use tabled::{
@@ -40,6 +43,7 @@ const STARTUP_GRACE_PERIOD_SECS: i64 = 1;
 
 static ENABLE_API: AtomicBool = AtomicBool::new(false);
 static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
+static NOTIFICATION_MANAGER: OnceCell<Arc<NotificationManager>> = OnceCell::const_new();
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     // SAFETY: Signal handlers should be kept simple and avoid complex operations.
@@ -83,6 +87,22 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
 extern "C" fn handle_sigpipe(_: libc::c_int) {
     // Ignore SIGPIPE - this prevents the daemon from crashing when writing to closed stdout/stderr
     // This can happen when the daemon tries to use println!() after being daemonized
+}
+
+/// Helper function to send notifications from non-async context
+fn send_notification(event: opm::notifications::NotificationEvent, title: String, message: String) {
+    if let Some(notif_mgr) = NOTIFICATION_MANAGER.get() {
+        let notif_mgr = notif_mgr.clone();
+        // Spawn a task to send the notification asynchronously
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new();
+            if let Ok(rt) = rt {
+                rt.block_on(async {
+                    notif_mgr.send(event, &title, &message).await;
+                });
+            }
+        });
+    }
 }
 
 fn restart_process() {
@@ -222,6 +242,16 @@ fn restart_process() {
                     process.crash.value
                 };
 
+                // Send crash notification
+                send_notification(
+                    opm::notifications::NotificationEvent::ProcessCrash,
+                    "Process Crashed".to_string(),
+                    format!(
+                        "Process '{}' (ID: {}) has crashed (crash count: {})",
+                        item.name, id, crash_count
+                    ),
+                );
+
                 // Only handle restart logic if process was supposed to be running
                 if item.running {
                     // Check if we've reached or exceeded the maximum crash limit
@@ -236,6 +266,16 @@ fn restart_process() {
                         log!("[daemon] process reached max crash limit", 
                              "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
+                        
+                        // Send notification about reaching max restarts
+                        send_notification(
+                            opm::notifications::NotificationEvent::ProcessStop,
+                            "Process Stopped After Max Crashes".to_string(),
+                            format!(
+                                "Process '{}' (ID: {}) stopped after reaching max crash limit ({})",
+                                item.name, id, daemon_config.restarts
+                            ),
+                        );
                     } else {
                         // Still within crash limit - mark as crashed and save
                         // Next daemon cycle will restart it
@@ -266,8 +306,19 @@ fn restart_process() {
                          "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
                     runner.restart(id, true, true);
                     runner.save();
+                    let new_pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
                     log!("[daemon] restart complete", 
-                         "name" => item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
+                         "name" => item.name, "id" => id, "new_pid" => new_pid);
+                    
+                    // Send restart notification
+                    send_notification(
+                        opm::notifications::NotificationEvent::ProcessRestart,
+                        "Process Restarted".to_string(),
+                        format!(
+                            "Process '{}' (ID: {}) has been restarted (new PID: {})",
+                            item.name, id, new_pid
+                        ),
+                    );
                 }
             } else {
                 // Process was already stopped and marked as crashed
@@ -489,6 +540,11 @@ pub fn start(verbose: bool) {
         let config = config::read().daemon;
         let api_enabled = ENABLE_API.load(Ordering::Acquire);
         let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
+
+        // Initialize notification manager for daemon use
+        let notif_config = config::read().daemon.notifications.clone();
+        let notification_manager = Arc::new(NotificationManager::new(notif_config));
+        let _ = NOTIFICATION_MANAGER.set(notification_manager);
 
         unsafe {
             libc::signal(libc::SIGTERM, handle_termination_signal as usize);
