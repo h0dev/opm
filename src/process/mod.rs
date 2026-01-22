@@ -1112,7 +1112,6 @@ impl Runner {
 
     /// Helper method to build ProcessItem from Process
     fn build_process_item(&self, id: usize, item: &Process) -> ProcessItem {
-        let max_restarts = config::read().daemon.restarts;
         let mut memory_usage: Option<MemoryInfo> = None;
         let mut cpu_percent: Option<f64> = None;
 
@@ -1170,7 +1169,7 @@ impl Runner {
             cpu: cpu_percent,
             mem: memory_usage,
             restarts: if item.crash.crashed { 
-                std::cmp::min(item.crash.value, max_restarts) 
+                item.crash.value 
             } else { 
                 item.restarts 
             },
@@ -1308,7 +1307,6 @@ impl ProcessWrapper {
         let item = runner.process(self.id);
         let full_config = config::read();
         let config = full_config.runner;
-        let max_restarts = full_config.daemon.restarts;
 
         // Check if process actually exists before reporting as online
         // A process marked as running but with a non-existent PID should be shown as crashed
@@ -1382,7 +1380,7 @@ impl ProcessWrapper {
                 cpu_percent,
                 memory_usage,
                 restarts: if item.crash.crashed { 
-                    std::cmp::min(item.crash.value, max_restarts) 
+                    item.crash.value 
                 } else { 
                     item.restarts 
                 },
@@ -2339,6 +2337,49 @@ mod tests {
         assert!(
             process.crash.value >= max_restarts,
             "crash.value=11 should be >= max_restarts=10, preventing restart"
+        );
+    }
+
+    #[test]
+    fn test_crash_counter_display_beyond_limit() {
+        // Test that crash counter displays actual value even when it exceeds max_restarts
+        // This validates the fix for showing true crash count beyond the limit
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Create a process with crash.value = 15 (exceeds typical limit of 10)
+        let process = Process {
+            id,
+            pid: 0, // Not running
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process_15_crashes".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'test'".to_string(),
+            restarts: 0,
+            running: false,
+            crash: Crash {
+                crashed: true,
+                value: 15,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+        };
+
+        runner.list.insert(id, process.clone());
+
+        // Test build_process_item - should display actual crash.value (15) not capped at max_restarts (10)
+        let process_item = runner.build_process_item(id, &process);
+        assert_eq!(
+            process_item.restarts, 15,
+            "ProcessItem should display actual crash counter value (15) even when it exceeds max_restarts (10)"
         );
     }
 
