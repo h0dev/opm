@@ -599,7 +599,7 @@ impl<'i> Internal<'i> {
                     memory_usage,
                     memory_limit,
                     id: string!(self.id),
-                    restarts: item.crash.value,
+                    restarts: item.restarts + item.crash.value,
                     name: item.name.clone(),
                     log_out: item.logs().out,
                     path: format!("{} ", path),
@@ -714,7 +714,7 @@ impl<'i> Internal<'i> {
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
-                    restarts: item.crash.value,
+                    restarts: item.restarts + item.crash.value,
                     name: item.name.clone(),
                     pid: ternary!(
                         item.running && !item.crash.crashed,
@@ -1321,7 +1321,7 @@ impl<'i> Internal<'i> {
                         cpu: format!("{cpu_percent}   "),
                         mem: format!("{memory_usage}   "),
                         id: id.to_string().cyan().bold().into(),
-                        restarts: format!("{}  ", item.crash.value),
+                        restarts: format!("{}  ", item.restarts + item.crash.value),
                         name: format!("{}   ", item.name.clone()),
                         pid: ternary!(
                             process_actually_running,

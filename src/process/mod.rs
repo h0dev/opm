@@ -1168,7 +1168,7 @@ impl Runner {
             pid: item.pid,
             cpu: cpu_percent,
             mem: memory_usage,
-            restarts: item.crash.value,
+            restarts: item.restarts + item.crash.value,
             name: item.name.clone(),
             start_time: item.started,
             watch_path: item.watch.path.clone(),
@@ -1374,7 +1374,7 @@ impl ProcessWrapper {
             stats: Stats {
                 cpu_percent,
                 memory_usage,
-                restarts: item.crash.value,
+                restarts: item.restarts + item.crash.value,
                 start_time: item.started.timestamp_millis(),
             },
             watch: Watch {
