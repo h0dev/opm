@@ -520,7 +520,9 @@ impl<'i> Internal<'i> {
 
         if matches!(self.server_name, "internal" | "local") {
             if let Some(home) = home::home_dir() {
-                let config = config::read().runner;
+                let full_config = config::read();
+                let config = full_config.runner;
+                let max_restarts = full_config.daemon.restarts;
                 let mut runner = Runner::new();
                 let item = runner.process(self.id);
 
@@ -599,7 +601,11 @@ impl<'i> Internal<'i> {
                     memory_usage,
                     memory_limit,
                     id: string!(self.id),
-                    restarts: item.restarts,
+                    restarts: if item.crash.crashed { 
+                        std::cmp::min(item.crash.value, max_restarts) 
+                    } else { 
+                        item.restarts 
+                    },
                     name: item.name.clone(),
                     log_out: item.logs().out,
                     path: format!("{} ", path),
@@ -634,6 +640,7 @@ impl<'i> Internal<'i> {
                 crashln!("{} Impossible to get your home directory", *helpers::FAIL);
             }
         } else {
+            let max_restarts = config::read().daemon.restarts;
             let data: (opm::process::Process, Runner);
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -714,7 +721,11 @@ impl<'i> Internal<'i> {
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
-                    restarts: item.restarts,
+                    restarts: if item.crash.crashed { 
+                        std::cmp::min(item.crash.value, max_restarts) 
+                    } else { 
+                        item.restarts 
+                    },
                     name: item.name.clone(),
                     pid: ternary!(
                         item.running && !item.crash.crashed,
@@ -1238,6 +1249,9 @@ impl<'i> Internal<'i> {
             if runner.is_empty() {
                 println!("{} Process table empty", *helpers::SUCCESS);
             } else {
+                // Get daemon config for crash limit
+                let max_restarts = config::read().daemon.restarts;
+                
                 for (id, item) in runner.items() {
                     // Check if process actually exists before reporting as online
                     // A process marked as running but with a non-existent PID should be shown as crashed
@@ -1321,7 +1335,11 @@ impl<'i> Internal<'i> {
                         cpu: format!("{cpu_percent}   "),
                         mem: format!("{memory_usage}   "),
                         id: id.to_string().cyan().bold().into(),
-                        restarts: format!("{}  ", item.restarts),
+                        restarts: format!("{}  ", if item.crash.crashed { 
+                            std::cmp::min(item.crash.value, max_restarts) 
+                        } else { 
+                            item.restarts 
+                        }),
                         name: format!("{}   ", item.name.clone()),
                         pid: ternary!(
                             process_actually_running,

@@ -1112,6 +1112,7 @@ impl Runner {
 
     /// Helper method to build ProcessItem from Process
     fn build_process_item(&self, id: usize, item: &Process) -> ProcessItem {
+        let max_restarts = config::read().daemon.restarts;
         let mut memory_usage: Option<MemoryInfo> = None;
         let mut cpu_percent: Option<f64> = None;
 
@@ -1168,7 +1169,11 @@ impl Runner {
             pid: item.pid,
             cpu: cpu_percent,
             mem: memory_usage,
-            restarts: item.restarts,
+            restarts: if item.crash.crashed { 
+                std::cmp::min(item.crash.value, max_restarts) 
+            } else { 
+                item.restarts 
+            },
             name: item.name.clone(),
             start_time: item.started,
             watch_path: item.watch.path.clone(),
@@ -1301,7 +1306,9 @@ impl ProcessWrapper {
         let mut runner = lock!(self.runner);
 
         let item = runner.process(self.id);
-        let config = config::read().runner;
+        let full_config = config::read();
+        let config = full_config.runner;
+        let max_restarts = full_config.daemon.restarts;
 
         // Check if process actually exists before reporting as online
         // A process marked as running but with a non-existent PID should be shown as crashed
@@ -1374,7 +1381,11 @@ impl ProcessWrapper {
             stats: Stats {
                 cpu_percent,
                 memory_usage,
-                restarts: item.restarts,
+                restarts: if item.crash.crashed { 
+                    std::cmp::min(item.crash.value, max_restarts) 
+                } else { 
+                    item.restarts 
+                },
                 start_time: item.started.timestamp_millis(),
             },
             watch: Watch {
