@@ -113,7 +113,7 @@ enum Commands {
         server: Option<String>,
     },
     /// Stop then remove a process
-    #[command(visible_alias = "rm", visible_alias = "delete")]
+    #[command(visible_alias = "rm", visible_alias = "del", visible_alias = "delete")]
     Remove {
         #[clap(value_parser = cli::validate_items)]
         items: Items,

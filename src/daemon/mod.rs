@@ -199,15 +199,20 @@ fn restart_process() {
 
         // If process is dead, handle crash/restart logic
         if !process_alive {
+            // Check if this is a newly detected crash by looking at PID
+            // PID > 0 means we thought the process was alive, so this is a new crash event
+            let is_new_crash = item.pid > 0;
+            
             // Reset PID to 0 if it wasn't already
             if item.pid > 0 {
                 let process = runner.process(id);
                 process.pid = 0; // Set to 0 to indicate no valid PID
             }
 
-            // Check if this is a newly detected crash (not already marked as crashed)
-            // Always increment crash counter to track actual crash count, regardless of running state
-            if !item.crash.crashed {
+            // Increment crash counter for newly detected crashes to track actual crash count
+            // This happens when PID was > 0 (we thought process was alive) and now it's dead
+            // This ensures we count each actual crash, even beyond the restart limit
+            if is_new_crash {
                 // Get crash count after incrementing
                 let crash_count = {
                     let process = runner.process(id);
