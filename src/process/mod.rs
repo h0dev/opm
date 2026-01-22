@@ -509,10 +509,10 @@ impl Runner {
             let original_dir = std::env::current_dir().ok();
 
             // Increment restart counter based on parameters:
-            // - dead=true (daemon auto-restart): always increment
+            // - dead=true (daemon auto-restart): don't increment (daemon already incremented)
             // - dead=false with increment_counter=true (manual restart/reload): increment
             // - dead=false with increment_counter=false (start command): don't increment
-            if dead || increment_counter {
+            if !dead && increment_counter {
                 process.restarts += 1;
                 process.crash.value += 1;
             }
@@ -689,10 +689,10 @@ impl Runner {
             let original_dir = std::env::current_dir().ok();
 
             // Increment restart counter based on parameters:
-            // - dead=true (daemon auto-restart): always increment
+            // - dead=true (daemon auto-restart): don't increment (daemon already incremented)
             // - dead=false with increment_counter=true (manual reload): increment
             // - dead=false with increment_counter=false (not currently used): don't increment
-            if dead || increment_counter {
+            if !dead && increment_counter {
                 process.restarts += 1;
                 process.crash.value += 1;
             }
