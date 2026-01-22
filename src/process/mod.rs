@@ -973,7 +973,7 @@ impl Runner {
     }
 
     /// Handle restart/reload failure by optionally incrementing crash counter and checking limit
-    /// Sets running=false if the limit is exceeded
+    /// Sets running=false if the limit is reached or exceeded
     /// 
     /// # Arguments
     /// * `increment_counter` - Whether to increment crash counter. Set to false if counter was already incremented by daemon.
@@ -986,8 +986,8 @@ impl Runner {
         }
         process.crash.crashed = true;
 
-        // Check if we've exceeded max restart limit
-        if process.crash.value > max_restarts {
+        // Check if we've reached or exceeded max restart limit
+        if process.crash.value >= max_restarts {
             process.running = false;
             log::error!(
                 "Process {} reached max restart attempts due to repeated failures",
@@ -2299,33 +2299,33 @@ mod tests {
 
         runner.list.insert(id, process.clone());
 
-        // With max_restarts=10, crash.value in range 0-10 allows restart (<= 10)
-        // crash.value > 10 prevents restart (exceeded limit)
+        // With max_restarts=10, crash.value in range 0-9 allows restart (< 10)
+        // crash.value >= 10 prevents restart (reached limit)
         let max_restarts = 10;
         assert!(
-            process.crash.value <= max_restarts,
-            "crash.value=9 should be <= max_restarts=10, allowing restart"
+            process.crash.value < max_restarts,
+            "crash.value=9 should be < max_restarts=10, allowing restart"
         );
 
-        // Test with crash.value = 10 (should be allowed to restart if max=10 with > check)
+        // Test with crash.value = 10 (should NOT be allowed to restart if max=10 with >= check)
         process.crash.value = 10;
         runner.list.insert(id, process.clone());
 
-        // With max_restarts=10, crash.value=10 should allow restart (10 <= 10, not > 10)
-        // This ensures counter can reach 10 when limit is 10, allowing exactly 10 restarts
+        // With max_restarts=10, crash.value=10 should NOT allow restart (10 >= 10)
+        // This ensures counter stops at 10 when limit is 10, displaying the limit value
         assert!(
-            process.crash.value <= max_restarts,
-            "crash.value=10 should be <= max_restarts=10, allowing restart (allowing exactly limit restarts)"
+            process.crash.value >= max_restarts,
+            "crash.value=10 should be >= max_restarts=10, preventing restart (counter displays limit and stops)"
         );
 
-        // Test with crash.value = 11 (should NOT be allowed to restart if max=10)
+        // Test with crash.value = 11 (should also NOT be allowed to restart if max=10)
         process.crash.value = 11;
         runner.list.insert(id, process.clone());
 
-        // With max_restarts=10, crash.value=11 should NOT allow restart (11 > 10)
+        // With max_restarts=10, crash.value=11 should NOT allow restart (11 >= 10)
         assert!(
-            process.crash.value > max_restarts,
-            "crash.value=11 should be > max_restarts=10, preventing restart"
+            process.crash.value >= max_restarts,
+            "crash.value=11 should be >= max_restarts=10, preventing restart"
         );
     }
 
@@ -2751,7 +2751,7 @@ mod tests {
 
         // Simulate daemon detecting more crashes and restart failures up to the limit
         // Each iteration: daemon increments, then restart fails (no additional increment)
-        for expected_crash_value in 2..=10 {
+        for expected_crash_value in 2..=9 {
             // Daemon detects another crash and increments
             {
                 let process = runner.process(id);
@@ -2773,21 +2773,21 @@ mod tests {
             );
         }
 
-        // At 10, we've reached the limit - next daemon increment should stop it
+        // At 9, we're one away from the limit - next daemon increment to 10 should stop it
         {
             let process = runner.process(id);
-            process.crash.value += 1; // 11
+            process.crash.value += 1; // 10
         }
         runner.restart(id, true, true);
         
         let process = runner.info(id).unwrap();
         assert_eq!(
-            process.crash.value, 11,
-            "Crash counter should be 11 after exceeding limit"
+            process.crash.value, 10,
+            "Crash counter should be 10 when reaching limit"
         );
         assert_eq!(
             process.running, false,
-            "Process should be stopped after exceeding max restart limit"
+            "Process should be stopped after reaching max restart limit"
         );
         assert_eq!(
             process.crash.crashed, true,
@@ -2885,8 +2885,8 @@ mod tests {
     #[test]
     fn test_auto_restart_10_times_then_manual_restart_increments() {
         // Comprehensive test for user's verification request:
-        // 1. Verify auto-restart happens up to crash limit (max_restarts=10)
-        // 2. Verify counter can reach 11 when limit is exceeded
+        // 1. Verify auto-restart happens while counter < limit (max_restarts=10)
+        // 2. Verify counter stops at 10 when limit is reached
         // 3. Verify after manual restart, crash counter continues to increment
         
         let mut runner = setup_test_runner();
@@ -2923,7 +2923,7 @@ mod tests {
 
         runner.list.insert(id, process);
 
-        // Simulate crashes up to the limit (1-10 should auto-restart)
+        // Simulate crashes up to the limit (1-9 should auto-restart, 10 should stop)
         for expected_crash_count in 1..=MAX_RESTARTS {
             // Simulate process crash
             {
@@ -2950,8 +2950,8 @@ mod tests {
                 expected_crash_count
             );
             
-            // Check if we should continue auto-restarting (crash_count <= MAX_RESTARTS)
-            let should_auto_restart = expected_crash_count <= MAX_RESTARTS;
+            // Check if we should continue auto-restarting (crash_count < MAX_RESTARTS)
+            let should_auto_restart = expected_crash_count < MAX_RESTARTS;
             
             if should_auto_restart {
                 // Daemon attempts auto-restart (simulating successful restart)
@@ -2971,54 +2971,32 @@ mod tests {
                     expected_crash_count,
                     MAX_RESTARTS
                 );
+            } else {
+                // At crash 10, daemon should stop auto-restarting
+                {
+                    let process = runner.process(id);
+                    process.running = false;
+                }
+                assert_eq!(
+                    runner.info(id).unwrap().running,
+                    false,
+                    "At crash #{}, daemon should stop auto-restart (reached limit of {})",
+                    expected_crash_count,
+                    MAX_RESTARTS
+                );
             }
         }
         
-        // Verify we're at 10 crashes and process is running
+        // Verify we're at 10 crashes and process is stopped
         assert_eq!(
             runner.info(id).unwrap().crash.value,
             10,
-            "Counter should be at 10 after 10 crashes (at limit)"
+            "Counter should be at 10 after reaching the limit"
         );
-        assert_eq!(
-            runner.info(id).unwrap().running,
-            true,
-            "Process should still be running at the limit (10th restart succeeded)"
-        );
-        
-        // Now simulate the 11th crash - this should exceed the limit and stop auto-restart
-        {
-            let process = runner.process(id);
-            process.pid = 0; // Process died
-        }
-        
-        // Daemon detects crash and increments counter to 11
-        {
-            let process_info = runner.info(id).unwrap();
-            if !process_info.crash.crashed {
-                let process = runner.process(id);
-                process.crash.value += 1;
-                process.crash.crashed = true;
-            }
-        }
-        
-        // Verify we're at 11 crashes - THIS EXCEEDS THE LIMIT
-        assert_eq!(
-            runner.info(id).unwrap().crash.value,
-            11,
-            "Counter should be at 11 when limit is exceeded"
-        );
-        
-        // Daemon should stop auto-restarting (crash.value=11 > max_restarts=10)
-        if runner.info(id).unwrap().crash.value > MAX_RESTARTS {
-            let process = runner.process(id);
-            process.running = false;
-        }
-        
         assert_eq!(
             runner.info(id).unwrap().running,
             false,
-            "After exceeding max_restarts (11 > 10), daemon should stop auto-restart"
+            "Process should be stopped when counter reaches the limit (10)"
         );
         
         // NOW TEST MANUAL RESTART AFTER LIMIT
@@ -3043,8 +3021,8 @@ mod tests {
         );
         assert_eq!(
             runner.info(id).unwrap().crash.value,
-            11,
-            "Manual restart does not reset crash counter (preserves history at 11)"
+            10,
+            "Manual restart does not reset crash counter (preserves history at 10)"
         );
         
         // Process crashes again after manual restart
@@ -3065,11 +3043,11 @@ mod tests {
             }
         }
         
-        // CRITICAL VERIFICATION: Counter should increment from 11 to 12
+        // CRITICAL VERIFICATION: Counter should increment from 10 to 11
         assert_eq!(
             runner.info(id).unwrap().crash.value,
-            12,
-            "After manual restart and crash, counter MUST increment from 11 to 12 (verifying fix works!)"
+            11,
+            "After manual restart and crash, counter MUST increment from 10 to 11 (verifying fix works!)"
         );
         assert_eq!(
             runner.info(id).unwrap().crash.crashed,
