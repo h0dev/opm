@@ -1398,11 +1398,12 @@ async fn send_telegram_message(
 
     let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
     let text = format!("<b>{}</b>\n{}", title, message);
+    let parse_mode = "HTML";
 
     let mut payload = HashMap::new();
     payload.insert("chat_id", chat_id.as_str());
-    payload.insert("text", &text);
-    payload.insert("parse_mode", "HTML");
+    payload.insert("text", text.as_str());
+    payload.insert("parse_mode", parse_mode);
 
     let response = client.post(&api_url).json(&payload).send().await?;
 
