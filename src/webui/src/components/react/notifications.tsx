@@ -31,6 +31,8 @@ const NotificationSettings = (props: { base: string }) => {
 		channels: [] as string[]
 	});
 	const [newChannel, setNewChannel] = useState('');
+	const [editingIndex, setEditingIndex] = useState<number | null>(null);
+	const [editingValue, setEditingValue] = useState('');
 
 	async function fetchSettings() {
 		try {
@@ -89,6 +91,29 @@ const NotificationSettings = (props: { base: string }) => {
 			...settings,
 			channels: settings.channels.filter((_, i) => i !== index)
 		});
+	};
+
+	const startEditing = (index: number) => {
+		setEditingIndex(index);
+		setEditingValue(settings.channels[index]);
+	};
+
+	const saveEdit = () => {
+		if (editingIndex !== null && editingValue.trim()) {
+			const updatedChannels = [...settings.channels];
+			updatedChannels[editingIndex] = editingValue.trim();
+			setSettings({
+				...settings,
+				channels: updatedChannels
+			});
+			setEditingIndex(null);
+			setEditingValue('');
+		}
+	};
+
+	const cancelEdit = () => {
+		setEditingIndex(null);
+		setEditingValue('');
 	};
 
 	useEffect(() => {
@@ -200,7 +225,7 @@ const NotificationSettings = (props: { base: string }) => {
 							type="text"
 							value={newChannel}
 							onChange={(e) => setNewChannel(e.target.value)}
-							onKeyPress={(e) => e.key === 'Enter' && addChannel()}
+							onKeyDown={(e) => e.key === 'Enter' && addChannel()}
 							placeholder="discord://token@id or slack://token:token@channel"
 							className="flex-1 px-3 py-1.5 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
 						/>
@@ -221,14 +246,47 @@ const NotificationSettings = (props: { base: string }) => {
 						<div className="space-y-2">
 							{settings.channels.map((channel, index) => (
 								<div key={index} className="flex items-center justify-between bg-zinc-800 border border-zinc-700 rounded-lg p-3">
-									<div className="flex-1 font-mono text-sm text-zinc-300 truncate mr-4">
-										{channel}
-									</div>
-									<button
-										onClick={() => removeChannel(index)}
-										className="text-red-400 hover:text-red-300 text-sm font-medium transition">
-										Remove
-									</button>
+									{editingIndex === index ? (
+										<>
+											<input
+												type="text"
+												value={editingValue}
+												onChange={(e) => setEditingValue(e.target.value)}
+												onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+												className="flex-1 px-2 py-1 text-sm bg-zinc-900 border border-zinc-600 rounded text-zinc-200 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 mr-2"
+											/>
+											<div className="flex gap-2">
+												<button
+													onClick={saveEdit}
+													className="text-green-400 hover:text-green-300 text-sm font-medium transition">
+													Save
+												</button>
+												<button
+													onClick={cancelEdit}
+													className="text-zinc-400 hover:text-zinc-300 text-sm font-medium transition">
+													Cancel
+												</button>
+											</div>
+										</>
+									) : (
+										<>
+											<div className="flex-1 font-mono text-sm text-zinc-300 truncate mr-4">
+												{channel}
+											</div>
+											<div className="flex gap-2">
+												<button
+													onClick={() => startEditing(index)}
+													className="text-blue-400 hover:text-blue-300 text-sm font-medium transition">
+													Edit
+												</button>
+												<button
+													onClick={() => removeChannel(index)}
+													className="text-red-400 hover:text-red-300 text-sm font-medium transition">
+													Remove
+												</button>
+											</div>
+										</>
+									)}
 								</div>
 							))}
 						</div>
@@ -240,8 +298,16 @@ const NotificationSettings = (props: { base: string }) => {
 							<ul className="list-disc list-inside mt-2 space-y-1">
 								<li><code className="text-zinc-300">discord://token@id</code> - Discord webhook</li>
 								<li><code className="text-zinc-300">slack://token:token@channel</code> - Slack webhook</li>
-								<li><code className="text-zinc-300">telegram://token@telegram?chats=@chat</code> - Telegram</li>
+								<li><code className="text-zinc-300">telegram://BOT_TOKEN@telegram?chats=@username</code> - Telegram (public channel)</li>
+								<li><code className="text-zinc-300">telegram://BOT_TOKEN@telegram?chats=-1001234567890</code> - Telegram (private group/channel)</li>
 							</ul>
+							<p className="mt-2">
+								<strong className="text-zinc-300">Telegram Setup:</strong>
+								<br/>1. Get BOT_TOKEN from @BotFather
+								<br/>2. Add bot to your channel/group
+								<br/>3. For channels, make bot an administrator
+								<br/>4. Get CHAT_ID from <code className="text-zinc-300">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>
+							</p>
 							<p className="mt-2">
 								See <a href="https://containrrr.dev/shoutrrr/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Shoutrrr documentation</a> for more formats.
 							</p>

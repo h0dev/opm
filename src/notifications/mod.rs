@@ -1,4 +1,7 @@
+pub mod channels;
+
 use crate::config::structs::Notifications;
+use channels::NotificationChannel;
 use notify_rust::{Notification, Urgency};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,18 +53,55 @@ impl NotificationManager {
                 log::debug!("Desktop notification not available: {}", e);
             }
 
-            // Send to configured external channels
-            if let Some(channels) = &cfg.channels {
-                if !channels.is_empty() {
+            // Send to new format channels (preferred)
+            if let Some(channel_configs) = &cfg.channel_configs {
+                if !channel_configs.is_empty() {
                     if let Err(e) = self
-                        .send_channel_notifications(title, message, channels)
+                        .send_new_channel_notifications(title, message, channel_configs)
                         .await
                     {
                         log::warn!("Failed to send channel notifications: {}", e);
                     }
                 }
             }
+
+            // Send to legacy format channels (backward compatibility)
+            if let Some(channels) = &cfg.channels {
+                if !channels.is_empty() {
+                    if let Err(e) = self
+                        .send_legacy_channel_notifications(title, message, channels)
+                        .await
+                    {
+                        log::warn!("Failed to send legacy channel notifications: {}", e);
+                    }
+                }
+            }
         }
+    }
+
+    async fn send_new_channel_notifications(
+        &self,
+        title: &str,
+        message: &str,
+        channels: &[NotificationChannel],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use reqwest::Client;
+
+        let client = Client::new();
+        let mut errors = Vec::new();
+        let mut success_count = 0;
+
+        for channel in channels {
+            match channel.send(&client, title, message).await {
+                Ok(_) => success_count += 1,
+                Err(e) => {
+                    log::warn!("Failed to send notification: {}", e);
+                    errors.push(e.to_string());
+                }
+            }
+        }
+
+        Self::handle_notification_results(success_count, errors)
     }
 
     async fn send_desktop_notification(
@@ -87,7 +127,7 @@ impl NotificationManager {
         Ok(())
     }
 
-    async fn send_channel_notifications(
+    async fn send_legacy_channel_notifications(
         &self,
         title: &str,
         message: &str,
@@ -132,6 +172,14 @@ impl NotificationManager {
             }
         }
 
+        Self::handle_notification_results(success_count, errors)
+    }
+
+    /// Helper function to handle notification results
+    fn handle_notification_results(
+        success_count: usize,
+        errors: Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if success_count > 0 {
             Ok(())
         } else if !errors.is_empty() {
@@ -237,25 +285,38 @@ impl NotificationManager {
         title: &str,
         message: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Telegram format: token@telegram?chats=@chat_id
+        // Telegram format: token@telegram?chats=CHAT_ID
+        // where CHAT_ID can be:
+        //   - @username (for public channels/groups)
+        //   - -1001234567890 (numeric ID for groups/channels)
+        //   - 1234567890 (numeric ID for users)
         // Extract token and chat ID
         let (token, rest) = webhook_data
             .split_once('@')
-            .ok_or("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'")?;
+            .ok_or("Invalid Telegram format: expected 'token@telegram?chats=CHAT_ID'. Format: telegram://BOT_TOKEN@telegram?chats=CHAT_ID")?;
 
-        let chat_id = if let Some(query) = rest.strip_prefix("telegram?chats=") {
+        let chat_id_raw = if let Some(query) = rest.strip_prefix("telegram?chats=") {
             query
         } else {
-            return Err("Invalid Telegram format: expected 'token@telegram?chats=@chat_id'".into());
+            return Err(format!(
+                "Invalid Telegram format: expected 'token@telegram?chats=CHAT_ID' but got '{}@{}'. Format: telegram://BOT_TOKEN@telegram?chats=CHAT_ID",
+                token, rest
+            ).into());
         };
+
+        // URL-decode the chat_id to handle encoded special characters like %40 for @
+        let chat_id = urlencoding::decode(chat_id_raw)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(chat_id_raw))
+            .to_string();
 
         let api_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
         let text = format!("<b>{}</b>\n{}", title, message);
+        let parse_mode = "HTML";
 
         let mut payload = HashMap::new();
-        payload.insert("chat_id", chat_id);
-        payload.insert("text", &text);
-        payload.insert("parse_mode", "HTML");
+        payload.insert("chat_id", chat_id.as_str());
+        payload.insert("text", text.as_str());
+        payload.insert("parse_mode", parse_mode);
 
         let response = client.post(&api_url).json(&payload).send().await?;
 
@@ -269,9 +330,19 @@ impl NotificationManager {
             } else {
                 "Non-success status but no error details available".to_string()
             };
+            
+            // Parse error message for common issues
+            let hint = if body.contains("chat not found") {
+                "\nHint: Make sure the bot is added to the chat/channel and has permission to send messages. For channels, the bot must be an administrator."
+            } else if body.contains("Unauthorized") || body.contains("bot token") {
+                "\nHint: Check that your bot token is correct."
+            } else {
+                ""
+            };
+            
             return Err(format!(
-                "Telegram API failed with status: {} - Response: {}",
-                status, body
+                "Telegram API failed with status: {} - Response: {}{}",
+                status, body, hint
             )
             .into());
         }

@@ -17,22 +17,92 @@ process_stop = true        # Notify when a process stops
 process_crash = true       # Notify when a process crashes
 process_restart = true     # Notify when a process restarts
 
-# Optional: External notification channels using Shoutrrr URLs
-# Format: service://credentials@target
-# Uncomment and configure the channels you want to use
+# ========================================
+# NEW FORMAT (Recommended - Easier to configure)
+# ========================================
+# Use structured channel configurations with clear field names
+
+# Discord Example
+[[daemon.notifications.channel]]
+type = "discord"
+webhook_url = "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+
+# Slack Example
+[[daemon.notifications.channel]]
+type = "slack"
+webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Telegram Example - USE NUMERIC CHAT ID (NOT @username)
+[[daemon.notifications.channel]]
+type = "telegram"
+bot_token = "123456:ABCdefGHIjklMNOpqrsTUVwxyz"
+chat_id = "-1001234567890"  # Negative number for channels/groups, positive for users
+# To get chat_id:
+# 1. Add bot to your channel/group (make it admin for channels)
+# 2. Send a test message
+# 3. Visit: https://api.telegram.org/bot<BOT_TOKEN>/getUpdates
+# 4. Find "chat":{"id": -1001234567890 } in JSON response
+
+# Gotify Example
+[[daemon.notifications.channel]]
+type = "gotify"
+server_url = "https://gotify.example.com"
+token = "YOUR_APP_TOKEN"
+priority = 5  # 0-10, default is 5
+
+# Pushover Example
+[[daemon.notifications.channel]]
+type = "pushover"
+token = "YOUR_APP_TOKEN"
+user_key = "YOUR_USER_KEY"
+# device = "iphone"  # Optional: target specific device
+
+# Matrix Example
+[[daemon.notifications.channel]]
+type = "matrix"
+homeserver = "https://matrix.example.com"
+room_id = "!roomid:example.com"
+access_token = "YOUR_ACCESS_TOKEN"
+
+# Ntfy Example (ntfy.sh or self-hosted)
+[[daemon.notifications.channel]]
+type = "ntfy"
+server_url = "https://ntfy.sh"  # or your server
+topic = "your-topic-name"
+# token = "tk_xxxxx"  # Optional: for authentication
+
+# Mattermost Example
+[[daemon.notifications.channel]]
+type = "mattermost"
+webhook_url = "https://mattermost.example.com/hooks/YOUR_WEBHOOK_ID"
+# channel = "off-topic"  # Optional: override webhook default
+# username = "OPM Bot"   # Optional: override webhook default
+
+# Generic Webhook Example (sends POST with JSON: {title, message})
+[[daemon.notifications.channel]]
+type = "webhook"
+url = "https://your-server.com/webhook/endpoint"
+# Optional headers for authentication
+# [daemon.notifications.channel.headers]
+# "Authorization" = "Bearer YOUR_TOKEN"
+# "X-Custom-Header" = "custom-value"
+
+# ========================================
+# LEGACY FORMAT (Still supported for backward compatibility)
+# ========================================
+# Old Shoutrrr-style URL format - harder to configure but still works
 # channels = [
-#     "discord://token@id",                              # Discord webhook
-#     "slack://token:token@channel",                     # Slack webhook
-#     "telegram://token@telegram?chats=@chat",           # Telegram
-#     "gotify://gotify.example.com/token",               # Gotify
-#     "pushover://shoutrrr:token@user",                  # Pushover
-#     "matrix://user:password@homeserver/?rooms=!room",  # Matrix
+#     "discord://token@id",
+#     "slack://token:token@channel",
+#     "telegram://BOT_TOKEN@telegram?chats=-1001234567890",
+#     "gotify://gotify.example.com/token",
+#     "pushover://shoutrrr:token@user",
+#     "matrix://user:password@homeserver/?rooms=!room",
 # ]
 
-# For more information about Shoutrrr URL formats, visit:
-# https://containrrr.dev/shoutrrr/
-
-# Example complete configuration:
+# ========================================
+# Complete Example Configuration
+# ========================================
 #
 # [daemon.notifications]
 # enabled = true
@@ -45,6 +115,11 @@ process_restart = true     # Notify when a process restarts
 # process_crash = true
 # process_restart = true
 # 
-# channels = [
-#     "discord://your-discord-webhook-token@webhook-id"
-# ]
+# [[daemon.notifications.channel]]
+# type = "discord"
+# webhook_url = "https://discord.com/api/webhooks/123/abc"
+# 
+# [[daemon.notifications.channel]]
+# type = "telegram"
+# bot_token = "123456:ABCdef"
+# chat_id = "-1001234567890"

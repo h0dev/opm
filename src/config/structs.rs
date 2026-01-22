@@ -2,8 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod prelude {
-    pub use super::{Config, Daemon, Notifications, RestoreCleanup, Role, Runner, Secure, Server, Servers, Web};
+    pub use super::{Config, Daemon, NotificationChannel, Notifications, RestoreCleanup, Role, Runner, Secure, Server, Servers, Web};
 }
+
+// Re-export NotificationChannel from notifications module
+pub use crate::notifications::channels::NotificationChannel;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum Role {
@@ -129,7 +132,12 @@ pub struct Notifications {
     #[serde(default)]
     pub enabled: bool,
     pub events: Option<NotificationEvents>,
+    /// Legacy format: Shoutrrr-style URL strings (deprecated but supported)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channels: Option<Vec<String>>,
+    /// New format: Structured channel configurations
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "channel")]
+    pub channel_configs: Option<Vec<NotificationChannel>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
