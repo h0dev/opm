@@ -1271,7 +1271,7 @@ async fn send_test_channel_notifications(
             match result {
                 Ok(_) => {
                     log::info!("Successfully sent test notification to {}", service);
-                    success_count += 1
+                    success_count += 1;
                 },
                 Err(e) => {
                     log::warn!("Failed to send to {}: {}", service, e);
@@ -1432,15 +1432,21 @@ async fn send_telegram_message(
         let status = response.status();
         // Only read response body for error responses, and limit size to prevent issues
         let body = if status.is_client_error() || status.is_server_error() {
-            response
+            let body_text = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unable to read response body".to_string())
+                .unwrap_or_else(|_| "Unable to read response body".to_string());
+            // Truncate response body to avoid logging excessive data
+            if body_text.len() > 500 {
+                format!("{}... (truncated)", &body_text[..500])
+            } else {
+                body_text
+            }
         } else {
             "Non-success status but no error details available".to_string()
         };
         
-        // Log the error details
+        // Log the error details (response body is already sanitized/truncated above)
         log::error!("Telegram API error - Status: {}, Response: {}, Chat ID: {}", status, body, chat_id);
         
         // Parse error message for common issues
