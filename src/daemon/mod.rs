@@ -44,6 +44,7 @@ const STARTUP_GRACE_PERIOD_SECS: i64 = 1;
 static ENABLE_API: AtomicBool = AtomicBool::new(false);
 static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 static NOTIFICATION_MANAGER: OnceCell<Arc<NotificationManager>> = OnceCell::const_new();
+static EVENT_LOG: OnceCell<Arc<opm::events::EventLog>> = OnceCell::const_new();
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     // SAFETY: Signal handlers should be kept simple and avoid complex operations.
@@ -89,15 +90,24 @@ extern "C" fn handle_sigpipe(_: libc::c_int) {
     // This can happen when the daemon tries to use println!() after being daemonized
 }
 
-/// Helper function to send notifications from non-async context
+/// Helper function to send notifications and log events from non-async context
 fn send_notification(event: opm::notifications::NotificationEvent, title: String, message: String) {
     if let Some(notif_mgr) = NOTIFICATION_MANAGER.get() {
         let notif_mgr = notif_mgr.clone();
+        let event_log = EVENT_LOG.get().cloned();
+        
         // Try to use current tokio runtime if available, otherwise spawn a thread with new runtime
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             // We're already in a tokio runtime context, spawn directly
             handle.spawn(async move {
                 notif_mgr.send(event, &title, &message).await;
+                if let Some(el) = event_log {
+                    el.log(
+                        opm::events::EventType::from_notification_event(event),
+                        title,
+                        message,
+                    ).await;
+                }
             });
         } else {
             // No tokio runtime available, create one in a thread
@@ -105,6 +115,13 @@ fn send_notification(event: opm::notifications::NotificationEvent, title: String
                 if let Ok(rt) = tokio::runtime::Runtime::new() {
                     rt.block_on(async {
                         notif_mgr.send(event, &title, &message).await;
+                        if let Some(el) = event_log {
+                            el.log(
+                                opm::events::EventType::from_notification_event(event),
+                                title,
+                                message,
+                            ).await;
+                        }
                     });
                 }
             });
@@ -552,6 +569,10 @@ pub fn start(verbose: bool) {
         let notif_config = config::read().daemon.notifications.clone();
         let notification_manager = Arc::new(NotificationManager::new(notif_config));
         let _ = NOTIFICATION_MANAGER.set(notification_manager);
+
+        // Initialize event log for daemon use
+        let event_log = Arc::new(opm::events::EventLog::new());
+        let _ = EVENT_LOG.set(event_log);
 
         unsafe {
             libc::signal(libc::SIGTERM, handle_termination_signal as usize);

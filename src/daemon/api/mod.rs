@@ -102,6 +102,8 @@ lazy_static! {
         routes::agent_get_handler,
         routes::agent_processes_handler,
         routes::agent_action_handler,
+        routes::get_events_handler,
+        routes::get_system_info_handler,
     ),
     components(schemas(
         ErrorMessage,
@@ -128,6 +130,9 @@ lazy_static! {
         routes::TestNotificationBody,
         routes::BulkActionBody,
         routes::BulkActionResponse,
+        routes::SystemInfo,
+        opm::events::Event,
+        opm::events::EventType,
     ))
 )]
 
@@ -269,6 +274,10 @@ pub async fn start(webui: bool) {
     let notification_manager =
         std::sync::Arc::new(opm::notifications::NotificationManager::new(notif_config));
 
+    log::info!("API start: Initializing event log");
+    // Initialize event log
+    let event_log = std::sync::Arc::new(opm::events::EventLog::new());
+
     log::info!("API start: Initializing agent registry");
     // Initialize agent registry
     let agent_registry = opm::agent::registry::AgentRegistry::new();
@@ -323,6 +332,8 @@ pub async fn start(webui: bool) {
         routes::agent_get_handler,
         routes::agent_processes_handler,
         routes::agent_action_handler,
+        routes::get_events_handler,
+        routes::get_system_info_handler,
         websocket::websocket_handler,
     ];
 
@@ -340,6 +351,7 @@ pub async fn start(webui: bool) {
         })
         .manage(agent_registry)
         .manage(notification_manager)
+        .manage(event_log)
         .mount(format!("{s_path}/"), routes)
         .register(
             "/",

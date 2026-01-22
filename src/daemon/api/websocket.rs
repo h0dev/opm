@@ -23,10 +23,12 @@ use tokio::sync::mpsc;
 pub fn websocket_handler(
     ws: WebSocket, 
     registry: &State<AgentRegistry>,
-    notif_mgr: &State<std::sync::Arc<NotificationManager>>
+    notif_mgr: &State<std::sync::Arc<NotificationManager>>,
+    event_log: &State<std::sync::Arc<opm::events::EventLog>>,
 ) -> Stream!['static] {
     let registry = registry.inner().clone();
     let notif_mgr = notif_mgr.inner().clone();
+    let event_log = event_log.inner().clone();
 
     Stream! { ws =>
         let mut agent_id: Option<String> = None;
@@ -76,8 +78,14 @@ pub fn websocket_handler(
                                         hostname_for_notif.map(|h| format!(" from {}", h)).unwrap_or_default()
                                     );
                                     let nm = notif_mgr.clone();
+                                    let el = event_log.clone();
                                     tokio::spawn(async move {
                                         nm.send(NotificationEvent::AgentConnect, &notif_title, &notif_message).await;
+                                        el.log(
+                                            opm::events::EventType::AgentConnect,
+                                            notif_title.to_string(),
+                                            notif_message
+                                        ).await;
                                     });
 
                                     // Send success response
@@ -215,6 +223,11 @@ pub fn websocket_handler(
                 let notif_message = format!("Agent '{}' (ID: {}) has disconnected", name, id);
                 tokio::spawn(async move {
                     notif_mgr.send(NotificationEvent::AgentDisconnect, &notif_title, &notif_message).await;
+                    event_log.log(
+                        opm::events::EventType::AgentDisconnect,
+                        notif_title.to_string(),
+                        notif_message
+                    ).await;
                 });
             }
         }

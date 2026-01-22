@@ -1778,6 +1778,7 @@ pub async fn action_handler(
     body: Json<ActionBody>,
     _t: Token,
     notif_mgr: &State<std::sync::Arc<NotificationManager>>,
+    event_log: &State<std::sync::Arc<opm::events::EventLog>>,
 ) -> Result<Json<ActionResponse>, NotFound> {
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["action"])
@@ -1801,11 +1802,17 @@ pub async fn action_handler(
                 // Send notification
                 if let Some(info) = process_info {
                     let nm = notif_mgr.inner().clone();
+                    let el = event_log.inner().clone();
                     tokio::spawn(async move {
                         nm.send(
                             NotificationEvent::ProcessStart,
                             "Process Started",
                             &format!("Process '{}' (ID: {}) has been started", info.name, id),
+                        ).await;
+                        el.log(
+                            opm::events::EventType::ProcessStart,
+                            "Process Started".to_string(),
+                            format!("Process '{}' (ID: {}) has been started", info.name, id),
                         ).await;
                     });
                 }
@@ -1821,11 +1828,17 @@ pub async fn action_handler(
                 // Send notification
                 if let Some(info) = process_info {
                     let nm = notif_mgr.inner().clone();
+                    let el = event_log.inner().clone();
                     tokio::spawn(async move {
                         nm.send(
                             NotificationEvent::ProcessRestart,
                             "Process Restarted",
                             &format!("Process '{}' (ID: {}) has been restarted", info.name, id),
+                        ).await;
+                        el.log(
+                            opm::events::EventType::ProcessRestart,
+                            "Process Restarted".to_string(),
+                            format!("Process '{}' (ID: {}) has been restarted", info.name, id),
                         ).await;
                     });
                 }
@@ -1848,11 +1861,17 @@ pub async fn action_handler(
                 // Send notification
                 if let Some(info) = process_info {
                     let nm = notif_mgr.inner().clone();
+                    let el = event_log.inner().clone();
                     tokio::spawn(async move {
                         nm.send(
                             NotificationEvent::ProcessStop,
                             "Process Stopped",
                             &format!("Process '{}' (ID: {}) has been stopped", info.name, id),
+                        ).await;
+                        el.log(
+                            opm::events::EventType::ProcessStop,
+                            "Process Stopped".to_string(),
+                            format!("Process '{}' (ID: {}) has been stopped", info.name, id),
                         ).await;
                     });
                 }
@@ -2589,4 +2608,72 @@ pub async fn agent_action_handler(
             )
         ))
     }
+}
+
+// Event log endpoints
+#[get("/daemon/events")]
+#[utoipa::path(get, tag = "Daemon", path = "/daemon/events", security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Get events successfully", body = Vec<Event>),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn get_events_handler(
+    event_log: &State<std::sync::Arc<opm::events::EventLog>>,
+    _t: Token,
+) -> Json<Vec<opm::events::Event>> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_events"])
+        .start_timer();
+    
+    HTTP_COUNTER.inc();
+    
+    let events = event_log.get_all().await;
+    
+    timer.observe_duration();
+    Json(events)
+}
+
+// System info endpoint
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SystemInfo {
+    hostname: String,
+    os_type: String,
+    os_version: String,
+    arch: String,
+    cpu_cores: usize,
+    total_memory: u64,
+}
+
+#[get("/daemon/system-info")]
+#[utoipa::path(get, tag = "Daemon", path = "/daemon/system-info", security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Get system info successfully", body = SystemInfo),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn get_system_info_handler(_t: Token) -> Json<SystemInfo> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_system_info"])
+        .start_timer();
+    
+    HTTP_COUNTER.inc();
+    
+    let info = SystemInfo {
+        hostname: sys_info::hostname().unwrap_or_else(|_| "unknown".to_string()),
+        os_type: sys_info::os_type().unwrap_or_else(|_| "unknown".to_string()),
+        os_version: sys_info::os_release().unwrap_or_else(|_| "unknown".to_string()),
+        arch: std::env::consts::ARCH.to_string(),
+        cpu_cores: sys_info::cpu_num().unwrap_or(0) as usize,
+        total_memory: sys_info::mem_info().map(|m| m.total * 1024).unwrap_or(0),
+    };
+    
+    timer.observe_duration();
+    Json(info)
 }

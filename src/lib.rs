@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod config;
+pub mod events;
 pub mod file;
 pub mod helpers;
 pub mod log;
