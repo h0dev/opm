@@ -42,30 +42,46 @@ static ENABLE_API: AtomicBool = AtomicBool::new(false);
 static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
-    // Before stopping daemon, mark all crashed processes as stopped
-    // This ensures they can be properly restored later
-    let mut runner = Runner::new();
-    let process_ids: Vec<usize> = runner.process_ids().collect();
-    for id in process_ids {
-        let should_mark_stopped = {
-            if let Some(process) = runner.info(id) {
-                // If process is crashed and running, it should be marked as stopped
-                process.crash.crashed && process.running
-            } else {
-                false
-            }
-        };
-        
-        if should_mark_stopped {
-            if let Some(process) = runner.info(id) {
-                let name = process.name.clone();
-                runner.process(id).running = false;
-                log!("[daemon] marking crashed process as stopped for restore", 
-                     "id" => id, "name" => name);
+    // SAFETY: Signal handlers should be kept simple and avoid complex operations.
+    // However, we need to save crashed process state before daemon exits.
+    // This is a critical operation to ensure crashed processes can be restored.
+    // We accept the small risk of issues during signal handling because:
+    // 1. The alternative (losing crashed process state) is worse
+    // 2. This only runs on daemon shutdown, not during normal operation
+    // 3. Worst case: state isn't saved, but daemon still exits cleanly
+    
+    // Try to save crashed process state before exiting
+    // Use catch_unwind to prevent panics from crashing the signal handler
+    let save_result = std::panic::catch_unwind(|| {
+        let mut runner = Runner::new();
+        let process_ids: Vec<usize> = runner.process_ids().collect();
+        for id in process_ids {
+            let should_mark_stopped = {
+                if let Some(process) = runner.info(id) {
+                    // If process is crashed and running, it should be marked as stopped
+                    process.crash.crashed && process.running
+                } else {
+                    false
+                }
+            };
+            
+            if should_mark_stopped {
+                if let Some(process) = runner.info(id) {
+                    let name = process.name.clone();
+                    runner.process(id).running = false;
+                    log!("[daemon] marking crashed process as stopped for restore", 
+                         "id" => id, "name" => name);
+                }
             }
         }
+        runner.save();
+    });
+    
+    // If save failed, log a warning (but still proceed with cleanup)
+    if save_result.is_err() {
+        // Note: Can't use log! macro without key-value pairs, using eprintln instead
+        eprintln!("[daemon] warning: failed to save crashed process state during shutdown");
     }
-    runner.save();
     
     pid::remove();
     log!("[daemon] killed", "pid" => process::id());

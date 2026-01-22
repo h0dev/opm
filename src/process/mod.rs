@@ -863,22 +863,37 @@ impl Runner {
             return; // Don't compact remote processes
         }
 
-        // Collect all processes sorted by ID
-        let mut processes: Vec<(usize, Process)> = self.list.iter()
-            .map(|(id, p)| (*id, p.clone()))
-            .collect();
-        processes.sort_by_key(|(id, _)| *id);
+        // If list is empty or already compact, no work needed
+        if self.list.is_empty() {
+            self.id = id::Id::new(0);
+            return;
+        }
 
-        // Clear the list and re-add with new sequential IDs
-        self.list.clear();
-        let mut new_id = 0;
-        for (_, process) in processes {
-            self.list.insert(new_id, process);
-            new_id += 1;
+        // Check if compaction is needed by comparing keys to sequential range
+        let keys: Vec<usize> = self.list.keys().copied().collect();
+        let expected_keys: Vec<usize> = (0..keys.len()).collect();
+        if keys == expected_keys {
+            // Already compact, just ensure ID counter is correct
+            self.id = id::Id::new(keys.len());
+            return;
+        }
+
+        // Extract all processes (move ownership to avoid cloning)
+        let mut old_list = std::mem::take(&mut self.list);
+        
+        // Collect process IDs in sorted order
+        let mut sorted_ids: Vec<usize> = old_list.keys().copied().collect();
+        sorted_ids.sort_unstable();
+        
+        // Re-insert with new sequential IDs by moving (not cloning)
+        for (new_id, old_id) in sorted_ids.into_iter().enumerate() {
+            if let Some(process) = old_list.remove(&old_id) {
+                self.list.insert(new_id, process);
+            }
         }
 
         // Reset the ID counter to the next available ID
-        self.id = id::Id::new(new_id);
+        self.id = id::Id::new(self.list.len());
     }
 
     pub fn set_id(&mut self, id: id::Id) {
