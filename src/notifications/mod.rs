@@ -101,13 +101,7 @@ impl NotificationManager {
             }
         }
 
-        if success_count > 0 {
-            Ok(())
-        } else if !errors.is_empty() {
-            Err(errors.join("; ").into())
-        } else {
-            Err("No valid notification channels configured".into())
-        }
+        Self::handle_notification_results(success_count, errors)
     }
 
     async fn send_desktop_notification(
@@ -178,6 +172,14 @@ impl NotificationManager {
             }
         }
 
+        Self::handle_notification_results(success_count, errors)
+    }
+
+    /// Helper function to handle notification results
+    fn handle_notification_results(
+        success_count: usize,
+        errors: Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if success_count > 0 {
             Ok(())
         } else if !errors.is_empty() {

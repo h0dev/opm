@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// Note: uuid and urlencoding are used in Matrix and Matrix functions respectively
+// These dependencies are declared in Cargo.toml
+
 /// Notification channel configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -225,7 +228,7 @@ async fn send_gotify(
     title: &str,
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let url = format!("{}/message?token={}", server_url.trim_end_matches('/'), token);
+    let url = format!("{}/message", server_url.trim_end_matches('/'));
     let priority_str = priority.to_string();
 
     let mut payload = HashMap::new();
@@ -233,7 +236,13 @@ async fn send_gotify(
     payload.insert("message", message);
     payload.insert("priority", priority_str.as_str());
 
-    let response = client.post(&url).json(&payload).send().await?;
+    // Use header for token to avoid it appearing in server logs
+    let response = client
+        .post(&url)
+        .header("X-Gotify-Key", token)
+        .json(&payload)
+        .send()
+        .await?;
 
     if !response.status().is_success() {
         let status = response.status();
