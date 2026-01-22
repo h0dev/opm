@@ -1119,12 +1119,15 @@ impl<'i> Internal<'i> {
         let mut restored_ids = Vec::new();
         let mut failed_ids = Vec::new();
 
-        // Only restore processes that were marked as running in the dump file
-        // Do NOT restore processes that were stopped (running == false)
+        // Restore processes that were running OR crashed before daemon stopped
+        // This includes:
+        // 1. Processes with running=true (were running normally)
+        // 2. Processes with running=false AND crashed=true (were crashed and stopped by daemon)
+        // Do NOT restore processes that were manually stopped (running=false, crashed=false)
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
             .filter_map(|(id, p)| {
-                if p.running {
+                if p.running || (p.crash.crashed && !p.running) {
                     Some((*id, p.name.clone(), p.running, p.crash.crashed))
                 } else {
                     None
@@ -1139,6 +1142,13 @@ impl<'i> Internal<'i> {
         }
 
         for (id, name, was_running, was_crashed) in &processes_to_restore {
+            // Set process back to running before restoring since we reset crash counters
+            // This ensures crashed processes get a fresh start
+            if *was_crashed && !*was_running {
+                runner.process(*id).running = true;
+                runner.save();
+            }
+            
             // status_str is currently unused but kept for potential future logging
             let _status_str = if *was_crashed {
                 "crashed"
