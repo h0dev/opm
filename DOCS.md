@@ -12,7 +12,7 @@ OPM (Open Process Management) is a simple PM2 alternative written in Rust. It pr
 - List all running processes with customizable output formats
 - HTTP/Rust API for remote process control
 - Web UI for visual process management
-- Desktop notifications for process events
+- Notifications for process events (Telegram, Discord, Slack, etc.)
 - Configuration import/export with HCL files
 
 ## Quick Start
