@@ -2299,9 +2299,10 @@ mod tests {
 
         runner.list.insert(id, process.clone());
 
+        // SEMANTIC CHANGE: max_restarts now represents the maximum counter value (not attempts)
         // With max_restarts=10, crash.value in range 1-9 allows restart (< 10)
-        // This provides 9 restart attempts total
-        // crash.value >= 10 prevents restart (counter reached the limit value)
+        // Counter reaches 10 and stops there (displays the limit value)
+        // Previous behavior: counter would go to 11 before stopping
         let max_restarts = 10;
         assert!(
             process.crash.value < max_restarts,
@@ -2752,7 +2753,8 @@ mod tests {
 
         // Simulate daemon detecting more crashes and restart failures up to the limit
         // Each iteration: daemon increments, then restart fails (no additional increment)
-        for expected_crash_value in 2..=9 {
+        let max_restarts = 10;
+        for expected_crash_value in 2..max_restarts {
             // Daemon detects another crash and increments
             {
                 let process = runner.process(id);
