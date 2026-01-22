@@ -3241,4 +3241,94 @@ mod tests {
             "Next ID should be 3 (after processes 0, 1, 2)"
         );
     }
+
+    #[test]
+    fn test_counter_consistency_across_crash_restart_cycles() {
+        // Test that the restart counter is displayed consistently regardless of crash state
+        // This validates the fix for the issue where counter would jump between values
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Start with a process that has crashed 10 times
+        let process = Process {
+            id,
+            pid: 0,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'test'".to_string(),
+            restarts: 10,
+            running: false,
+            crash: Crash {
+                crashed: true,
+                value: 10,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+        };
+
+        runner.list.insert(id, process.clone());
+
+        // Verify initial state - should show crash.value (10)
+        let process_item = runner.build_process_item(id, &process);
+        assert_eq!(
+            process_item.restarts, 10,
+            "Should display crash.value (10) when crashed"
+        );
+
+        // Simulate manual restart (increment_counter=true)
+        let proc = runner.process(id);
+        proc.restarts += 1;
+        proc.crash.value += 1;
+        proc.crash.crashed = false; // Successful restart clears crashed flag
+        proc.running = true;
+        proc.pid = 12345;
+
+        // After successful restart with increment_counter=true, both counters should be 11
+        assert_eq!(
+            runner.info(id).unwrap().restarts, 11,
+            "restarts counter should be 11 after increment"
+        );
+        assert_eq!(
+            runner.info(id).unwrap().crash.value, 11,
+            "crash.value should be 11 after increment"
+        );
+
+        // Verify ProcessItem always shows crash.value (now 11) even when not crashed
+        let updated_process = runner.info(id).unwrap().clone();
+        let process_item = runner.build_process_item(id, &updated_process);
+        assert_eq!(
+            process_item.restarts, 11,
+            "Should display crash.value (11) consistently even when not crashed"
+        );
+
+        // Simulate another crash (daemon detects and increments crash.value)
+        let proc = runner.process(id);
+        proc.crash.value += 1;
+        proc.crash.crashed = true;
+        proc.running = false;
+        proc.pid = 0;
+
+        // Both counters should be in sync
+        assert_eq!(
+            runner.info(id).unwrap().crash.value, 12,
+            "crash.value should be 12 after crash"
+        );
+
+        // Verify display continues to show crash.value (12)
+        let crashed_process = runner.info(id).unwrap().clone();
+        let process_item = runner.build_process_item(id, &crashed_process);
+        assert_eq!(
+            process_item.restarts, 12,
+            "Should display crash.value (12) consistently when crashed again"
+        );
+    }
 }
