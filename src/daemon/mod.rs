@@ -56,17 +56,9 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
         let mut runner = Runner::new();
         let process_ids: Vec<usize> = runner.process_ids().collect();
         for id in process_ids {
-            let should_mark_stopped = {
-                if let Some(process) = runner.info(id) {
-                    // If process is crashed and running, it should be marked as stopped
-                    process.crash.crashed && process.running
-                } else {
-                    false
-                }
-            };
-            
-            if should_mark_stopped {
-                if let Some(process) = runner.info(id) {
+            // Get process info once and clone name if needed to avoid multiple lookups
+            if let Some(process) = runner.info(id) {
+                if process.crash.crashed && process.running {
                     let name = process.name.clone();
                     runner.process(id).running = false;
                     log!("[daemon] marking crashed process as stopped for restore", 

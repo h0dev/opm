@@ -863,7 +863,7 @@ impl Runner {
             return; // Don't compact remote processes
         }
 
-        // If list is empty or already compact, no work needed
+        // If list is empty, reset ID counter to 0
         if self.list.is_empty() {
             self.id = id::Id::new(0);
             return;
@@ -878,18 +878,14 @@ impl Runner {
             return;
         }
 
-        // Extract all processes (move ownership to avoid cloning)
-        let mut old_list = std::mem::take(&mut self.list);
+        // BTreeMap is already sorted, so we can use into_iter() directly
+        // Extract all processes by replacing the list with an empty one
+        let old_list = std::mem::replace(&mut self.list, BTreeMap::new());
         
-        // Collect process IDs in sorted order
-        let mut sorted_ids: Vec<usize> = old_list.keys().copied().collect();
-        sorted_ids.sort_unstable();
-        
-        // Re-insert with new sequential IDs by moving (not cloning)
-        for (new_id, old_id) in sorted_ids.into_iter().enumerate() {
-            if let Some(process) = old_list.remove(&old_id) {
-                self.list.insert(new_id, process);
-            }
+        // Re-insert with new sequential IDs starting from 0
+        // BTreeMap::into_iter() yields items in sorted key order
+        for (new_id, (_old_id, process)) in old_list.into_iter().enumerate() {
+            self.list.insert(new_id, process);
         }
 
         // Reset the ID counter to the next available ID
@@ -3160,7 +3156,8 @@ mod tests {
         // Test that process IDs are compacted (reindexed) after removal
         let mut runner = setup_test_runner();
         
-        // Create processes - ID counter starts at 1, so IDs will be 1, 2, 3, 4, 5
+        // Create 5 processes - ID counter starts at 1, so IDs will be 1, 2, 3, 4, 5
+        // After compaction, IDs will be renumbered starting from 0
         for i in 0..5 {
             let id = runner.id.next();
             let process = Process {
