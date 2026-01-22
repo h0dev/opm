@@ -1100,6 +1100,12 @@ pub async fn test_notification_handler(
 
     HTTP_COUNTER.inc();
 
+    // Log request body for debugging
+    log!("[api] test-notification request",
+        "title" => &body.title,
+        "message" => &body.message,
+    );
+
     // Get notification config
     let config = config::read().daemon.notifications;
 
@@ -1134,9 +1140,11 @@ pub async fn test_notification_handler(
         // Send to external channels if configured
         if let Some(channels) = &cfg.channels {
             if !channels.is_empty() {
+                log::info!("Sending test notification to {} channel(s)", channels.len());
                 match send_test_channel_notifications(&body.title, &body.message, channels).await {
                     Ok(_) => {
                         channels_sent = true;
+                        log::info!("Successfully sent test notification to channel(s)");
                     }
                     Err(e) => {
                         log::warn!("Failed to send channel notifications: {}", e);
@@ -1248,6 +1256,7 @@ async fn send_test_channel_notifications(
     for channel_url in channels {
         // Parse the shoutrrr URL to determine the service type
         if let Some((service, rest)) = channel_url.split_once("://") {
+            log::info!("Attempting to send test notification to {}", service);
             let result = match service {
                 "discord" => send_discord_webhook(&client, rest, title, message).await,
                 "slack" => send_slack_webhook(&client, rest, title, message).await,
@@ -1260,7 +1269,10 @@ async fn send_test_channel_notifications(
             };
 
             match result {
-                Ok(_) => success_count += 1,
+                Ok(_) => {
+                    log::info!("Successfully sent test notification to {}", service);
+                    success_count += 1;
+                },
                 Err(e) => {
                     log::warn!("Failed to send to {}: {}", service, e);
                     errors.push(format!("{}: {}", service, e));
@@ -1401,6 +1413,14 @@ async fn send_telegram_message(
     let text = format!("<b>{}</b>\n{}", title, message);
     let parse_mode = "HTML";
 
+    // Log the request details (without exposing the full token)
+    let token_preview = if token.len() > 8 {
+        format!("{}...{}", &token[..4], &token[token.len()-4..])
+    } else {
+        "****".to_string()
+    };
+    log::info!("Sending Telegram message to chat_id: {}, token: {}", chat_id, token_preview);
+
     let mut payload = HashMap::new();
     payload.insert("chat_id", chat_id.as_str());
     payload.insert("text", text.as_str());
@@ -1412,13 +1432,22 @@ async fn send_telegram_message(
         let status = response.status();
         // Only read response body for error responses, and limit size to prevent issues
         let body = if status.is_client_error() || status.is_server_error() {
-            response
+            let body_text = response
                 .text()
                 .await
-                .unwrap_or_else(|_| "Unable to read response body".to_string())
+                .unwrap_or_else(|_| "Unable to read response body".to_string());
+            // Truncate response body to avoid logging excessive data
+            if body_text.len() > 500 {
+                format!("{}... (truncated)", &body_text[..500])
+            } else {
+                body_text
+            }
         } else {
             "Non-success status but no error details available".to_string()
         };
+        
+        // Log the error details (response body is already sanitized/truncated above)
+        log::error!("Telegram API error - Status: {}, Response: {}, Chat ID: {}", status, body, chat_id);
         
         // Parse error message for common issues
         let hint = if body.contains("chat not found") {
@@ -1436,6 +1465,7 @@ async fn send_telegram_message(
         .into());
     }
 
+    log::info!("Telegram message sent successfully to chat_id: {}", chat_id);
     Ok(())
 }
 
