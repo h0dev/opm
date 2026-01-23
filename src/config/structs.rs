@@ -146,4 +146,6 @@ pub struct NotificationEvents {
     pub process_crash: bool,
     #[serde(default)]
     pub process_restart: bool,
+    #[serde(default)]
+    pub process_delete: bool,
 }

@@ -232,6 +232,23 @@ impl<'i> Internal<'i> {
                 self.id
             );
             log!("process started (id={})", self.id);
+            
+            // Emit event for CLI operation if on local server
+            if matches!(self.server_name, "internal" | "local") {
+                if let Some(process) = self.runner.info(self.id) {
+                    let event_type = if increment_counter {
+                        opm::events::EventType::ProcessRestart
+                    } else {
+                        opm::events::EventType::ProcessStart
+                    };
+                    super::events::emit_event(
+                        event_type,
+                        self.id,
+                        &process.name,
+                        &format!("Process '{}' {} via CLI", process.name, if increment_counter { "restarted" } else { "started" }),
+                    );
+                }
+            }
         }
 
         return self.runner;
@@ -288,6 +305,18 @@ impl<'i> Internal<'i> {
                 self.id
             );
             log!("process reloaded (id={})", self.id);
+            
+            // Emit event for CLI operation if on local server
+            if matches!(self.server_name, "internal" | "local") {
+                if let Some(process) = self.runner.info(self.id) {
+                    super::events::emit_event(
+                        opm::events::EventType::ProcessRestart,
+                        self.id,
+                        &process.name,
+                        &format!("Process '{}' reloaded via CLI", process.name),
+                    );
+                }
+            }
         }
 
         return self.runner;
@@ -328,6 +357,7 @@ impl<'i> Internal<'i> {
             };
         }
 
+        let process_name = self.runner.info(self.id).map(|p| p.name.clone()).unwrap_or_default(); // Get name before stop
         let mut item = self.runner.get(self.id);
         item.stop();
         self.runner = item.get_runner().clone();
@@ -336,6 +366,16 @@ impl<'i> Internal<'i> {
         if !silent {
             println!("{} Stopped {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
             log!("process stopped {}(id={})", self.kind, self.id);
+            
+            // Emit event for CLI operation if on local server
+            if matches!(self.server_name, "internal" | "local") {
+                super::events::emit_event(
+                    opm::events::EventType::ProcessStop,
+                    self.id,
+                    &process_name,
+                    &format!("Process '{}' stopped via CLI", process_name),
+                );
+            }
         }
 
         return self.runner;
@@ -373,9 +413,24 @@ impl<'i> Internal<'i> {
             };
         }
 
+        // Get process info before removal for event emission
+        let process_name = self.runner.info(self.id).map(|p| p.name.clone());
+        
         self.runner.remove(self.id);
         println!("{} Removed {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
         log!("process removed (id={})", self.id);
+        
+        // Emit event for CLI operation if on local server
+        if matches!(self.server_name, "internal" | "local") {
+            if let Some(name) = process_name {
+                super::events::emit_event(
+                    opm::events::EventType::ProcessDelete,
+                    self.id,
+                    &name,
+                    &format!("Process '{}' deleted via CLI", name),
+                );
+            }
+        }
     }
 
     pub fn flush(&mut self) {

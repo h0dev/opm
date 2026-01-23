@@ -929,6 +929,8 @@ pub struct NotificationEvents {
     process_crash: bool,
     #[serde(default)]
     process_restart: bool,
+    #[serde(default)]
+    process_delete: bool,
 }
 
 impl Default for NotificationEvents {
@@ -940,6 +942,7 @@ impl Default for NotificationEvents {
             process_stop: false,
             process_crash: false,
             process_restart: false,
+            process_delete: false,
         }
     }
 }
@@ -997,6 +1000,11 @@ pub async fn get_notifications_handler(_t: Token) -> Json<NotificationConfig> {
                     .as_ref()
                     .map(|e| e.process_restart)
                     .unwrap_or(false),
+                process_delete: notif
+                    .events
+                    .as_ref()
+                    .map(|e| e.process_delete)
+                    .unwrap_or(false),
             },
             channels: notif.channels.unwrap_or_default(),
         },
@@ -1044,6 +1052,7 @@ pub async fn save_notifications_handler(
             process_stop: body.events.process_stop,
             process_crash: body.events.process_crash,
             process_restart: body.events.process_restart,
+            process_delete: body.events.process_delete,
         }),
         channels: Some(body.channels.clone()),
     });
@@ -1834,6 +1843,18 @@ pub async fn action_handler(
             }
             "remove" | "delete" => {
                 runner.remove(id);
+                
+                // Emit process delete event
+                let event = opm::events::Event::new(
+                    opm::events::EventType::ProcessDelete,
+                    "local".to_string(),
+                    "Local".to_string(),
+                    Some(id.to_string()),
+                    Some(process_name.clone()),
+                    format!("Process '{}' deleted", process_name),
+                );
+                event_manager.add_event(event).await;
+                
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -2613,6 +2634,38 @@ pub async fn clear_events_handler(
     timer.observe_duration();
     
     Json(json!({"success": true, "message": "Events cleared"}))
+}
+
+/// Struct for receiving CLI event data
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct CliEventData {
+    pub event_type: opm::events::EventType,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub process_id: String,
+    pub process_name: String,
+    pub message: String,
+}
+
+/// Receive event from CLI operations (internal endpoint, no auth required)
+#[post("/api/internal/cli-event", format = "json", data = "<body>")]
+pub async fn cli_event_handler(
+    event_manager: &State<std::sync::Arc<opm::events::EventManager>>,
+    body: Json<CliEventData>,
+) -> Json<serde_json::Value> {
+    // Create event from CLI data
+    let event = opm::events::Event::new(
+        body.event_type.clone(),
+        body.agent_id.clone(),
+        body.agent_name.clone(),
+        Some(body.process_id.clone()),
+        Some(body.process_name.clone()),
+        body.message.clone(),
+    );
+    
+    event_manager.add_event(event).await;
+    
+    Json(json!({"success": true}))
 }
 
 /// Stream events in real-time using Server-Sent Events

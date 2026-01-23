@@ -13,6 +13,7 @@ pub enum EventType {
     ProcessStop,
     ProcessCrash,
     ProcessRestart,
+    ProcessDelete,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

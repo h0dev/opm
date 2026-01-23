@@ -31,16 +31,7 @@ impl NotificationManager {
 
             // Check if this event is enabled
             if let Some(events) = &cfg.events {
-                let enabled = match event {
-                    NotificationEvent::AgentConnect => events.agent_connect,
-                    NotificationEvent::AgentDisconnect => events.agent_disconnect,
-                    NotificationEvent::ProcessStart => events.process_start,
-                    NotificationEvent::ProcessStop => events.process_stop,
-                    NotificationEvent::ProcessCrash => events.process_crash,
-                    NotificationEvent::ProcessRestart => events.process_restart,
-                };
-
-                if !enabled {
+                if !event.is_enabled(events) {
                     return;
                 }
             }
@@ -70,16 +61,10 @@ impl NotificationManager {
         title: &str,
         message: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let urgency = match event {
-            NotificationEvent::ProcessCrash => Urgency::Critical,
-            NotificationEvent::AgentDisconnect => Urgency::Normal,
-            _ => Urgency::Low,
-        };
-
         Notification::new()
             .summary(title)
             .body(message)
-            .urgency(urgency)
+            .urgency(event.urgency())
             .appname("OPM")
             .timeout(5000)
             .show()?;
@@ -288,4 +273,29 @@ pub enum NotificationEvent {
     ProcessStop,
     ProcessCrash,
     ProcessRestart,
+    ProcessDelete,
+}
+
+impl NotificationEvent {
+    /// Check if this event is enabled in the configuration
+    pub fn is_enabled(&self, events: &crate::config::structs::NotificationEvents) -> bool {
+        match self {
+            NotificationEvent::AgentConnect => events.agent_connect,
+            NotificationEvent::AgentDisconnect => events.agent_disconnect,
+            NotificationEvent::ProcessStart => events.process_start,
+            NotificationEvent::ProcessStop => events.process_stop,
+            NotificationEvent::ProcessCrash => events.process_crash,
+            NotificationEvent::ProcessRestart => events.process_restart,
+            NotificationEvent::ProcessDelete => events.process_delete,
+        }
+    }
+
+    /// Get the urgency level for this event
+    pub fn urgency(&self) -> Urgency {
+        match self {
+            NotificationEvent::ProcessCrash => Urgency::Critical,
+            NotificationEvent::AgentDisconnect => Urgency::Normal,
+            _ => Urgency::Low,
+        }
+    }
 }
