@@ -266,12 +266,12 @@ const SystemPage = (props: { base: string }) => {
 											</td>
 											<td className="hidden py-3 pl-0 pr-8 md:table-cell">
 												<div className="text-sm text-zinc-400">
-													{process.memory ? process.memory.toUpperCase() : 'N/A'}
+													{process.memory?.toUpperCase() || 'N/A'}
 												</div>
 											</td>
 											<td className="py-3 pl-0 pr-4 text-right">
 												<div className="text-sm text-zinc-400">
-													{process.uptime ? startDuration(process.uptime, false) : 'N/A'}
+													{(process.uptime && startDuration(process.uptime, false)) || 'N/A'}
 												</div>
 											</td>
 										</tr>
