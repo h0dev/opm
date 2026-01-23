@@ -232,6 +232,17 @@ pub async fn system(
     ))
 }
 
+#[get("/events")]
+pub async fn events(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("events", &state, &mut Context::new()).await?,
+    ))
+}
+
 #[get("/agent-detail")]
 pub async fn agent_detail(
     state: &State<TeraState>,

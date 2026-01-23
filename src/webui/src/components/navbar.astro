@@ -43,6 +43,16 @@ const { active } = Astro.props;
         </svg>
         System
       </a>
+      
+      <a 
+        href="{{base_path | safe}}/events" 
+        aria-label="Events"
+        class={`${active == "events" ? 'bg-sky-600/20 text-sky-300' : 'hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-100'} flex items-center px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium transition-all duration-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-inset active:scale-95`}>
+        <svg class="mr-1 sm:mr-2 h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        Events
+      </a>
     </div>
   </div>
 </nav>

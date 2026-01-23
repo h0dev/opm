@@ -1,0 +1,15 @@
+---
+import Layout from '@/components/base.astro';
+import Navbar from '@/components/navbar.astro';
+import EventsPage from '@/components/react/events';
+import { SITE_TITLE, SITE_DESCRIPTION } from '@/consts';
+---
+
+<Layout title={SITE_TITLE + " - Events"} description={SITE_DESCRIPTION}>
+	<Navbar active={"events"} />
+	<main class="min-h-screen bg-zinc-950 pt-20">
+		<div class="py-8">
+			<EventsPage base={"{{base_path | safe}}"} client:only="@astrojs/react" />
+		</div>
+	</main>
+</Layout>
