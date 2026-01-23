@@ -10,6 +10,12 @@ pub static WARN: Lazy<colored::ColoredString> = Lazy::new(|| "[OPM]".yellow());
 pub static INFO: Lazy<colored::ColoredString> = Lazy::new(|| "[OPM]".cyan());
 pub static WARN_STAR: Lazy<colored::ColoredString> = Lazy::new(|| "*".yellow());
 
+// Time constants for duration formatting
+const SECONDS_IN_YEAR: i64 = 365 * 24 * 60 * 60; // 31536000 seconds
+const SECONDS_IN_DAY: i64 = 24 * 60 * 60; // 86400 seconds
+const SECONDS_IN_HOUR: i64 = 60 * 60; // 3600 seconds
+const SECONDS_IN_MINUTE: i64 = 60;
+
 #[derive(Clone, Debug)]
 pub struct ColoredString(pub colored::ColoredString);
 
@@ -39,10 +45,10 @@ pub fn format_duration(datetime: DateTime<Utc>) -> String {
     let duration = current_time.signed_duration_since(datetime);
 
     match duration.num_seconds() {
-        s if s >= 31536000 => format!("{}y", s / 31536000), // 365 days in seconds
-        s if s >= 86400 => format!("{}d", s / 86400),
-        s if s >= 3600 => format!("{}h", s / 3600),
-        s if s >= 60 => format!("{}m", s / 60),
+        s if s >= SECONDS_IN_YEAR => format!("{}y", s / SECONDS_IN_YEAR),
+        s if s >= SECONDS_IN_DAY => format!("{}d", s / SECONDS_IN_DAY),
+        s if s >= SECONDS_IN_HOUR => format!("{}h", s / SECONDS_IN_HOUR),
+        s if s >= SECONDS_IN_MINUTE => format!("{}m", s / SECONDS_IN_MINUTE),
         s => format!("{}s", s),
     }
 }
