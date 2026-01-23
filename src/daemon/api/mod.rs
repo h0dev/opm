@@ -275,6 +275,7 @@ pub async fn start(webui: bool) {
     let event_manager = std::sync::Arc::new(opm::events::EventManager::new(1000));
     
     // Store in global static for daemon access
+    // Safe to ignore error: API start is called once per daemon lifecycle
     let _ = GLOBAL_EVENT_MANAGER.set(event_manager.clone());
     
     log::info!("API start: Initializing notification manager");
@@ -283,6 +284,7 @@ pub async fn start(webui: bool) {
     let notification_manager = std::sync::Arc::new(opm::notifications::NotificationManager::new(notification_config));
     
     // Store in global static for daemon access
+    // Safe to ignore error: API start is called once per daemon lifecycle
     let _ = GLOBAL_NOTIFICATION_MANAGER.set(notification_manager.clone());
 
     log::info!("API start: Initializing agent registry");

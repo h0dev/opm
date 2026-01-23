@@ -251,9 +251,12 @@ fn restart_process() {
                 if item.running {
                     // Emit crash event and notification for newly detected crashes
                     let process_name = item.name.clone();
-                    tokio::runtime::Handle::try_current().ok().map(|handle| {
+                    if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
                         handle.spawn(emit_crash_event_and_notification(id, process_name));
-                    });
+                    } else {
+                        log!("[daemon] warning: crash event not emitted (no tokio runtime)", 
+                             "name" => item.name, "id" => id);
+                    }
                     
                     // Check if we've reached or exceeded the maximum crash limit
                     // Using >= to stop when counter reaches the limit:
