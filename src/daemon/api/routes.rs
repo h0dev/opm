@@ -1645,20 +1645,26 @@ pub async fn create_handler(
     runner
         .start(&name, &body.script, body.path.clone(), &body.watch, 0);
     
-    // Get the ID of the just-created process (current counter - 1)
-    let id = runner.id.counter.load(std::sync::atomic::Ordering::SeqCst).saturating_sub(1);
-    runner.save();
-    
-    // Emit process start event
-    let event = opm::events::Event::new(
-        opm::events::EventType::ProcessStart,
-        "local".to_string(),
-        "Local".to_string(),
-        Some(id.to_string()),
-        Some(name.clone()),
-        format!("Process '{}' created", name),
-    );
-    event_manager.add_event(event).await;
+    // Find the just-created process by name to get its ID
+    // Since we just created it and this is a fresh Runner instance, it should be the only one with this name
+    if let Some(process_info) = runner.list.iter().find(|(_, p)| p.name == name).map(|(id, p)| (*id, p.name.clone())) {
+        let (id, process_name) = process_info;
+        runner.save();
+        
+        // Emit process start event
+        let event = opm::events::Event::new(
+            opm::events::EventType::ProcessStart,
+            "local".to_string(),
+            "Local".to_string(),
+            Some(id.to_string()),
+            Some(process_name),
+            format!("Process '{}' created", name),
+        );
+        event_manager.add_event(event).await;
+    } else {
+        // Process not found, just save without event
+        runner.save();
+    }
     
     timer.observe_duration();
 

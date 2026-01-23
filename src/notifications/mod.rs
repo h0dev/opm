@@ -67,7 +67,7 @@ impl NotificationManager {
             .urgency(event.urgency())
             .appname("OPM")
             .icon("application-x-executable")
-            .hint(Hint::Category("device".to_string()))
+            .hint(Hint::Category("network".to_string()))
             .timeout(5000)
             .show()?;
 
