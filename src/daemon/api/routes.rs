@@ -2655,6 +2655,13 @@ pub struct SystemInfo {
     pub memory_percent: f64,
     pub uptime: u64,
     pub process_count: usize,
+    pub cpu_usage: Option<f64>,
+    pub disk_total: Option<u64>,
+    pub disk_free: Option<u64>,
+    pub disk_percent: Option<f64>,
+    pub load_avg_1: Option<f64>,
+    pub load_avg_5: Option<f64>,
+    pub load_avg_15: Option<f64>,
 }
 
 #[get("/daemon/system")]
@@ -2718,6 +2725,16 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
     // Get process count
     let process_count = Runner::new().fetch().len();
     
+    // Get resource usage metrics
+    let resource_usage = opm::agent::resource_usage::gather_resource_usage();
+    let cpu_usage = resource_usage.as_ref().and_then(|r| r.cpu_usage);
+    let disk_total = resource_usage.as_ref().and_then(|r| r.disk_total);
+    let disk_free = resource_usage.as_ref().and_then(|r| r.disk_free);
+    let disk_percent = resource_usage.as_ref().and_then(|r| r.disk_percent);
+    let load_avg_1 = resource_usage.as_ref().and_then(|r| r.load_avg_1);
+    let load_avg_5 = resource_usage.as_ref().and_then(|r| r.load_avg_5);
+    let load_avg_15 = resource_usage.as_ref().and_then(|r| r.load_avg_15);
+    
     HTTP_COUNTER.inc();
     timer.observe_duration();
     
@@ -2732,6 +2749,13 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
         memory_percent,
         uptime,
         process_count,
+        cpu_usage,
+        disk_total,
+        disk_free,
+        disk_percent,
+        load_avg_1,
+        load_avg_5,
+        load_avg_15,
     }))
 }
 

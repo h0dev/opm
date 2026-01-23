@@ -17,6 +17,13 @@ interface SystemInfo {
 	memory_percent: number;
 	uptime: number;
 	process_count: number;
+	cpu_usage: number | null;
+	disk_total: number | null;
+	disk_free: number | null;
+	disk_percent: number | null;
+	load_avg_1: number | null;
+	load_avg_5: number | null;
+	load_avg_15: number | null;
 }
 
 interface ProcessItem {
@@ -166,42 +173,59 @@ const SystemPage = (props: { base: string }) => {
 					{/* Resource Usage Card */}
 					<div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-6">
 						<h2 className="text-lg font-semibold text-zinc-200 mb-4">Resource Usage</h2>
-						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+							{/* CPU Usage */}
+							{systemInfo.cpu_usage != null && (
+								<div>
+									<div className="text-sm text-zinc-400 mb-1">CPU Usage</div>
+									<div className="text-zinc-200 font-semibold">
+										{systemInfo.cpu_usage.toFixed(1)}%
+									</div>
+								</div>
+							)}
+
 							{/* Memory Usage */}
 							<div>
 								<div className="text-sm text-zinc-400 mb-1">Memory Usage</div>
-								<div className="flex items-center gap-2">
-									<div className="text-zinc-200 font-semibold">
-										{systemInfo.memory_percent.toFixed(1)}%
-									</div>
-									<div className="flex-1 bg-zinc-800 rounded-full h-2">
-										<div 
-											className={`h-2 rounded-full transition-all ${
-												systemInfo.memory_percent > 80 
-													? 'bg-red-500' 
-													: systemInfo.memory_percent > 50 
-													? 'bg-yellow-500' 
-													: 'bg-green-500'
-											}`}
-											style={{ width: `${Math.min(systemInfo.memory_percent, 100)}%` }}
-										/>
-									</div>
+								<div className="text-zinc-200 font-semibold">
+									{systemInfo.memory_percent.toFixed(1)}%
 								</div>
 								<div className="text-xs text-zinc-500 mt-1">
 									{formatBytes(systemInfo.used_memory)} used
 								</div>
 							</div>
 
-							{/* Available Memory */}
-							<div>
-								<div className="text-sm text-zinc-400 mb-1">Available Memory</div>
-								<div className="text-zinc-200 font-semibold">
-									{formatBytes(systemInfo.available_memory)}
+							{/* Disk Usage */}
+							{systemInfo.disk_percent != null && (
+								<div>
+									<div className="text-sm text-zinc-400 mb-1">Disk Usage</div>
+									<div className="text-zinc-200 font-semibold">
+										{systemInfo.disk_percent.toFixed(1)}%
+									</div>
+									{systemInfo.disk_free != null && systemInfo.disk_total != null && (
+										<div className="text-xs text-zinc-500 mt-1">
+											{formatBytes(systemInfo.disk_free * 1024)} free of {formatBytes(systemInfo.disk_total * 1024)}
+										</div>
+									)}
 								</div>
-								<div className="text-xs text-zinc-500 mt-1">
-									Free of {formatBytes(systemInfo.total_memory)} total
+							)}
+
+							{/* Load Average */}
+							{(systemInfo.load_avg_1 != null || 
+							  systemInfo.load_avg_5 != null || 
+							  systemInfo.load_avg_15 != null) && (
+								<div>
+									<div className="text-sm text-zinc-400 mb-1">Load Average</div>
+									<div className="text-zinc-200">
+										<span className="font-semibold">{systemInfo.load_avg_1?.toFixed(2) ?? '?'}</span>
+										{' / '}
+										<span>{systemInfo.load_avg_5?.toFixed(2) ?? '?'}</span>
+										{' / '}
+										<span>{systemInfo.load_avg_15?.toFixed(2) ?? '?'}</span>
+									</div>
+									<div className="text-xs text-zinc-500 mt-1">1 / 5 / 15 min</div>
 								</div>
-							</div>
+							)}
 						</div>
 					</div>
 
