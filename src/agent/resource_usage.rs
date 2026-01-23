@@ -6,20 +6,20 @@ pub fn gather_resource_usage() -> Option<ResourceUsage> {
     let disk_info = sys_info::disk_info().ok();
     let loadavg = sys_info::loadavg().ok();
     
-    // Calculate memory usage - show as free space, similar to disk usage
+    // Calculate memory usage - show as usage percentage
     let memory_used = mem_info.total.saturating_sub(mem_info.avail);
     let memory_percent = if mem_info.total > 0 {
-        (mem_info.avail as f64 / mem_info.total as f64) * 100.0
+        (memory_used as f64 / mem_info.total as f64) * 100.0
     } else {
         0.0
     };
     
-    // Calculate disk usage - show as free space percentage
+    // Calculate disk usage - show as usage percentage
     let (disk_total, disk_free, disk_percent) = if let Some(disk) = disk_info {
         let total = disk.total;
         let free = disk.free;
         let percent = if total > 0 {
-            (free as f64 / total as f64) * 100.0
+            ((total - free) as f64 / total as f64) * 100.0
         } else {
             0.0
         };

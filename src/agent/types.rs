@@ -90,13 +90,13 @@ pub struct ResourceUsage {
     pub memory_used: Option<u64>,
     /// Memory available in KB
     pub memory_available: Option<u64>,
-    /// Memory free space as percentage (0-100), similar to disk_percent
+    /// Memory usage as percentage (0-100)
     pub memory_percent: Option<f64>,
     /// Total disk space in KB
     pub disk_total: Option<u64>,
     /// Free disk space in KB
     pub disk_free: Option<u64>,
-    /// Disk free space as percentage (0-100)
+    /// Disk usage as percentage (0-100)
     pub disk_percent: Option<f64>,
     /// Load average (1 minute)
     pub load_avg_1: Option<f64>,

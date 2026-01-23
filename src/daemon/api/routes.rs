@@ -2704,9 +2704,9 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
     let total_memory = mem_info.total * 1024; // Convert from KB to bytes
     let available_memory = mem_info.avail * 1024;
     let used_memory = total_memory - available_memory;
-    // Show memory percent as free space, similar to disk usage
+    // Show memory percent as usage percentage
     let memory_percent = if total_memory > 0 {
-        (available_memory as f64 / total_memory as f64) * 100.0
+        (used_memory as f64 / total_memory as f64) * 100.0
     } else {
         0.0
     };
