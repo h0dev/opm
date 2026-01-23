@@ -1710,6 +1710,7 @@ pub async fn env_handler(id: usize, _t: Token) -> Result<EnvList, NotFound> {
 pub async fn action_handler(
     id: usize,
     body: Json<ActionBody>,
+    event_manager: &State<std::sync::Arc<opm::events::EventManager>>,
     _t: Token,
 ) -> Result<Json<ActionResponse>, NotFound> {
     let timer = HTTP_REQ_HISTOGRAM
@@ -1720,11 +1721,28 @@ pub async fn action_handler(
 
     if runner.exists(id) {
         HTTP_COUNTER.inc();
+        
+        // Get process info for event emission
+        let process_info = runner.info(id).unwrap();
+        let process_name = process_info.name.clone();
+        
         match method {
             "start" => {
                 let mut item = runner.get(id);
                 item.restart(false); // start should not increment
                 item.get_runner().save();
+                
+                // Emit process start event
+                let event = opm::events::Event::new(
+                    opm::events::EventType::ProcessStart,
+                    "local".to_string(),
+                    "Local".to_string(),
+                    Some(id.to_string()),
+                    Some(process_name.clone()),
+                    format!("Process '{}' started", process_name),
+                );
+                event_manager.add_event(event).await;
+                
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1732,6 +1750,18 @@ pub async fn action_handler(
                 let mut item = runner.get(id);
                 item.restart(true); // restart should increment
                 item.get_runner().save();
+                
+                // Emit process restart event
+                let event = opm::events::Event::new(
+                    opm::events::EventType::ProcessRestart,
+                    "local".to_string(),
+                    "Local".to_string(),
+                    Some(id.to_string()),
+                    Some(process_name.clone()),
+                    format!("Process '{}' restarted", process_name),
+                );
+                event_manager.add_event(event).await;
+                
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1739,6 +1769,18 @@ pub async fn action_handler(
                 let mut item = runner.get(id);
                 item.reload(true); // reload should increment
                 item.get_runner().save();
+                
+                // Emit process restart event (reload is essentially a restart)
+                let event = opm::events::Event::new(
+                    opm::events::EventType::ProcessRestart,
+                    "local".to_string(),
+                    "Local".to_string(),
+                    Some(id.to_string()),
+                    Some(process_name.clone()),
+                    format!("Process '{}' reloaded", process_name),
+                );
+                event_manager.add_event(event).await;
+                
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1746,6 +1788,18 @@ pub async fn action_handler(
                 let mut item = runner.get(id);
                 item.stop();
                 item.get_runner().save();
+                
+                // Emit process stop event
+                let event = opm::events::Event::new(
+                    opm::events::EventType::ProcessStop,
+                    "local".to_string(),
+                    "Local".to_string(),
+                    Some(id.to_string()),
+                    Some(process_name.clone()),
+                    format!("Process '{}' stopped", process_name),
+                );
+                event_manager.add_event(event).await;
+                
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
