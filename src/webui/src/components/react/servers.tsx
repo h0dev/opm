@@ -142,7 +142,7 @@ const Index = (props: { base: string }) => {
 						</tr>
 					</thead>
 					<tbody className="divide-y divide-white/5 border-b border-white/5">
-						{agents.value.map((agent: any) => {
+						{agents.value.filter((agent: any) => !isLocalAgent(agent)).map((agent: any) => {
 							// Backend sends last_seen as seconds since UNIX epoch
 							// Heartbeat interval is 30s by default, so we use 60s threshold (2x) to account for network delays
 							const isOnline = agent.last_seen && 
@@ -199,13 +199,11 @@ const Index = (props: { base: string }) => {
 										</div>
 									</td>
 									<td className="py-4 pl-0 pr-4 text-right sm:pr-6 lg:pr-8" onClick={(e) => e.stopPropagation()}>
-										{!isLocalAgent(agent) && (
-											<button
-												onClick={() => removeAgent(agent.id, agent.name)}
-												className="text-red-400 hover:text-red-300 text-sm font-medium transition">
-												Remove
-											</button>
-										)}
+										<button
+											onClick={() => removeAgent(agent.id, agent.name)}
+											className="text-red-400 hover:text-red-300 text-sm font-medium transition">
+											Remove
+										</button>
 									</td>
 								</tr>
 							);
