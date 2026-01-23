@@ -39,6 +39,7 @@ pub fn format_duration(datetime: DateTime<Utc>) -> String {
     let duration = current_time.signed_duration_since(datetime);
 
     match duration.num_seconds() {
+        s if s >= 31536000 => format!("{}y", s / 31536000), // 365 days in seconds
         s if s >= 86400 => format!("{}d", s / 86400),
         s if s >= 3600 => format!("{}h", s / 3600),
         s if s >= 60 => format!("{}m", s / 60),
@@ -99,5 +100,132 @@ pub fn parse_memory(mem_str: &str) -> Result<u64, String> {
             "Invalid memory format: {}. Use format like '100M', '1G', '500K'",
             mem_str
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[test]
+    fn test_format_duration_seconds() {
+        let now = Utc::now();
+        let datetime = now - Duration::seconds(30);
+        assert_eq!(format_duration(datetime), "30s");
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        let now = Utc::now();
+        let datetime = now - Duration::minutes(5);
+        assert_eq!(format_duration(datetime), "5m");
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        let now = Utc::now();
+        let datetime = now - Duration::hours(3);
+        assert_eq!(format_duration(datetime), "3h");
+    }
+
+    #[test]
+    fn test_format_duration_days() {
+        let now = Utc::now();
+        let datetime = now - Duration::days(10);
+        assert_eq!(format_duration(datetime), "10d");
+    }
+
+    #[test]
+    fn test_format_duration_years() {
+        let now = Utc::now();
+        // 365 days should show as 1 year
+        let datetime = now - Duration::days(365);
+        assert_eq!(format_duration(datetime), "1y");
+    }
+
+    #[test]
+    fn test_format_duration_multiple_years() {
+        let now = Utc::now();
+        // 730 days (2 years) should show as 2y
+        let datetime = now - Duration::days(730);
+        assert_eq!(format_duration(datetime), "2y");
+    }
+
+    #[test]
+    fn test_format_duration_just_under_year() {
+        let now = Utc::now();
+        // 364 days should still show as days
+        let datetime = now - Duration::days(364);
+        assert_eq!(format_duration(datetime), "364d");
+    }
+
+    #[test]
+    fn test_format_memory_bytes() {
+        assert_eq!(format_memory(0), "0b");
+        assert_eq!(format_memory(500), "500b");
+    }
+
+    #[test]
+    fn test_format_memory_kilobytes() {
+        assert_eq!(format_memory(1024), "1kb");
+        assert_eq!(format_memory(2048), "2kb");
+    }
+
+    #[test]
+    fn test_format_memory_megabytes() {
+        assert_eq!(format_memory(1024 * 1024), "1mb");
+        assert_eq!(format_memory(1024 * 1024 * 5), "5mb");
+    }
+
+    #[test]
+    fn test_format_memory_gigabytes() {
+        assert_eq!(format_memory(1024 * 1024 * 1024), "1gb");
+        assert_eq!(format_memory(1024 * 1024 * 1024 * 2), "2gb");
+    }
+
+    #[test]
+    fn test_parse_memory_bytes() {
+        assert_eq!(parse_memory("100").unwrap(), 100);
+        assert_eq!(parse_memory("100B").unwrap(), 100);
+    }
+
+    #[test]
+    fn test_parse_memory_kilobytes() {
+        assert_eq!(parse_memory("1K").unwrap(), 1024);
+        assert_eq!(parse_memory("2KB").unwrap(), 2048);
+    }
+
+    #[test]
+    fn test_parse_memory_megabytes() {
+        assert_eq!(parse_memory("1M").unwrap(), 1024 * 1024);
+        assert_eq!(parse_memory("5MB").unwrap(), 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_memory_gigabytes() {
+        assert_eq!(parse_memory("1G").unwrap(), 1024 * 1024 * 1024);
+        assert_eq!(parse_memory("2GB").unwrap(), 2 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_memory_case_insensitive() {
+        assert_eq!(parse_memory("100m").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_memory("100M").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_memory("100mb").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_memory("100MB").unwrap(), 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_memory_with_spaces() {
+        assert_eq!(parse_memory(" 100M ").unwrap(), 100 * 1024 * 1024);
+        assert_eq!(parse_memory("100 M").unwrap(), 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parse_memory_invalid_format() {
+        assert!(parse_memory("invalid").is_err());
+        assert!(parse_memory("100X").is_err());
+        assert!(parse_memory("").is_err());
     }
 }
