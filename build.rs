@@ -261,6 +261,16 @@ fn main() {
                     eprintln!("The application will compile but the WebUI will show placeholder content.");
                 }
             }
+            
+            /* Ensure placeholder HTML files exist after build attempt */
+            /* Astro may generate .mjs files instead of .html, so we need fallbacks */
+            for file in &html_files {
+                let file_path = dist_dir.join(file);
+                if !file_path.exists() {
+                    eprintln!("Creating placeholder for missing file: {}", file);
+                    fs::write(file_path, placeholder).expect("Failed to create placeholder HTML file");
+                }
+            }
         }
         _ => println!("cargo:rustc-env=PROFILE=none"),
     }
