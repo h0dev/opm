@@ -89,11 +89,12 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     thread::sleep(Duration::from_millis(PROCESS_OPERATION_DELAY_MS));
 
     let proc_path = format!("/proc/{}/task/{}/children", shell_pid, shell_pid);
-    if let Ok(contents) = std::fs::read_to_string(&proc_path)
-        && let Some(child_pid_str) = contents.split_whitespace().next()
-        && let Ok(child_pid) = child_pid_str.parse::<i64>()
-    {
-        return child_pid;
+    if let Ok(contents) = std::fs::read_to_string(&proc_path) {
+        if let Some(child_pid_str) = contents.split_whitespace().next() {
+            if let Ok(child_pid) = child_pid_str.parse::<i64>() {
+                return child_pid;
+            }
+        }
     }
 
     let pid = if let Ok(processes) = native_processes() {

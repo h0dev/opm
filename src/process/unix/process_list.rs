@@ -91,12 +91,14 @@ pub fn native_processes() -> Result<Vec<NativeProcess>, String> {
         let proc_dir = fs::read_dir("/proc").map_err(|e| format!("Failed to read /proc: {}", e))?;
 
         for entry in proc_dir {
-            if let Ok(entry) = entry
-                && let Ok(file_name) = entry.file_name().into_string()
-                && let Ok(pid) = file_name.parse::<u32>()
-                && let Ok(process) = NativeProcess::new(pid)
-            {
-                processes.push(process);
+            if let Ok(entry) = entry {
+                if let Ok(file_name) = entry.file_name().into_string() {
+                    if let Ok(pid) = file_name.parse::<u32>() {
+                        if let Ok(process) = NativeProcess::new(pid) {
+                            processes.push(process);
+                        }
+                    }
+                }
             }
         }
 

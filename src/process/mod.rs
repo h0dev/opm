@@ -347,7 +347,7 @@ pub fn is_pid_alive(pid: i64) -> bool {
 
 impl Runner {
     pub fn new() -> Self {
-        dump::read()
+        dump::read_merged()
     }
 
     pub fn refresh(&self) -> Self {
@@ -920,7 +920,13 @@ impl Runner {
     }
 
     pub fn save(&self) {
-        then!(self.remote.is_none(), dump::write(&self))
+        then!(self.remote.is_none(), dump::commit_temp())
+    }
+
+    pub fn save_temp(&self) {
+        if self.remote.is_none() {
+            dump::write_temp(&self);
+        }
     }
 
     pub fn count(&mut self) -> usize {
@@ -1165,11 +1171,11 @@ impl Runner {
             process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
         }
 
-        if let Ok(process) = process_result
-            && let Ok(_mem_info_native) = process.memory_info()
-        {
-            cpu_percent = Some(get_process_cpu_usage_with_children_fast(pid_for_monitoring));
-            memory_usage = get_process_memory_with_children(pid_for_monitoring);
+        if let Ok(process) = process_result {
+            if let Ok(_mem_info_native) = process.memory_info() {
+                cpu_percent = Some(get_process_cpu_usage_with_children_fast(pid_for_monitoring));
+                memory_usage = get_process_memory_with_children(pid_for_monitoring);
+            }
         }
 
         let cpu_percent = match cpu_percent {
@@ -1364,14 +1370,14 @@ impl ProcessWrapper {
                 process_result = unix::NativeProcess::new(pid_for_monitoring as u32);
             }
 
-            if let Ok(process) = process_result
-                && let Ok(_mem_info_native) = process.memory_info()
-            {
-                cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
-                    &process,
-                    pid_for_monitoring,
-                ));
-                memory_usage = get_process_memory_with_children(pid_for_monitoring);
+            if let Ok(process) = process_result {
+                if let Ok(_mem_info_native) = process.memory_info() {
+                    cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
+                        &process,
+                        pid_for_monitoring,
+                    ));
+                    memory_usage = get_process_memory_with_children(pid_for_monitoring);
+                }
             }
         }
 
@@ -1618,14 +1624,14 @@ pub fn process_find_children(parent_pid: i64) -> Vec<i64> {
                     }
                 });
 
-                while let Some(pid) = to_check.pop()
-                    && let Some(direct_children) = parent_map.get(&pid)
-                {
-                    for &child in direct_children {
-                        if !checked.contains(&child) {
-                            children.push(child);
-                            to_check.push(child);
-                            checked.insert(child);
+                while let Some(pid) = to_check.pop() {
+                    if let Some(direct_children) = parent_map.get(&pid) {
+                        for &child in direct_children {
+                            if !checked.contains(&child) {
+                                children.push(child);
+                                to_check.push(child);
+                                checked.insert(child);
+                            }
                         }
                     }
                 }

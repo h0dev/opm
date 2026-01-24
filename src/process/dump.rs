@@ -120,3 +120,90 @@ pub fn write(dump: &Runner) {
         )
     }
 }
+
+/// Read from temporary dump file
+pub fn read_temp() -> Runner {
+    if !Exists::check(&global!("opm.dump.temp")).file() {
+        return Runner {
+            id: Id::new(0),
+            list: BTreeMap::new(),
+            remote: None,
+        };
+    }
+
+    match file::try_read_object(global!("opm.dump.temp")) {
+        Ok(runner) => runner,
+        Err(err) => {
+            log!("[dump::read_temp] Failed to read temp dump: {err}");
+            // Return empty runner on error
+            Runner {
+                id: Id::new(0),
+                list: BTreeMap::new(),
+                remote: None,
+            }
+        }
+    }
+}
+
+/// Write to temporary dump file
+pub fn write_temp(dump: &Runner) {
+    let encoded = match ron::ser::to_string(&dump) {
+        Ok(contents) => contents,
+        Err(err) => {
+            log!("[dump::write_temp] Cannot encode temp dump: {err}");
+            return;
+        }
+    };
+
+    if let Err(err) = fs::write(global!("opm.dump.temp"), encoded) {
+        log!("[dump::write_temp] Error writing temp dumpfile: {err}");
+    }
+}
+
+/// Merge temporary dump into permanent and clear temporary
+pub fn commit_temp() {
+    let mut permanent = read();
+    let temporary = read_temp();
+    
+    // Merge temporary processes into permanent
+    for (id, process) in temporary.list {
+        permanent.list.insert(id, process);
+    }
+    
+    // Update ID counter to maximum
+    use std::sync::atomic::Ordering;
+    let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
+    let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
+    if temp_counter > perm_counter {
+        permanent.id.counter.store(temp_counter, Ordering::SeqCst);
+    }
+    
+    // Write merged state to permanent
+    write(&permanent);
+    
+    // Clear temporary dump
+    let _ = fs::remove_file(global!("opm.dump.temp"));
+    log!("[dump::commit_temp] Committed temporary processes to permanent storage");
+}
+
+/// Read merged state (permanent + temporary)
+pub fn read_merged() -> Runner {
+    let mut permanent = read();
+    let temporary = read_temp();
+    
+    // Merge temporary processes into permanent
+    for (id, process) in temporary.list {
+        permanent.list.insert(id, process);
+    }
+    
+    // Use maximum ID counter
+    use std::sync::atomic::Ordering;
+    let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
+    let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
+    if temp_counter > perm_counter {
+        permanent.id.counter.store(temp_counter, Ordering::SeqCst);
+    }
+    
+    permanent
+}
+
