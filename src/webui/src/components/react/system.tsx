@@ -24,6 +24,8 @@ interface SystemInfo {
 	load_avg_1: number | null;
 	load_avg_5: number | null;
 	load_avg_15: number | null;
+	public_ip: string | null;
+	private_ips: string[];
 }
 
 interface ProcessItem {
@@ -166,6 +168,29 @@ const SystemPage = (props: { base: string }) => {
 							<div>
 								<div className="text-sm text-gray-500 dark:text-zinc-400 mb-1">Uptime</div>
 								<div className="text-gray-700 dark:text-zinc-200">{formatUptime(systemInfo.uptime)}</div>
+							</div>
+						</div>
+					</div>
+
+					{/* Network Information Card */}
+					<div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg p-6 mb-6">
+						<h2 className="text-lg font-semibold text-gray-700 dark:text-zinc-200 mb-4">Network Information</h2>
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+							{/* Public IP */}
+							<div>
+								<div className="text-sm text-gray-500 dark:text-zinc-400 mb-1">Public IP</div>
+								<div className="text-gray-700 dark:text-zinc-200 font-mono">
+									{systemInfo.public_ip || 'Not available'}
+								</div>
+							</div>
+							{/* Private IPs */}
+							<div>
+								<div className="text-sm text-gray-500 dark:text-zinc-400 mb-1">Private IP(s)</div>
+								<div className="text-gray-700 dark:text-zinc-200 font-mono">
+									{systemInfo.private_ips && systemInfo.private_ips.length > 0 
+										? systemInfo.private_ips.join(', ') 
+										: 'Not available'}
+								</div>
 							</div>
 						</div>
 					</div>

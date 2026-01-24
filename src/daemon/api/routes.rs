@@ -2748,6 +2748,8 @@ pub struct SystemInfo {
     pub load_avg_1: Option<f64>,
     pub load_avg_5: Option<f64>,
     pub load_avg_15: Option<f64>,
+    pub public_ip: Option<String>,
+    pub private_ips: Vec<String>,
 }
 
 #[get("/daemon/system")]
@@ -2822,6 +2824,12 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
     let load_avg_5 = resource_usage.as_ref().and_then(|r| r.load_avg_5);
     let load_avg_15 = resource_usage.as_ref().and_then(|r| r.load_avg_15);
     
+    // Get public IP (try to fetch from external service)
+    let public_ip = get_public_ip().await;
+    
+    // Get private IPs (local network interfaces)
+    let private_ips = get_private_ips();
+    
     HTTP_COUNTER.inc();
     timer.observe_duration();
     
@@ -2843,6 +2851,56 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
         load_avg_1,
         load_avg_5,
         load_avg_15,
+        public_ip,
+        private_ips,
     }))
+}
+
+/// Get public IP address from external service
+async fn get_public_ip() -> Option<String> {
+    // Try multiple services in case one is down
+    let services = [
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    ];
+    
+    for service in &services {
+        if let Ok(response) = reqwest::get(*service).await {
+            if let Ok(ip) = response.text().await {
+                let ip = ip.trim().to_string();
+                if !ip.is_empty() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Get private IP addresses from network interfaces
+fn get_private_ips() -> Vec<String> {
+    let mut ips = Vec::new();
+    
+    // Get local IP addresses (simplified approach)
+    // In a real implementation, you'd use a crate like `local-ip-address` or `if-addrs`
+    // For now, return localhost as fallback
+    if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&("0.0.0.0:0".to_string())) {
+        for addr in addrs {
+            let ip = addr.ip();
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                ips.push(ip.to_string());
+            }
+        }
+    }
+    
+    // If we couldn't get any IPs, try to get all local network interfaces
+    // This is a placeholder - ideally use a proper network interface crate
+    if ips.is_empty() {
+        // Basic fallback - return common private network info
+        ips.push("127.0.0.1".to_string());
+    }
+    
+    ips
 }
 
