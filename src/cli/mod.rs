@@ -146,6 +146,8 @@ pub fn start(
             .create(&arg.to_string(), &worker_name, watch, &None, true);
         }
 
+        runner.save_temp();
+        
         println!(
             "{} All {} workers started successfully",
             *helpers::SUCCESS,
@@ -208,7 +210,7 @@ pub fn start(
                         kind,
                     }
                     .create(script, name, watch, max_memory, false);
-                    runner.save();
+                    runner.save_temp();
                 }
             },
         }
