@@ -92,6 +92,8 @@ pub fn read_hcl(path: &String) {
                 p.stop();
                 p.set_env(item.env);
                 p.restart(false);
+                // Save directly on the ProcessWrapper
+                p.get_runner().save();
             }
             None => crashln!("{} Failed to write to ({name})", *helpers::FAIL),
         }
@@ -99,6 +101,9 @@ pub fn read_hcl(path: &String) {
         if !servers.contains(&list_name) {
             servers.push(list_name);
         }
+        
+        // Reload the runner after saving to get the latest state for next iteration
+        runner = Runner::new();
     }
 
     servers

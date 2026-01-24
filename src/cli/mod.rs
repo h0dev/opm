@@ -537,6 +537,9 @@ pub fn restart(items: &Items, server_name: &String) {
             }
         }
     }
+    
+    // Save the runner after restart operations
+    runner.save();
 
     // Allow CPU stats to accumulate before displaying the list
     thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
