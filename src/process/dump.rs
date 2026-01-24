@@ -46,7 +46,7 @@ pub fn read() -> Runner {
     }
 
     // Try to read the dump file with error recovery
-    let mut runner = match file::try_read_object(global!("opm.dump")) {
+    match file::try_read_object(global!("opm.dump")) {
         Ok(runner) => runner,
         Err(err) => {
             // If parsing fails, the dump file is likely corrupted
@@ -84,42 +84,7 @@ pub fn read() -> Runner {
 
             runner
         }
-    };
-
-    // Merge temp dump if it exists
-    let temp_dump_path = global!("opm.dump.temp");
-    if Exists::check(&temp_dump_path).file() {
-        log!("[dump::read] Found temp dump file, merging...");
-        let temporary = read_temp();
-        
-        // Merge temporary processes into permanent
-        for (id, process) in temporary.list {
-            runner.list.insert(id, process);
-        }
-        
-        // Update ID counter to maximum
-        use std::sync::atomic::Ordering;
-        let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
-        let perm_counter = runner.id.counter.load(Ordering::SeqCst);
-        if temp_counter > perm_counter {
-            runner.id.counter.store(temp_counter, Ordering::SeqCst);
-        }
-        
-        // Delete temp file after merging
-        let _ = fs::remove_file(&temp_dump_path);
-        log!("[dump::read] Merged and cleaned up temp dump file");
     }
-
-    // Set all crashed processes to stopped status
-    for (_id, process) in runner.list.iter_mut() {
-        if process.crash.crashed {
-            process.running = false;
-            process.crash.crashed = false;
-            log!("[dump::read] Set crashed process '{}' to stopped", process.name);
-        }
-    }
-
-    runner
 }
 
 pub fn raw() -> Vec<u8> {
@@ -197,7 +162,24 @@ pub fn write_temp(dump: &Runner) {
 
 /// Merge temporary dump into permanent and clear temporary
 pub fn commit_temp() {
-    let mut permanent = read();
+    // Read permanent dump directly
+    let mut permanent = if !Exists::check(&global!("opm.dump")).file() {
+        Runner {
+            id: Id::new(0),
+            list: BTreeMap::new(),
+            remote: None,
+        }
+    } else {
+        match file::try_read_object(global!("opm.dump")) {
+            Ok(runner) => runner,
+            Err(_) => Runner {
+                id: Id::new(0),
+                list: BTreeMap::new(),
+                remote: None,
+            }
+        }
+    };
+    
     let temporary = read_temp();
     
     // Merge temporary processes into permanent
@@ -223,7 +205,34 @@ pub fn commit_temp() {
 
 /// Read merged state (permanent + temporary)
 pub fn read_merged() -> Runner {
-    let mut permanent = read();
+    // Read permanent dump directly without triggering recursive operations
+    let mut permanent = if !Exists::check(&global!("opm.dump")).file() {
+        let runner = Runner {
+            id: Id::new(0),
+            list: BTreeMap::new(),
+            remote: None,
+        };
+        write(&runner);
+        log!("created dump file");
+        runner
+    } else {
+        match file::try_read_object(global!("opm.dump")) {
+            Ok(runner) => runner,
+            Err(err) => {
+                log!("[dump::read_merged] Corrupted permanent dump: {err}");
+                // Create a fresh runner on error
+                let runner = Runner {
+                    id: Id::new(0),
+                    list: BTreeMap::new(),
+                    remote: None,
+                };
+                write(&runner);
+                runner
+            }
+        }
+    };
+    
+    // Read temporary dump if it exists
     let temporary = read_temp();
     
     // Merge temporary processes into permanent
@@ -239,6 +248,70 @@ pub fn read_merged() -> Runner {
         permanent.id.counter.store(temp_counter, Ordering::SeqCst);
     }
     
+    permanent
+}
+
+/// Initialize on daemon startup: merge temp into permanent, set crashed to stopped, clean temp
+pub fn init_on_startup() -> Runner {
+    // Read permanent and temp
+    let mut permanent = if !Exists::check(&global!("opm.dump")).file() {
+        let runner = Runner {
+            id: Id::new(0),
+            list: BTreeMap::new(),
+            remote: None,
+        };
+        write(&runner);
+        log!("created dump file");
+        runner
+    } else {
+        match file::try_read_object(global!("opm.dump")) {
+            Ok(runner) => runner,
+            Err(err) => {
+                log!("[dump::init_on_startup] Corrupted permanent dump: {err}");
+                let runner = Runner {
+                    id: Id::new(0),
+                    list: BTreeMap::new(),
+                    remote: None,
+                };
+                write(&runner);
+                runner
+            }
+        }
+    };
+    
+    // Merge temp dump if it exists
+    let temp_dump_path = global!("opm.dump.temp");
+    if Exists::check(&temp_dump_path).file() {
+        log!("[dump::init_on_startup] Found temp dump file, merging...");
+        let temporary = read_temp();
+        
+        // Merge temporary processes into permanent
+        for (id, process) in temporary.list {
+            permanent.list.insert(id, process);
+        }
+        
+        // Update ID counter to maximum
+        use std::sync::atomic::Ordering;
+        let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
+        let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
+        if temp_counter > perm_counter {
+            permanent.id.counter.store(temp_counter, Ordering::SeqCst);
+        }
+        
+        // Delete temp file after merging
+        let _ = fs::remove_file(&temp_dump_path);
+        log!("[dump::init_on_startup] Merged and cleaned up temp dump file");
+    }
+
+    // Set all crashed processes to stopped status
+    for (_id, process) in permanent.list.iter_mut() {
+        if process.crash.crashed {
+            process.running = false;
+            process.crash.crashed = false;
+            log!("[dump::init_on_startup] Set crashed process '{}' to stopped", process.name);
+        }
+    }
+
     permanent
 }
 

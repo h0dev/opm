@@ -594,6 +594,11 @@ pub fn start(verbose: bool) {
             }
         }
 
+        // Initialize on daemon startup: merge temp into permanent, set crashed to stopped
+        // This must be done before the main loop starts
+        use opm::process::dump;
+        let _startup_runner = dump::init_on_startup();
+
         loop {
             if api_enabled {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]

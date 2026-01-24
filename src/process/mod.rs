@@ -347,7 +347,8 @@ pub fn is_pid_alive(pid: i64) -> bool {
 
 impl Runner {
     pub fn new() -> Self {
-        dump::read()
+        // Read merged state (permanent + temporary)
+        dump::read_merged()
     }
 
     pub fn refresh(&self) -> Self {
