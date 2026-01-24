@@ -253,6 +253,17 @@ pub async fn agent_detail(
     ))
 }
 
+#[get("/settings")]
+pub async fn settings_page(
+    state: &State<TeraState>,
+    _webui: EnableWebUI,
+) -> Result<(ContentType, String), NotFound> {
+    Ok((
+        ContentType::HTML,
+        render("settings", state, &mut Context::new()).await?,
+    ))
+}
+
 #[get("/daemon/prometheus")]
 #[utoipa::path(get, tag = "Daemon", path = "/daemon/prometheus", security((), ("api_key" = [])),
     responses(
