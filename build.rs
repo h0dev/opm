@@ -1,18 +1,25 @@
 use chrono::Datelike;
+
+#[cfg(feature = "webui")]
 use flate2::read::GzDecoder;
+#[cfg(feature = "webui")]
 use reqwest;
+#[cfg(feature = "webui")]
 use tar::Archive;
 
+use std::{env, process::Command};
+
+#[cfg(feature = "webui")]
 use std::{
-    env,
     fs::{self, File},
     io::{self, copy},
     path::{Path, PathBuf},
-    process::Command,
 };
 
+#[cfg(feature = "webui")]
 const NODE_VERSION: &str = "20.11.0";
 
+#[cfg(feature = "webui")]
 fn extract_tar_gz(tar: &PathBuf, download_dir: &PathBuf) -> io::Result<()> {
     let file = File::open(tar)?;
     let decoder = GzDecoder::new(file);
@@ -22,6 +29,7 @@ fn extract_tar_gz(tar: &PathBuf, download_dir: &PathBuf) -> io::Result<()> {
     Ok(fs::remove_file(tar)?)
 }
 
+#[cfg(feature = "webui")]
 fn download_file(url: String, destination: &PathBuf, download_dir: &PathBuf) {
     if !download_dir.exists() {
         fs::create_dir_all(download_dir).unwrap();
@@ -33,6 +41,7 @@ fn download_file(url: String, destination: &PathBuf, download_dir: &PathBuf) {
     copy(&mut response, &mut file).expect("Failed to copy content");
 }
 
+#[cfg(feature = "webui")]
 fn use_system_node_or_download() -> PathBuf {
     // Try to use system Node.js first
     if let Ok(node_path) = Command::new("which").arg("node").output() {
@@ -56,6 +65,7 @@ fn use_system_node_or_download() -> PathBuf {
     download_node()
 }
 
+#[cfg(feature = "webui")]
 fn download_node() -> PathBuf {
     #[cfg(target_os = "linux")]
     let target_os = "linux";
@@ -83,7 +93,7 @@ fn download_node() -> PathBuf {
     }
 
     /* download node */
-    let node_archive = download_dir.join(format!("node-v{}-{}.tar.gz", NODE_VERSION, target_os));
+    let node_archive = download_dir.join(format!("node-v{NODE_VERSION}-{target_os}-{target_arch}.tar.gz"));
     download_file(download_url, &node_archive, &download_dir);
 
     /* extract node */
@@ -99,6 +109,7 @@ fn download_node() -> PathBuf {
     return node_extract_dir;
 }
 
+#[cfg(feature = "webui")]
 fn download_then_build(node_bin_dir: PathBuf) {
     let bin = &node_bin_dir;
     let node = &bin.join("node");
@@ -130,14 +141,14 @@ fn download_then_build(node_bin_dir: PathBuf) {
     };
 
     /* install deps */
-    if npm.extension().and_then(|s| s.to_str()) == Some("js") {
+    let npm_status = if npm.extension().and_then(|s| s.to_str()) == Some("js") {
         // Downloaded npm - run as script
         Command::new(node)
             .args([npm.to_str().unwrap(), "ci"])
             .current_dir(project_dir)
             .env("PATH", &path)
             .status()
-            .expect("Failed to install dependencies");
+            .expect("Failed to start npm ci command")
     } else {
         // System npm - run as binary
         Command::new(&npm)
@@ -145,16 +156,42 @@ fn download_then_build(node_bin_dir: PathBuf) {
             .current_dir(project_dir)
             .env("PATH", &path)
             .status()
-            .expect("Failed to install dependencies");
+            .expect("Failed to start npm ci command")
+    };
+
+    if !npm_status.success() {
+        panic!(
+            "npm ci command failed with exit code: {:?}\n\
+             \n\
+             This error occurs when building with the 'webui' feature.\n\
+             Possible solutions:\n\
+             - Check that Node.js and npm are properly installed\n\
+             - Try running 'npm install' manually in the src/webui directory\n\
+             - Build without the webui feature: cargo build --release",
+            npm_status.code()
+        );
     }
 
     /* build frontend */
-    Command::new(node)
+    let build_status = Command::new(node)
         .args(["node_modules/astro/astro.js", "build"])
         .current_dir(project_dir)
         .env("PATH", &path)
         .status()
-        .expect("Failed to build frontend");
+        .expect("Failed to start astro build command");
+
+    if !build_status.success() {
+        panic!(
+            "Astro build command failed with exit code: {:?}\n\
+             \n\
+             This error occurs when building the web UI frontend.\n\
+             Possible solutions:\n\
+             - Check the error messages above for specific build failures\n\
+             - Try running 'npm run build' manually in the src/webui directory\n\
+             - Build without the webui feature: cargo build --release",
+            build_status.code()
+        );
+    }
 }
 
 fn main() {
@@ -198,12 +235,16 @@ fn main() {
         "release" => {
             println!("cargo:rustc-env=PROFILE=release");
 
-            /* cleanup */
-            fs::remove_dir_all(format!("src/webui/dist")).ok();
+            // Only build webui if the feature is enabled
+            #[cfg(feature = "webui")]
+            {
+                /* cleanup */
+                fs::remove_dir_all("src/webui/dist").ok();
 
-            /* pre-build */
-            let node_bin_dir = use_system_node_or_download();
-            download_then_build(node_bin_dir);
+                /* pre-build */
+                let node_bin_dir = use_system_node_or_download();
+                download_then_build(node_bin_dir);
+            }
         }
         _ => println!("cargo:rustc-env=PROFILE=none"),
     }

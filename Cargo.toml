@@ -10,13 +10,24 @@ description = "OPM is a simple and easy to use PM2 alternative"
 name = "opm"
 path = "src/main.rs"
 
+[features]
+default = []
+webui = []
+
 [build-dependencies]
-tar = "0.4.43"
 chrono = "0.4.38"
-flate2 = "1.0.35"
+
+[build-dependencies.tar]
+version = "0.4.43"
+optional = true
+
+[build-dependencies.flate2]
+version = "1.0.35"
+optional = true
 
 [build-dependencies.reqwest]
 version = "0.12.12"
+optional = true
 default-features = false
 features = [
    "blocking", 

@@ -335,12 +335,34 @@ This ensures that:
 
 Pre-built binaries for Linux, MacOS, and WSL can be found on the [releases](releases) page.
 
-There is no windows support yet. Install from crates.io using `cargo install opm` (requires clang++)
+There is no windows support yet.
 
-#### Building
+### Installing from Source
+
+Install from crates.io or GitHub using cargo:
+
+```bash
+# Install without Web UI (recommended for simple installations)
+cargo install opm
+
+# Install from GitHub without Web UI
+cargo install --git https://github.com/h0dev/opm
+
+# Install with Web UI support (requires Node.js)
+cargo install opm --features webui
+
+# Install from GitHub with Web UI support
+cargo install --git https://github.com/h0dev/opm --features webui
+```
+
+Note: Installing with the `webui` feature requires Node.js to be available on your system for building the web interface.
+
+#### Building from Source
 
 - Clone the project
 - Open a terminal in the project folder
 - Check if you have cargo (Rust's package manager) installed, just type in `cargo`
-- If cargo is installed, run `cargo build --release`
+- Build the project:
+  - Without Web UI: `cargo build --release`
+  - With Web UI: `cargo build --release --features webui` (requires Node.js)
 - Put the executable into one of your PATH entries, usually `/bin/` or `/usr/bin/`

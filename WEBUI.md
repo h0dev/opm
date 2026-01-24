@@ -194,16 +194,41 @@ Access Swagger UI for interactive API exploration and testing.
 cargo build
 ```
 
-### Release Build (includes Web UI)
+### Release Build without Web UI
 ```bash
 cargo build --release
 ```
 
-The release build will:
-1. Download and extract Node.js (v20.11.0)
+This builds OPM without the web interface. The API server will still work, but will show placeholder pages when accessing the web UI.
+
+### Release Build with Web UI
+```bash
+cargo build --release --features webui
+```
+
+Building with the `webui` feature will:
+1. Use system Node.js or download Node.js (v20.11.0) if not available
 2. Install npm dependencies
 3. Build the Astro-based web UI
 4. Embed the compiled UI assets in the binary
+
+**Note**: Building with the `webui` feature requires Node.js to be available on your system.
+
+### Installing from Cargo
+
+```bash
+# Install without Web UI (recommended for simple installations)
+cargo install opm
+
+# Install with Web UI support (requires Node.js)
+cargo install opm --features webui
+
+# Install from GitHub without Web UI
+cargo install --git https://github.com/h0dev/opm
+
+# Install from GitHub with Web UI support
+cargo install --git https://github.com/h0dev/opm --features webui
+```
 
 ### Frontend Development
 
@@ -219,12 +244,12 @@ npm install
 # Build the frontend
 npm run build
 
-# Then rebuild the Rust binary in release mode
+# Then rebuild the Rust binary with webui feature
 cd ../..
-cargo build --release
+cargo build --release --features webui
 ```
 
-Note: Frontend changes are only embedded in **release builds**. Debug builds show placeholder pages. For rapid frontend development, you can use Astro's dev server:
+Note: Frontend changes are only embedded in builds with the `webui` feature enabled. Builds without the feature will show placeholder pages. For rapid frontend development, you can use Astro's dev server:
 
 ```bash
 cd src/webui
@@ -252,11 +277,39 @@ This starts a development server at `http://localhost:4321` with hot reload.
 
 ### Web UI Not Loading
 
-If you see "Debug Mode - WebUI not built":
+If you see "WebUI not available" or placeholder pages:
+
+1. The binary was built without the `webui` feature. To enable the web UI:
 ```bash
-# Rebuild in release mode to compile the UI
-cargo build --release
+# Rebuild with webui feature enabled
+cargo build --release --features webui
 ```
+
+2. If you installed from cargo/git without the feature:
+```bash
+# Reinstall with webui support
+cargo install opm --features webui --force
+# or
+cargo install --git https://github.com/h0dev/opm --features webui
+```
+
+### Build Errors with webui Feature
+
+If you encounter errors when building with `--features webui`:
+
+1. **Node.js not found**: Ensure Node.js is installed on your system
+   ```bash
+   node --version  # Should show v16.0.0 or higher
+   ```
+
+2. **npm dependency errors**: Try clearing the npm cache and package-lock.json
+   ```bash
+   cd src/webui
+   rm -rf node_modules package-lock.json
+   npm install
+   cd ../..
+   cargo build --release --features webui
+   ```
 
 ### API Not Accessible
 

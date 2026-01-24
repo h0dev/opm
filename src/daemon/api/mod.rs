@@ -408,16 +408,16 @@ async fn render(
 
 #[rocket::get("/assets/<name>")]
 async fn dynamic_assets(name: String) -> Option<NamedFile> {
-    #[cfg(not(debug_assertions))]
+    #[cfg(all(not(debug_assertions), feature = "webui"))]
     {
         static DIR: Dir = include_dir!("src/webui/dist/assets");
         let file = DIR.get_file(&name)?;
         NamedFile::send(name, file.contents_utf8()).await.ok()
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, not(feature = "webui")))]
     {
-        let _ = name; // Unused in debug builds (used in non-debug above)
+        let _ = name; // Unused in debug builds or when webui is disabled
         None
     }
 }
