@@ -146,6 +146,8 @@ pub fn start(
             .create(&arg.to_string(), &worker_name, watch, &None, true);
         }
 
+        runner.save_temp();
+        
         println!(
             "{} All {} workers started successfully",
             *helpers::SUCCESS,
@@ -201,13 +203,14 @@ pub fn start(
                     .restart(name, watch, *reset_env, false, false); // start existing - don't increment
                 }
                 None => {
-                    Internal {
+                    runner = Internal {
                         id: 0,
                         runner,
                         server_name,
                         kind,
                     }
                     .create(script, name, watch, max_memory, false);
+                    runner.save_temp();
                 }
             },
         }
