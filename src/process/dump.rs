@@ -45,6 +45,13 @@ pub fn read() -> Runner {
         return runner;
     }
 
+    // Clean up temp dump file if it exists (legacy cleanup)
+    let temp_dump_path = global!("opm.dump.temp");
+    if Exists::check(&temp_dump_path).file() {
+        let _ = fs::remove_file(&temp_dump_path);
+        log!("removed legacy temp dump file");
+    }
+
     // Try to read the dump file with error recovery
     match file::try_read_object(global!("opm.dump")) {
         Ok(runner) => runner,
