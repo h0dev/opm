@@ -37,7 +37,6 @@
 //! - **Daemon operations** use `write_memory()` for fast in-memory operations
 //! - **Explicit save** (`opm save`) uses `commit_temp()` or `commit_memory()` to make permanent
 //! - **Daemon startup** (`opm daemon restore`) merges temp into permanent via `init_on_startup()`
-
 use crate::{
     file::{self, Exists},
     helpers, log,
@@ -51,6 +50,7 @@ use macros_rs::{crashln, fmtstr, string};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
 use std::{collections::BTreeMap, fs, sync::Mutex};
+use std::sync::atomic::Ordering;
 use once_cell::sync::Lazy;
 
 /// Global in-memory cache for process state (replaces temporary file)
@@ -259,7 +259,6 @@ pub fn commit_memory() {
     }
     
     // Update ID counter to maximum
-    use std::sync::atomic::Ordering;
     let mem_counter = memory.id.counter.load(Ordering::SeqCst);
     let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
     if mem_counter > perm_counter {
@@ -286,7 +285,6 @@ pub fn commit_temp() {
     }
     
     // Update ID counter to maximum
-    use std::sync::atomic::Ordering;
     let temp_counter = temp.id.counter.load(Ordering::SeqCst);
     let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
     if temp_counter > perm_counter {
@@ -326,12 +324,11 @@ pub fn read_merged() -> Runner {
     }
     
     // Use maximum ID counter from all sources
-    use std::sync::atomic::Ordering;
     let temp_counter = temp.id.counter.load(Ordering::SeqCst);
     let mem_counter = memory.id.counter.load(Ordering::SeqCst);
     let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
     let max_counter = temp_counter.max(mem_counter).max(perm_counter);
-    if max_counter > perm_counter {
+    if max_counter != perm_counter {
         permanent.id.counter.store(max_counter, Ordering::SeqCst);
     }
     
@@ -357,7 +354,6 @@ pub fn init_on_startup() -> Runner {
                 }
                 
                 // Update ID counter to maximum
-                use std::sync::atomic::Ordering;
                 let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
                 let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
                 if temp_counter > perm_counter {
