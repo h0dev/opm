@@ -941,17 +941,21 @@ impl Runner {
         }
     }
 
-    /// Save runner state to permanent dump file (used only by explicit 'opm save' command)
+    /// Commit memory cache to permanent storage and clear cache
+    /// Used by daemon on shutdown to merge any cached state into permanent file
+    /// Since save() now writes directly to permanent storage, this is mainly
+    /// used to commit daemon-side memory cache and is equivalent to save() for CLI operations
     pub fn save_permanent(&self) {
         if self.remote.is_none() {
-            // Merge memory into permanent and clear memory
+            // For daemon: merge memory cache into permanent and clear cache
+            // For CLI: this is equivalent to save() since we write directly to permanent
             dump::commit_memory();
         }
     }
 
     #[deprecated(note = "Use save() instead - it now writes directly to permanent storage")]
     pub fn save_temp(&self) {
-        // Deprecated: now save directly to memory cache
+        // Deprecated: now save directly to permanent storage
         self.save();
     }
 
