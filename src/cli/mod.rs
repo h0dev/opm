@@ -201,13 +201,14 @@ pub fn start(
                     .restart(name, watch, *reset_env, false, false); // start existing - don't increment
                 }
                 None => {
-                    Internal {
+                    runner = Internal {
                         id: 0,
                         runner,
                         server_name,
                         kind,
                     }
                     .create(script, name, watch, max_memory, false);
+                    runner.save();
                 }
             },
         }
