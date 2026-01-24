@@ -920,10 +920,10 @@ impl Runner {
         self.list.keys().copied()
     }
 
-    /// Save runner state to temporary file (for CLI persistence without permanent storage)
+    /// Save runner state to permanent dump (auto-save on every operation like original pmc)
     pub fn save(&self) {
         if self.remote.is_none() {
-            dump::write_temp(&self);
+            dump::write(&self);
         }
     }
 
