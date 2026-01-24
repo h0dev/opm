@@ -146,7 +146,7 @@ pub fn start(
             .create(&arg.to_string(), &worker_name, watch, &None, true);
         }
 
-        runner.save_temp();
+        runner.save();
         
         println!(
             "{} All {} workers started successfully",
@@ -210,7 +210,7 @@ pub fn start(
                         kind,
                     }
                     .create(script, name, watch, max_memory, false);
-                    runner.save_temp();
+                    runner.save();
                 }
             },
         }

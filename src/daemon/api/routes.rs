@@ -853,9 +853,27 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         .filter(|(_, item)| item.running && !item.crash.crashed)
         .map(|(_, item)| item.id)
         .collect();
+    
+    // Collect IDs of crashed processes to mark as stopped
+    let crashed_ids: Vec<usize> = runner
+        .items()
+        .into_iter()
+        .filter(|(_, item)| item.crash.crashed)
+        .map(|(_, item)| item.id)
+        .collect();
 
     // Restore those processes (without incrementing counters)
     let mut runner = Runner::new();
+    
+    // Mark crashed processes as stopped
+    for id in crashed_ids {
+        if let Some(process) = runner.list.get_mut(&id) {
+            process.running = false;
+            process.pid = -1; // Mark as no valid PID
+        }
+    }
+    runner.save();
+    
     let total_processes = running_ids.len();
     for (index, id) in running_ids.iter().enumerate() {
         runner.restart(*id, false, false);
@@ -1235,6 +1253,109 @@ pub async fn test_notification_handler(
             "Notifications are not configured".to_string(),
         ))
     }
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct SecurityConfig {
+    enabled: bool,
+    token: String,
+}
+
+#[get("/daemon/config/security")]
+#[utoipa::path(get, tag = "Daemon", path = "/daemon/config/security", security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Get security config successfully", body = SecurityConfig),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn get_security_handler(_t: Token) -> Json<SecurityConfig> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_security"])
+        .start_timer();
+    let config = config::read().daemon.web.secure;
+
+    HTTP_COUNTER.inc();
+    timer.observe_duration();
+
+    let security_config = match config {
+        Some(sec) => SecurityConfig {
+            enabled: sec.enabled,
+            token: sec.token,
+        },
+        None => SecurityConfig {
+            enabled: false,
+            token: String::new(),
+        },
+    };
+
+    Json(security_config)
+}
+
+#[post("/daemon/config/security", format = "json", data = "<body>")]
+#[utoipa::path(post, tag = "Daemon", path = "/daemon/config/security", request_body = SecurityConfig,
+    security((), ("api_key" = [])),
+    responses(
+        (status = 200, description = "Security config saved successfully"),
+        (
+            status = UNAUTHORIZED, description = "Authentication failed or not provided", body = ErrorMessage, 
+            example = json!({"code": 401, "message": "Unauthorized"})
+        )
+    )
+)]
+pub async fn save_security_handler(
+    body: Json<SecurityConfig>,
+    _t: Token,
+) -> Result<Json<serde_json::Value>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["save_security"])
+        .start_timer();
+
+    HTTP_COUNTER.inc();
+
+    // Read current config
+    let mut full_config = config::read();
+
+    // Update security config
+    full_config.daemon.web.secure = Some(config::structs::Secure {
+        enabled: body.enabled,
+        token: body.token.clone(),
+    });
+
+    // Save config to file
+    let config_path = match home::home_dir() {
+        Some(path) => format!("{}/.opm/config.toml", path.display()),
+        None => {
+            return Err(generic_error(
+                Status::InternalServerError,
+                "Cannot determine home directory".to_string(),
+            ));
+        }
+    };
+
+    let contents = match toml::to_string(&full_config) {
+        Ok(contents) => contents,
+        Err(err) => {
+            return Err(generic_error(
+                Status::InternalServerError,
+                format!("Cannot serialize config: {}", err),
+            ));
+        }
+    };
+
+    if let Err(err) = std::fs::write(&config_path, contents) {
+        return Err(generic_error(
+            Status::InternalServerError,
+            format!("Cannot write config: {}", err),
+        ));
+    }
+
+    timer.observe_duration();
+    Ok(Json(
+        json!({"success": true, "message": "Security settings saved. Restart daemon for token changes to take effect."}),
+    ))
 }
 
 async fn send_test_desktop_notification(
@@ -2883,22 +3004,36 @@ async fn get_public_ip() -> Option<String> {
 fn get_private_ips() -> Vec<String> {
     let mut ips = Vec::new();
     
-    // Get local IP addresses (simplified approach)
-    // In a real implementation, you'd use a crate like `local-ip-address` or `if-addrs`
-    // For now, return localhost as fallback
-    if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&("0.0.0.0:0".to_string())) {
-        for addr in addrs {
-            let ip = addr.ip();
-            if !ip.is_loopback() && !ip.is_unspecified() {
-                ips.push(ip.to_string());
+    // Try to get IPs using hostname -I command (available on Linux/Unix)
+    if let Ok(output) = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+    {
+        if output.status.success() {
+            let hostname_ips = String::from_utf8_lossy(&output.stdout);
+            for ip in hostname_ips.split_whitespace() {
+                let ip = ip.trim();
+                if !ip.is_empty() {
+                    ips.push(ip.to_string());
+                }
             }
         }
     }
     
-    // If we couldn't get any IPs, try to get all local network interfaces
-    // This is a placeholder - ideally use a proper network interface crate
+    // If hostname -I didn't work, try socket address resolution
     if ips.is_empty() {
-        // Basic fallback - return common private network info
+        if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&("0.0.0.0:0".to_string())) {
+            for addr in addrs {
+                let ip = addr.ip();
+                if !ip.is_loopback() && !ip.is_unspecified() {
+                    ips.push(ip.to_string());
+                }
+            }
+        }
+    }
+    
+    // If we still couldn't get any IPs, return localhost as ultimate fallback
+    if ips.is_empty() {
         ips.push("127.0.0.1".to_string());
     }
     
