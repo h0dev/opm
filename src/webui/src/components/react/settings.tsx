@@ -228,7 +228,7 @@ const SettingsPage = (props: { base: string }) => {
 									</button>
 								</div>
 								<p className="mt-2 text-xs text-gray-500 dark:text-zinc-400">
-									Use this token as Bearer authentication for API requests
+									Enter a custom token or click "Generate" for a random secure token. Use this token as Bearer authentication for API requests.
 								</p>
 							</div>
 							

@@ -3004,25 +3004,37 @@ async fn get_public_ip() -> Option<String> {
 fn get_private_ips() -> Vec<String> {
     let mut ips = Vec::new();
     
-    // Get local IP addresses (simplified approach)
-    // In a real implementation, you'd use a crate like `local-ip-address` or `if-addrs`
-    // For now, return localhost as fallback
-    if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&("0.0.0.0:0".to_string())) {
-        for addr in addrs {
-            let ip = addr.ip();
-            if !ip.is_loopback() && !ip.is_unspecified() {
-                ips.push(ip.to_string());
+    // Try to get IPs using hostname -I command (available on Linux/Unix)
+    if let Ok(output) = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+    {
+        if output.status.success() {
+            let hostname_ips = String::from_utf8_lossy(&output.stdout);
+            for ip in hostname_ips.split_whitespace() {
+                let ip = ip.trim();
+                if !ip.is_empty() {
+                    ips.push(ip.to_string());
+                }
             }
         }
     }
     
-    // If we couldn't get any IPs, try to get all local network interfaces
-    // This is a placeholder - ideally use a proper network interface crate
+    // If hostname -I didn't work, try socket address resolution
     if ips.is_empty() {
-        // Fallback IP: 172.18.0.6 (typically Docker bridge network IP from hostname -I)
-        // This is used when running in containerized environments where standard
-        // network interface detection may not work properly
-        ips.push("172.18.0.6".to_string());
+        if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&("0.0.0.0:0".to_string())) {
+            for addr in addrs {
+                let ip = addr.ip();
+                if !ip.is_loopback() && !ip.is_unspecified() {
+                    ips.push(ip.to_string());
+                }
+            }
+        }
+    }
+    
+    // If we still couldn't get any IPs, return localhost as ultimate fallback
+    if ips.is_empty() {
+        ips.push("127.0.0.1".to_string());
     }
     
     ips
