@@ -920,23 +920,23 @@ impl Runner {
         self.list.keys().copied()
     }
 
-    /// Save runner state to temporary dump file (used for normal operations)
+    /// Save runner state to memory cache (used for normal operations)
     pub fn save(&self) {
         if self.remote.is_none() {
-            dump::write_temp(&self);
+            dump::write_memory(&self);
         }
     }
 
     /// Save runner state to permanent dump file (used only by explicit 'opm save' command)
     pub fn save_permanent(&self) {
         if self.remote.is_none() {
-            // Merge temp into permanent and clear temp
-            dump::commit_temp();
+            // Merge memory into permanent and clear memory
+            dump::commit_memory();
         }
     }
 
     pub fn save_temp(&self) {
-        // Deprecated: now save directly to temp dump
+        // Deprecated: now save directly to memory cache
         self.save();
     }
 
@@ -1081,6 +1081,9 @@ impl Runner {
             process.crash.crashed = false;
             // Keep crash.value to preserve crash history - only reset via reset_counters()
             process.children = vec![];
+            
+            // Save state after stopping to ensure changes are persisted
+            self.save();
         }
 
         return self;
