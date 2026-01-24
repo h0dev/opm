@@ -16,6 +16,9 @@ use std::{
     time::Duration,
 };
 
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+
 use nix::{
     sys::signal::{Signal, kill},
     unistd::Pid,
@@ -27,6 +30,11 @@ use global_placeholders::global;
 use macros_rs::{crashln, string, ternary, then};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+// Global process handle storage to prevent child processes from being dropped and becoming zombies
+// Key: PID, Value: Child process handle wrapped in Arc<Mutex> for thread-safe access
+// This is the PM2-like daemon state that keeps processes alive
+static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> = Lazy::new(DashMap::new);
 
 // Constants for process termination waiting
 const MAX_TERMINATION_WAIT_ATTEMPTS: u32 = 50;
@@ -1067,6 +1075,7 @@ impl Runner {
         } else {
             let process_to_stop = self.process(id);
             let pid_to_check = process_to_stop.pid;
+            let shell_pid = process_to_stop.shell_pid;
 
             kill_children(process_to_stop.children.clone());
             let _ = process_stop(pid_to_check); // Continue even if stopping fails
@@ -1077,6 +1086,16 @@ impl Runner {
                     "Process {} did not terminate within timeout during stop",
                     pid_to_check
                 );
+            }
+
+            // Remove child handle from global state if it exists
+            // Use shell_pid if available, otherwise try regular pid
+            let handle_pid = shell_pid.unwrap_or(pid_to_check);
+            if let Some((_, handle)) = PROCESS_HANDLES.remove(&handle_pid) {
+                // Wait for the child process to complete and reap it
+                if let Ok(mut child) = handle.lock() {
+                    let _ = child.wait(); // Reap the zombie process
+                }
             }
 
             let process = self.process(id);
@@ -1748,6 +1767,10 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
 
     let shell_pid = child.id() as i64;
     let actual_pid = unix::get_actual_child_pid(shell_pid);
+
+    // Store child handle in global state to prevent it from being dropped and becoming a zombie
+    // This is critical for PM2-like daemon functionality
+    PROCESS_HANDLES.insert(shell_pid, Arc::new(Mutex::new(child)));
 
     // If shell and actual PIDs differ, store the shell PID for CPU monitoring
     let shell_pid_opt = (shell_pid != actual_pid).then_some(shell_pid);
