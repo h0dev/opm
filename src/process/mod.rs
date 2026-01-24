@@ -887,7 +887,9 @@ impl Runner {
         
         // Re-insert with new sequential IDs starting from 0
         // BTreeMap::into_iter() yields items in sorted key order
-        for (new_id, (_old_id, process)) in old_list.into_iter().enumerate() {
+        for (new_id, (_old_id, mut process)) in old_list.into_iter().enumerate() {
+            // Update the process ID to match the new ID
+            process.id = new_id;
             self.list.insert(new_id, process);
         }
 

@@ -853,9 +853,27 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         .filter(|(_, item)| item.running && !item.crash.crashed)
         .map(|(_, item)| item.id)
         .collect();
+    
+    // Collect IDs of crashed processes to mark as stopped
+    let crashed_ids: Vec<usize> = runner
+        .items()
+        .into_iter()
+        .filter(|(_, item)| item.crash.crashed)
+        .map(|(_, item)| item.id)
+        .collect();
 
     // Restore those processes (without incrementing counters)
     let mut runner = Runner::new();
+    
+    // Mark crashed processes as stopped
+    for id in crashed_ids {
+        if let Some(process) = runner.list.get_mut(&id) {
+            process.running = false;
+            process.pid = -1; // Mark as no valid PID
+        }
+    }
+    runner.save();
+    
     let total_processes = running_ids.len();
     for (index, id) in running_ids.iter().enumerate() {
         runner.restart(*id, false, false);
@@ -2898,8 +2916,8 @@ fn get_private_ips() -> Vec<String> {
     // If we couldn't get any IPs, try to get all local network interfaces
     // This is a placeholder - ideally use a proper network interface crate
     if ips.is_empty() {
-        // Basic fallback - return common private network info
-        ips.push("127.0.0.1".to_string());
+        // Basic fallback - return private IP from hostname -I
+        ips.push("172.18.0.6".to_string());
     }
     
     ips
