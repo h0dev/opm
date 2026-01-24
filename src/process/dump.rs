@@ -45,15 +45,8 @@ pub fn read() -> Runner {
         return runner;
     }
 
-    // Clean up temp dump file if it exists (legacy cleanup)
-    let temp_dump_path = global!("opm.dump.temp");
-    if Exists::check(&temp_dump_path).file() {
-        let _ = fs::remove_file(&temp_dump_path);
-        log!("removed legacy temp dump file");
-    }
-
     // Try to read the dump file with error recovery
-    match file::try_read_object(global!("opm.dump")) {
+    let mut runner = match file::try_read_object(global!("opm.dump")) {
         Ok(runner) => runner,
         Err(err) => {
             // If parsing fails, the dump file is likely corrupted
@@ -91,7 +84,42 @@ pub fn read() -> Runner {
 
             runner
         }
+    };
+
+    // Merge temp dump if it exists
+    let temp_dump_path = global!("opm.dump.temp");
+    if Exists::check(&temp_dump_path).file() {
+        log!("[dump::read] Found temp dump file, merging...");
+        let temporary = read_temp();
+        
+        // Merge temporary processes into permanent
+        for (id, process) in temporary.list {
+            runner.list.insert(id, process);
+        }
+        
+        // Update ID counter to maximum
+        use std::sync::atomic::Ordering;
+        let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
+        let perm_counter = runner.id.counter.load(Ordering::SeqCst);
+        if temp_counter > perm_counter {
+            runner.id.counter.store(temp_counter, Ordering::SeqCst);
+        }
+        
+        // Delete temp file after merging
+        let _ = fs::remove_file(&temp_dump_path);
+        log!("[dump::read] Merged and cleaned up temp dump file");
     }
+
+    // Set all crashed processes to stopped status
+    for (_id, process) in runner.list.iter_mut() {
+        if process.crash.crashed {
+            process.running = false;
+            process.crash.crashed = false;
+            log!("[dump::read] Set crashed process '{}' to stopped", process.name);
+        }
+    }
+
+    runner
 }
 
 pub fn raw() -> Vec<u8> {

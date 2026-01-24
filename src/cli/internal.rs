@@ -1076,7 +1076,7 @@ impl<'i> Internal<'i> {
         }
 
         println!("{} Saved current processes to dumpfile", *helpers::SUCCESS);
-        Runner::new().save();
+        Runner::new().save_permanent();
     }
 
     pub fn restore(server_name: &String) {
