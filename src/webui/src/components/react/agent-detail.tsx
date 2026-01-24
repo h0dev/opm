@@ -392,11 +392,12 @@ const AgentDetail = (props: { agentId: string; base: string }) => {
 										/>
 									</div>
 								</div>
-								{agent.system_info.resource_usage.memory_used && (
+								{agent.system_info.resource_usage.memory_available && agent.system_info.total_memory && (
 									<div className="text-xs text-gray-900 dark:text-gray-400 dark:text-zinc-500 mt-1">
 										{(() => {
-											const [value, unit] = formatMemory(agent.system_info.resource_usage.memory_used * 1024);
-											return `${value} ${unit.toUpperCase()} used`;
+											const [freeValue, freeUnit] = formatMemory(agent.system_info.resource_usage.memory_available * 1024);
+											const [totalValue, totalUnit] = formatMemory(agent.system_info.total_memory * 1024);
+											return `${freeValue} ${freeUnit.toUpperCase()} free of ${totalValue} ${totalUnit.toUpperCase()}`;
 										})()}
 									</div>
 								)}

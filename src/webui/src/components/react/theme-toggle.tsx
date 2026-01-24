@@ -1,15 +1,47 @@
 import { useStore } from '@nanostores/react';
 import { $settings } from '@/store';
+import { useEffect } from 'react';
 
 export default function ThemeToggle() {
 	const settings = useStore($settings);
 	const currentTheme = settings.theme || 'dark';
 
+	// Sync theme with localStorage changes (e.g., from other tabs)
+	useEffect(() => {
+		const syncTheme = () => {
+			const settingsStr = localStorage.getItem('settings:');
+			if (settingsStr) {
+				try {
+					const settings = JSON.parse(settingsStr);
+					const theme = settings.theme || 'dark';
+					document.documentElement.classList.toggle('dark', theme === 'dark');
+				} catch (e) {
+					console.error('Failed to parse settings:', e);
+				}
+			}
+		};
+
+		// Listen for storage events from other tabs
+		window.addEventListener('storage', syncTheme);
+		
+		// Also sync on component mount to ensure correct state
+		syncTheme();
+
+		return () => {
+			window.removeEventListener('storage', syncTheme);
+		};
+	}, []);
+
+	// Update DOM class when theme changes
+	useEffect(() => {
+		document.documentElement.classList.toggle('dark', currentTheme === 'dark');
+	}, [currentTheme]);
+
 	const toggleTheme = () => {
 		const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
 		$settings.setKey('theme', newTheme);
 		
-		// Update the document class
+		// Update the document class immediately
 		document.documentElement.classList.toggle('dark', newTheme === 'dark');
 	};
 

@@ -845,11 +845,12 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
 
     let runner = Runner::new();
 
-    // Collect IDs of processes that were running when saved
+    // Collect IDs of processes that were running AND not crashed when saved
+    // Crashed processes should remain stopped after restore
     let running_ids: Vec<usize> = runner
         .items()
         .into_iter()
-        .filter(|(_, item)| item.running)
+        .filter(|(_, item)| item.running && !item.crash.crashed)
         .map(|(_, item)| item.id)
         .collect();
 

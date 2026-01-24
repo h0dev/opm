@@ -65,11 +65,13 @@ const SystemPage = (props: { base: string }) => {
 	};
 
 	const formatUptime = (seconds: number): string => {
-		const days = Math.floor(seconds / 86400);
+		const years = Math.floor(seconds / (365 * 86400));
+		const days = Math.floor((seconds % (365 * 86400)) / 86400);
 		const hours = Math.floor((seconds % 86400) / 3600);
 		const minutes = Math.floor((seconds % 3600) / 60);
 		
 		const parts = [];
+		if (years > 0) parts.push(`${years}y`);
 		if (days > 0) parts.push(`${days}d`);
 		if (hours > 0) parts.push(`${hours}h`);
 		if (minutes > 0) parts.push(`${minutes}m`);
@@ -216,7 +218,7 @@ const SystemPage = (props: { base: string }) => {
 									{systemInfo.memory_percent.toFixed(1)}%
 								</div>
 								<div className="text-xs text-gray-900 dark:text-gray-400 dark:text-zinc-500 mt-1">
-									{formatBytes(systemInfo.used_memory)} used
+									{formatBytes(systemInfo.available_memory)} free of {formatBytes(systemInfo.total_memory)}
 								</div>
 							</div>
 

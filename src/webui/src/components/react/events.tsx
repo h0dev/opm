@@ -136,40 +136,80 @@ const EventsPage = (props: { base: string }) => {
 					</div>
 				) : (
 					<div className="space-y-3">
-						{events.map((event) => (
-							<div
-								key={event.id}
-								className={`border rounded-lg p-4 ${eventColors[event.event_type]}`}>
-								<div className="flex items-start justify-between gap-4">
-									<div className="flex items-start gap-3 flex-1">
-										<div className="text-2xl flex-shrink-0 mt-1">
-											{eventIcons[event.event_type]}
-										</div>
-										<div className="flex-1 min-w-0">
-											<div className="flex items-center gap-2 mb-1">
-												<span className="font-semibold text-sm">
-													{formatEventType(event.event_type)}
-												</span>
-												<span className="text-xs opacity-70">
-													{formatTimestamp(event.timestamp)}
-												</span>
+						{(() => {
+							// Group similar events within 5 minute windows
+							const groupedEvents: Array<{ event: Event; count: number; latestTimestamp: string }> = [];
+							const TIME_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+							
+							events.forEach((event) => {
+								// Find a similar event in the last 5 minutes
+								const similarGroup = groupedEvents.find((group) => {
+									const timeDiff = new Date(event.timestamp).getTime() - new Date(group.latestTimestamp).getTime();
+									return (
+										group.event.event_type === event.event_type &&
+										group.event.agent_id === event.agent_id &&
+										group.event.process_id === event.process_id &&
+										Math.abs(timeDiff) < TIME_WINDOW_MS
+									);
+								});
+								
+								if (similarGroup) {
+									// Increment count and update to latest timestamp
+									similarGroup.count++;
+									if (new Date(event.timestamp) > new Date(similarGroup.latestTimestamp)) {
+										similarGroup.latestTimestamp = event.timestamp;
+										similarGroup.event = event; // Update to show latest message
+									}
+								} else {
+									// Create new group
+									groupedEvents.push({
+										event,
+										count: 1,
+										latestTimestamp: event.timestamp
+									});
+								}
+							});
+							
+							return groupedEvents.map((group) => (
+								<div
+									key={group.event.id}
+									className={`border rounded-lg p-4 ${eventColors[group.event.event_type]}`}>
+									<div className="flex items-start justify-between gap-4">
+										<div className="flex items-start gap-3 flex-1">
+											<div className="text-2xl flex-shrink-0 mt-1">
+												{eventIcons[group.event.event_type]}
 											</div>
-											<div className="text-sm mb-2">{event.message}</div>
-											<div className="flex flex-wrap gap-2 text-xs opacity-80">
-												<span className="bg-gray-100 dark:bg-zinc-800/50 px-2 py-1 rounded">
-													Agent: {event.agent_name}
-												</span>
-												{event.process_name && (
-													<span className="bg-gray-100 dark:bg-zinc-800/50 px-2 py-1 rounded">
-														Process: {event.process_name}
+											<div className="flex-1 min-w-0">
+												<div className="flex items-center gap-2 mb-1">
+													<span className="font-semibold text-sm">
+														{formatEventType(group.event.event_type)}
 													</span>
-												)}
+													{group.count > 1 && (
+														<span className="bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300 px-2 py-0.5 rounded-full text-xs font-medium">
+															×{group.count}
+														</span>
+													)}
+													<span className="text-xs opacity-70">
+														{formatTimestamp(group.latestTimestamp)}
+													</span>
+												</div>
+												<div className="text-sm mb-2">{group.event.message}</div>
+												<div className="flex flex-wrap gap-2 text-xs opacity-80">
+													<span className="bg-gray-100 dark:bg-zinc-800/50 px-2 py-1 rounded">
+														Agent: {group.event.agent_name}
+													</span>
+													{group.event.process_name && (
+														<span className="bg-gray-100 dark:bg-zinc-800/50 px-2 py-1 rounded">
+															Process: {group.event.process_name}
+														</span>
+													)}
+												</div>
 											</div>
 										</div>
 									</div>
 								</div>
-							</div>
-						))}
+							));
+						})()}
 					</div>
 				)}
 			</div>
