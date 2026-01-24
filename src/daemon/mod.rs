@@ -70,7 +70,7 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
         opm::process::dump::write(&runner);
         
         // Clean up temporary dump file
-        let temp_dump_path = global_placeholders::global!("opm.dump.temp");
+        let temp_dump_path = global!("opm.dump.temp");
         if let Err(err) = std::fs::remove_file(&temp_dump_path) {
             // Ignore "file not found" errors (temp file might not exist)
             if err.kind() != std::io::ErrorKind::NotFound {
