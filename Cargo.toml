@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-webui = []
+webui = ["flate2", "reqwest", "tar"]
 
 [build-dependencies]
 chrono = "0.4.38"
