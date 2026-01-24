@@ -1170,8 +1170,8 @@ impl<'i> Internal<'i> {
 
         // Restore processes that were running OR crashed before daemon stopped
         // This includes:
-        // 1. Processes with running=true (were running normally)
-        // 2. Processes with running=false AND crashed=true (were crashed and stopped by daemon)
+        // 1. Processes with running=true (were running normally) - these will be restarted
+        // 2. Processes with running=false AND crashed=true (were crashed) - these will be set to stopped to avoid auto-restart loops
         // Do NOT restore processes that were manually stopped (running=false, crashed=false)
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
@@ -1191,13 +1191,24 @@ impl<'i> Internal<'i> {
         }
 
         for (id, name, was_running, was_crashed) in &processes_to_restore {
-            // Set process back to running before restoring since we reset crash counters
-            // This ensures crashed processes get a fresh start
+            // For crashed processes, set them to stopped instead of restarting
+            // This prevents pointless auto-restart loops for processes that were crashing
             if *was_crashed && !*was_running {
-                runner.process(*id).running = true;
+                runner.process(*id).running = false;
+                runner.process(*id).crash.crashed = false;
                 runner.save();
+                println!(
+                    "{} Process '{}' (id={}) was crashed - set to stopped (use 'opm start {}' to manually restart)",
+                    *helpers::SUCCESS,
+                    name,
+                    id,
+                    id
+                );
+                restored_ids.push(*id);
+                continue;
             }
             
+            // For processes that were running normally, restart them
             // status_str is currently unused but kept for potential future logging
             let _status_str = if *was_crashed {
                 "crashed"

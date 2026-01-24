@@ -757,7 +757,7 @@ pub async fn save_handler(_t: Token) -> Json<ActionResponse> {
         .start_timer();
     HTTP_COUNTER.inc();
 
-    Runner::new().save();
+    Runner::new().save_permanent();
 
     timer.observe_duration();
     Json(attempt(true, "save"))

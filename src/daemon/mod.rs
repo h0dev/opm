@@ -68,11 +68,10 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
         }
         runner.save();
         
-        // Delete temp file after saving crashed state
-        use std::fs;
-        if let Ok(_) = fs::remove_file(global!("opm.dump.temp")) {
-            log!("[daemon] cleaned up temp dump file", "action" => "cleanup");
-        }
+        // Commit memory cache to permanent storage on shutdown
+        use opm::process::dump;
+        dump::commit_memory();
+        log!("[daemon] committed memory cache to permanent storage", "action" => "shutdown");
     });
     
     // If save failed, log a warning (but still proceed with cleanup)
@@ -594,7 +593,7 @@ pub fn start(verbose: bool) {
             }
         }
 
-        // Initialize on daemon startup: merge temp into permanent, set crashed to stopped
+        // Initialize on daemon startup: load state from disk and clear any old temp files
         // This must be done before the main loop starts
         use opm::process::dump;
         let _startup_runner = dump::init_on_startup();

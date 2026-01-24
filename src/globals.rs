@@ -57,6 +57,7 @@ pub(crate) fn init() {
             init!("opm.log", format!("{path}/.opm/opm.log"));
             init!("opm.pid", format!("{path}/.opm/daemon.pid"));
             init!("opm.dump", format!("{path}/.opm/process.dump"));
+            // Note: opm.dump.temp kept for backward compatibility (migration from old versions)
             init!("opm.dump.temp", format!("{path}/.opm/process.temp.dump"));
 
             init!("opm.daemon.kind", config.daemon.kind);
