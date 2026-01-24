@@ -355,8 +355,9 @@ pub fn is_pid_alive(pid: i64) -> bool {
 
 impl Runner {
     pub fn new() -> Self {
-        // Read merged state (permanent + temporary)
-        dump::read_merged()
+        // Read from permanent dump file directly
+        // Memory cache is only useful within the daemon process, not across CLI invocations
+        dump::read()
     }
 
     pub fn refresh(&self) -> Self {
@@ -934,7 +935,9 @@ impl Runner {
     /// Use save_permanent() for explicit saves to disk
     pub fn save(&self) {
         if self.remote.is_none() {
-            dump::write_memory(&self);
+            // Write directly to permanent dump file to ensure changes persist across processes
+            // The memory cache concept doesn't work because each CLI invocation is a separate process
+            dump::write(&self);
         }
     }
 
