@@ -1092,7 +1092,6 @@ impl<'i> Internal<'i> {
     }
 
     pub fn restore(server_name: &String) {
-        let mut runner = Runner::new();
         let (kind, list_name) = super::format(server_name);
 
         if !matches!(&**server_name, "internal" | "local") {
@@ -1100,6 +1099,36 @@ impl<'i> Internal<'i> {
         }
 
         println!("{} Starting restore process...", *helpers::SUCCESS);
+
+        // Before starting daemon, read dump file and mark crashed processes as stopped
+        // This ensures crashed processes are properly handled before loading into RAM
+        let dump_path = global_placeholders::global!("opm.dump");
+        if opm::file::Exists::check(&dump_path).file() {
+            // Read the dump file directly
+            let mut dump_runner = opm::process::dump::read();
+            let mut modified = false;
+            
+            // Mark all crashed processes as stopped in the dump file
+            for (id, process) in dump_runner.list.iter_mut() {
+                if process.crash.crashed {
+                    process.running = false;
+                    process.crash.crashed = false;
+                    modified = true;
+                    println!(
+                        "{} Process '{}' (id={}) was crashed - marked as stopped in dump file",
+                        *helpers::SUCCESS,
+                        process.name,
+                        id
+                    );
+                }
+            }
+            
+            // Save the modified dump file if any changes were made
+            if modified {
+                opm::process::dump::write(&dump_runner);
+                println!("{} Updated dump file with stopped crashed processes", *helpers::SUCCESS);
+            }
+        }
 
         // Auto-start daemon if not running (Issue #3)
         // Check if daemon is already running using PID file
@@ -1124,6 +1153,9 @@ impl<'i> Internal<'i> {
         } else {
             println!("{} OPM daemon already running", *helpers::SUCCESS);
         }
+        
+        // Now load runner from the updated dump file (with crashed processes marked as stopped)
+        let mut runner = Runner::new();
 
         // Get restore cleanup configuration
         let config = config::read();
@@ -1202,15 +1234,15 @@ impl<'i> Internal<'i> {
         let mut restored_ids = Vec::new();
         let mut failed_ids = Vec::new();
 
-        // Restore processes that were running OR crashed before daemon stopped
-        // This includes:
-        // 1. Processes with running=true (were running normally) - these will be restarted
-        // 2. Processes with crashed=true (regardless of running flag) - these will be set to stopped to avoid auto-restart loops
+        // Restore processes that were running before daemon stopped
+        // Crashed processes have already been marked as stopped in the dump file
+        // so they won't be in this list - they remain stopped and need manual restart
         // Do NOT restore processes that were manually stopped (running=false, crashed=false)
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
             .filter_map(|(id, p)| {
-                if p.running || p.crash.crashed {
+                // Only restore processes that were running (not crashed or stopped)
+                if p.running && !p.crash.crashed {
                     Some((*id, p.name.clone(), p.running, p.crash.crashed))
                 } else {
                     None
@@ -1224,28 +1256,9 @@ impl<'i> Internal<'i> {
             return;
         }
 
-        for (id, name, _was_running, was_crashed) in &processes_to_restore {
-            // For crashed processes, set them to stopped instead of restarting
-            // This prevents auto-restart loops for processes that were repeatedly crashing
-            // Reset ALL crashed processes to stopped, regardless of running flag
-            // This is important because crashed processes may have had running=true before
-            // daemon shutdown, but continuing to restart them would just cause more crashes
-            if *was_crashed {
-                runner.process(*id).running = false;
-                runner.process(*id).crash.crashed = false;
-                runner.save();
-                println!(
-                    "{} Process '{}' (id={}) was crashed - set to stopped (use 'opm start {}' to manually restart)",
-                    *helpers::SUCCESS,
-                    name,
-                    id,
-                    id
-                );
-                restored_ids.push(*id);
-                continue;
-            }
-
-            // For processes that were running normally (not crashed), restart them
+        for (id, name, _was_running, _was_crashed) in &processes_to_restore {
+            // All processes in this list are running processes that need to be restarted
+            // Crashed processes have already been filtered out and marked as stopped
             runner = Internal {
                 id: *id,
                 server_name,
