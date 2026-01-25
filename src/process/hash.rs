@@ -1,5 +1,5 @@
 use macros_rs::crashln;
-use merkle_hash::{Algorithm, MerkleTree, bytes_to_hex};
+use merkle_hash::{bytes_to_hex, Algorithm, MerkleTree};
 use std::path::PathBuf;
 
 pub fn create(path: PathBuf) -> String {

@@ -2,12 +2,12 @@ use opm::agent::messages::AgentMessage;
 use opm::agent::registry::AgentRegistry;
 use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
 use opm::process::ProcessItem;
-use rocket::{State, get};
+use rocket::{get, State};
 use rocket_ws::{Message, Stream, WebSocket};
 use tokio::sync::mpsc;
 
 /// WebSocket route handler for agent connections
-/// 
+///
 /// This is the primary communication channel between agents and the server.
 /// Agents connect to this endpoint and send/receive messages for:
 /// - Registration (AgentMessage::Register)
@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 /// - Action requests (AgentMessage::ActionRequest) - server to agent
 /// - Action responses (AgentMessage::ActionResponse) - agent to server
 /// - Ping/Pong for connection health checks
-/// 
+///
 /// All agent communication including process actions is now handled via WebSocket.
 #[get("/ws/agent")]
 pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stream!['static] {
@@ -24,7 +24,7 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
 
     Stream! { ws =>
         let mut agent_id: Option<String> = None;
-        
+
         // Create a channel for sending messages to the agent
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
@@ -33,7 +33,7 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
             while let Ok(outgoing_msg) = rx.try_recv() {
                 yield Message::Text(outgoing_msg);
             }
-            
+
             match message {
                 Ok(Message::Text(text)) => {
                     match serde_json::from_str::<AgentMessage>(&text) {
@@ -127,7 +127,7 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                     }
                                 }
                                 AgentMessage::ActionResponse { request_id, success, message } => {
-                                    log::info!("[WebSocket] Action response: request_id={}, success={}, message={}", 
+                                    log::info!("[WebSocket] Action response: request_id={}, success={}, message={}",
                                         request_id, success, message);
                                     // Action responses are logged
                                     // In a full implementation, this would resolve a pending Future

@@ -13,25 +13,26 @@ use toml;
 use utoipa::ToSchema;
 
 use rocket::{
-    State, delete, get,
+    delete, get,
     http::{ContentType, Status},
     post,
     response::stream::{Event, EventStream},
-    serde::{Deserialize, Serialize, json::Json},
+    serde::{json::Json, Deserialize, Serialize},
+    State,
 };
 
 use super::{
-    EnableWebUI, TeraState,
-    helpers::{GenericError, NotFound, generic_error, not_found},
+    helpers::{generic_error, not_found, GenericError, NotFound},
     render,
     structs::ErrorMessage,
+    EnableWebUI, TeraState,
 };
 
 use opm::{
     config, helpers,
     process::{
-        ItemSingle, ProcessItem, Runner, dump, get_process_cpu_usage_with_children_from_process,
-        get_process_memory_with_children, http::client,
+        dump, get_process_cpu_usage_with_children_from_process, get_process_memory_with_children,
+        http::client, ItemSingle, ProcessItem, Runner,
     },
 };
 
@@ -793,12 +794,10 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
     // Get restore cleanup configuration
     let config = config::read();
     let restore_cleanup = config.daemon.restore_cleanup.as_ref();
-    
+
     // Clear process logs if enabled (default: true)
-    let should_cleanup_process_logs = restore_cleanup
-        .map(|rc| rc.process_logs)
-        .unwrap_or(true);
-    
+    let should_cleanup_process_logs = restore_cleanup.map(|rc| rc.process_logs).unwrap_or(true);
+
     if should_cleanup_process_logs {
         let log_path = &config.runner.log_path;
         if std::path::Path::new(log_path).exists() {
@@ -811,7 +810,11 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
                             if let Some(ext) = path.extension() {
                                 if ext == "log" {
                                     if let Err(e) = fs::remove_file(&path) {
-                                        log::warn!("Failed to delete process log {:?}: {}", path, e);
+                                        log::warn!(
+                                            "Failed to delete process log {:?}: {}",
+                                            path,
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -821,12 +824,10 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
             }
         }
     }
-    
+
     // Clear daemon log if enabled (default: true)
-    let should_cleanup_daemon_log = restore_cleanup
-        .map(|rc| rc.daemon_log)
-        .unwrap_or(true);
-    
+    let should_cleanup_daemon_log = restore_cleanup.map(|rc| rc.daemon_log).unwrap_or(true);
+
     if should_cleanup_daemon_log {
         if let Some(path) = home::home_dir() {
             let daemon_log_path = path.join(".opm").join("daemon.log");
@@ -837,12 +838,10 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
             }
         }
     }
-    
+
     // Clear agent log if enabled (default: true)
-    let should_cleanup_agent_log = restore_cleanup
-        .map(|rc| rc.agent_log)
-        .unwrap_or(true);
-    
+    let should_cleanup_agent_log = restore_cleanup.map(|rc| rc.agent_log).unwrap_or(true);
+
     if should_cleanup_agent_log {
         if let Some(path) = home::home_dir() {
             let agent_log_path = path.join(".opm").join("agent.log");
@@ -864,7 +863,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         .filter(|(_, item)| item.running && !item.crash.crashed)
         .map(|(_, item)| item.id)
         .collect();
-    
+
     // Collect IDs of crashed processes to mark as stopped
     let crashed_ids: Vec<usize> = runner
         .items()
@@ -875,7 +874,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
 
     // Restore those processes (without incrementing counters)
     let mut runner = Runner::new();
-    
+
     // Mark crashed processes as stopped
     for id in crashed_ids {
         if let Some(process) = runner.list.get_mut(&id) {
@@ -884,7 +883,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         }
     }
     runner.save();
-    
+
     let total_processes = running_ids.len();
     for (index, id) in running_ids.iter().enumerate() {
         runner.restart(*id, false, false);
@@ -1759,9 +1758,9 @@ pub async fn info_handler(id: usize, _t: Token) -> Result<Json<ItemSingle>, NotF
     )
 )]
 pub async fn create_handler(
-    body: Json<CreateBody>, 
+    body: Json<CreateBody>,
     event_manager: &State<std::sync::Arc<opm::events::EventManager>>,
-    _t: Token
+    _t: Token,
 ) -> Result<Json<ActionResponse>, ()> {
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["create"])
@@ -1775,15 +1774,19 @@ pub async fn create_handler(
         None => string!(body.script.split_whitespace().next().unwrap_or_default()),
     };
 
-    runner
-        .start(&name, &body.script, body.path.clone(), &body.watch, 0);
-    
+    runner.start(&name, &body.script, body.path.clone(), &body.watch, 0);
+
     // Find the just-created process by name to get its ID
     // Since we just created it and this is a fresh Runner instance, it should be the only one with this name
-    if let Some(process_info) = runner.list.iter().find(|(_, p)| p.name == name).map(|(id, p)| (*id, p.name.clone())) {
+    if let Some(process_info) = runner
+        .list
+        .iter()
+        .find(|(_, p)| p.name == name)
+        .map(|(id, p)| (*id, p.name.clone()))
+    {
         let (id, process_name) = process_info;
         runner.save();
-        
+
         // Emit process start event
         let event = opm::events::Event::new(
             opm::events::EventType::ProcessStart,
@@ -1798,7 +1801,7 @@ pub async fn create_handler(
         // Process not found, just save without event
         runner.save();
     }
-    
+
     timer.observe_duration();
 
     Ok(Json(attempt(true, "create")))
@@ -1910,17 +1913,17 @@ pub async fn action_handler(
 
     if runner.exists(id) {
         HTTP_COUNTER.inc();
-        
+
         // Get process info for event emission
         let process_info = runner.info(id).unwrap();
         let process_name = process_info.name.clone();
-        
+
         match method {
             "start" => {
                 let mut item = runner.get(id);
                 item.restart(false); // start should not increment
                 item.get_runner().save();
-                
+
                 // Emit process start event
                 let event = opm::events::Event::new(
                     opm::events::EventType::ProcessStart,
@@ -1931,7 +1934,7 @@ pub async fn action_handler(
                     format!("Process '{}' started", process_name),
                 );
                 event_manager.add_event(event).await;
-                
+
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1939,7 +1942,7 @@ pub async fn action_handler(
                 let mut item = runner.get(id);
                 item.restart(true); // restart should increment
                 item.get_runner().save();
-                
+
                 // Emit process restart event
                 let event = opm::events::Event::new(
                     opm::events::EventType::ProcessRestart,
@@ -1950,7 +1953,7 @@ pub async fn action_handler(
                     format!("Process '{}' restarted", process_name),
                 );
                 event_manager.add_event(event).await;
-                
+
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1958,7 +1961,7 @@ pub async fn action_handler(
                 let mut item = runner.get(id);
                 item.reload(true); // reload should increment
                 item.get_runner().save();
-                
+
                 // Emit process restart event (reload is essentially a restart)
                 let event = opm::events::Event::new(
                     opm::events::EventType::ProcessRestart,
@@ -1969,7 +1972,7 @@ pub async fn action_handler(
                     format!("Process '{}' reloaded", process_name),
                 );
                 event_manager.add_event(event).await;
-                
+
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -1977,7 +1980,7 @@ pub async fn action_handler(
                 let mut item = runner.get(id);
                 item.stop();
                 item.get_runner().save();
-                
+
                 // Emit process stop event
                 let event = opm::events::Event::new(
                     opm::events::EventType::ProcessStop,
@@ -1988,7 +1991,7 @@ pub async fn action_handler(
                     format!("Process '{}' stopped", process_name),
                 );
                 event_manager.add_event(event).await;
-                
+
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -2001,7 +2004,7 @@ pub async fn action_handler(
             }
             "remove" | "delete" => {
                 runner.remove(id);
-                
+
                 // Emit process delete event
                 let event = opm::events::Event::new(
                     opm::events::EventType::ProcessDelete,
@@ -2012,7 +2015,7 @@ pub async fn action_handler(
                     format!("Process '{}' deleted", process_name),
                 );
                 event_manager.add_event(event).await;
-                
+
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -2353,13 +2356,13 @@ pub async fn stream_agents(
     _t: Token,
 ) -> EventStream![] {
     let registry = registry.inner().clone();
-    
+
     EventStream! {
         loop {
             let mut agents = registry.list();
             // Insert local agent at the beginning
             agents.insert(0, create_local_agent_info());
-            
+
             yield Event::data(serde_json::to_string(&agents).unwrap());
             sleep(Duration::from_millis(2000));
         }
@@ -2374,7 +2377,7 @@ pub async fn stream_agent_detail(
     _t: Token,
 ) -> EventStream![] {
     let registry = registry.inner().clone();
-    
+
     EventStream! {
         loop {
             // Get agent info
@@ -2383,7 +2386,7 @@ pub async fn stream_agent_detail(
             } else {
                 registry.get(&id)
             };
-            
+
             if let Some(agent) = agent_info {
                 // Get processes for this agent
                 let processes = if id == "local" {
@@ -2391,18 +2394,18 @@ pub async fn stream_agent_detail(
                 } else {
                     registry.get_processes(&id).unwrap_or_default()
                 };
-                
+
                 let response = json!({
                     "agent": agent,
                     "processes": processes
                 });
-                
+
                 yield Event::data(serde_json::to_string(&response).unwrap());
             } else {
                 yield Event::data(json!({"error": "Agent not found"}).to_string());
                 break;
             }
-            
+
             sleep(Duration::from_millis(2000));
         }
     }
@@ -2415,13 +2418,11 @@ pub async fn stream_agent_detail(
 /// Helper function to create local agent info
 fn create_local_agent_info() -> opm::agent::types::AgentInfo {
     let os_info = crate::globals::get_os_info();
-    
+
     opm::agent::types::AgentInfo {
         id: "local".to_string(),
         name: "Local Server".to_string(),
-        hostname: hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok()),
+        hostname: hostname::get().ok().and_then(|h| h.into_string().ok()),
         status: opm::agent::types::AgentStatus::Online,
         connection_type: opm::agent::types::ConnectionType::In,
         last_seen: std::time::SystemTime::now(),
@@ -2458,10 +2459,10 @@ pub async fn agent_list_handler(
     HTTP_COUNTER.inc();
 
     let mut agents = registry.list();
-    
+
     // Insert local agent at the beginning
     agents.insert(0, create_local_agent_info());
-    
+
     timer.observe_duration();
 
     Ok(Json(agents))
@@ -2613,7 +2614,11 @@ pub async fn agent_processes_handler(
     ),
     security(("api_key" = []))
 )]
-#[post("/daemon/agents/<agent_id>/process/<process_id>/action", format = "json", data = "<body>")]
+#[post(
+    "/daemon/agents/<agent_id>/process/<process_id>/action",
+    format = "json",
+    data = "<body>"
+)]
 pub async fn agent_action_handler(
     agent_id: String,
     process_id: usize,
@@ -2713,9 +2718,13 @@ pub async fn agent_action_handler(
 
         if let Ok(action_json) = serde_json::to_string(&action_request) {
             if let Ok(()) = registry.send_to_agent(&agent_id, action_json) {
-                log::info!("[WebSocket] Action request sent to agent {}: {} on process {}", 
-                    agent_id, body.method, process_id);
-                
+                log::info!(
+                    "[WebSocket] Action request sent to agent {}: {} on process {}",
+                    agent_id,
+                    body.method,
+                    process_id
+                );
+
                 // TODO: Wait for ActionResponse instead of returning immediately
                 // Current implementation returns success once message is sent
                 // A full implementation would use a pending requests map with timeouts
@@ -2758,12 +2767,12 @@ pub async fn get_events_handler(
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["get_events"])
         .start_timer();
-    
+
     let events = event_manager.get_events(limit).await;
-    
+
     HTTP_COUNTER.inc();
     timer.observe_duration();
-    
+
     Json(events)
 }
 
@@ -2785,12 +2794,12 @@ pub async fn clear_events_handler(
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["clear_events"])
         .start_timer();
-    
+
     event_manager.clear_events().await;
-    
+
     HTTP_COUNTER.inc();
     timer.observe_duration();
-    
+
     Json(json!({"success": true, "message": "Events cleared"}))
 }
 
@@ -2815,10 +2824,13 @@ pub async fn cli_event_handler(
 ) -> Result<Json<serde_json::Value>, Status> {
     // Security: Only allow requests from localhost
     if !remote.ip().is_loopback() {
-        log::warn!("Rejected CLI event from non-localhost address: {}", remote.ip());
+        log::warn!(
+            "Rejected CLI event from non-localhost address: {}",
+            remote.ip()
+        );
         return Err(Status::Forbidden);
     }
-    
+
     // Create event from CLI data
     let event = opm::events::Event::new(
         body.event_type.clone(),
@@ -2828,9 +2840,9 @@ pub async fn cli_event_handler(
         Some(body.process_name.clone()),
         body.message.clone(),
     );
-    
+
     event_manager.add_event(event).await;
-    
+
     Ok(Json(json!({"success": true})))
 }
 
@@ -2841,14 +2853,14 @@ pub async fn stream_events(
     _t: Token,
 ) -> EventStream![] {
     let event_manager = event_manager.inner().clone();
-    
+
     EventStream! {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
-        
+
         loop {
             interval.tick().await;
             let events = event_manager.get_events(Some(100)).await;
-            
+
             match serde_json::to_string(&events) {
                 Ok(json_data) => {
                     yield Event::data(json_data);
@@ -2899,29 +2911,29 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["system_info"])
         .start_timer();
-    
+
     // Get hostname
     let hostname = hostname::get()
         .unwrap_or_else(|_| std::ffi::OsString::from("unknown"))
         .to_string_lossy()
         .to_string();
-    
+
     // Get OS info
     let os_info = os_info::get();
     let os_type = os_info.os_type().to_string();
     let os_version = os_info.version().to_string();
-    
+
     // Get CPU count
     let cpu_count = num_cpus::get();
-    
+
     // Get memory info
     let mem_info = sys_info::mem_info().map_err(|e| {
         generic_error(
             Status::InternalServerError,
-            format!("Failed to get memory info: {}", e)
+            format!("Failed to get memory info: {}", e),
         )
     })?;
-    
+
     let total_memory = mem_info.total * 1024; // Convert from KB to bytes
     let available_memory = mem_info.avail * 1024;
     let used_memory = total_memory - available_memory;
@@ -2931,7 +2943,7 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
     } else {
         0.0
     };
-    
+
     // Get system uptime
     let uptime = sys_info::boottime()
         .map(|boot_time| {
@@ -2943,10 +2955,10 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
             now.saturating_sub(boot_time.tv_sec as u64)
         })
         .unwrap_or(0);
-    
+
     // Get process count
     let process_count = Runner::new().fetch().len();
-    
+
     // Get resource usage metrics
     let resource_usage = opm::agent::resource_usage::gather_resource_usage();
     let cpu_usage = resource_usage.as_ref().and_then(|r| r.cpu_usage);
@@ -2956,16 +2968,16 @@ pub async fn get_system_info_handler(_t: Token) -> Result<Json<SystemInfo>, Gene
     let load_avg_1 = resource_usage.as_ref().and_then(|r| r.load_avg_1);
     let load_avg_5 = resource_usage.as_ref().and_then(|r| r.load_avg_5);
     let load_avg_15 = resource_usage.as_ref().and_then(|r| r.load_avg_15);
-    
+
     // Get public IP (try to fetch from external service)
     let public_ip = get_public_ip().await;
-    
+
     // Get private IPs (local network interfaces)
     let private_ips = get_private_ips();
-    
+
     HTTP_COUNTER.inc();
     timer.observe_duration();
-    
+
     Ok(Json(SystemInfo {
         hostname,
         os_type,
@@ -2997,7 +3009,7 @@ async fn get_public_ip() -> Option<String> {
         "https://icanhazip.com",
         "https://ifconfig.me/ip",
     ];
-    
+
     for service in &services {
         if let Ok(response) = reqwest::get(*service).await {
             if let Ok(ip) = response.text().await {
@@ -3014,12 +3026,9 @@ async fn get_public_ip() -> Option<String> {
 /// Get private IP addresses from network interfaces
 fn get_private_ips() -> Vec<String> {
     let mut ips = Vec::new();
-    
+
     // Try to get IPs using hostname -I command (available on Linux/Unix)
-    if let Ok(output) = std::process::Command::new("hostname")
-        .arg("-I")
-        .output()
-    {
+    if let Ok(output) = std::process::Command::new("hostname").arg("-I").output() {
         if output.status.success() {
             let hostname_ips = String::from_utf8_lossy(&output.stdout);
             for ip in hostname_ips.split_whitespace() {
@@ -3030,7 +3039,7 @@ fn get_private_ips() -> Vec<String> {
             }
         }
     }
-    
+
     // If hostname -I didn't work, try socket address resolution
     if ips.is_empty() {
         if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&("0.0.0.0:0".to_string())) {
@@ -3042,12 +3051,11 @@ fn get_private_ips() -> Vec<String> {
             }
         }
     }
-    
+
     // If we still couldn't get any IPs, return localhost as ultimate fallback
     if ips.is_empty() {
         ips.push("127.0.0.1".to_string());
     }
-    
+
     ips
 }
-

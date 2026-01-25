@@ -8,8 +8,8 @@ pub mod process_info;
 pub mod process_list;
 
 pub use cpu::{get_cpu_percent, get_cpu_percent_fast, get_effective_cpu_count};
-pub use env::{Vars, env};
-pub use memory::{NativeMemoryInfo, get_memory_info};
+pub use env::{env, Vars};
+pub use memory::{get_memory_info, NativeMemoryInfo};
 pub use process_info::{
     get_parent_pid, get_process_name, get_process_start_time, is_process_zombie,
 };

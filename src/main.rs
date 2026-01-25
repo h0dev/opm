@@ -5,11 +5,13 @@ mod webui;
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{LogLevel, Verbosity};
-use macros_rs::{str, string};
-use update_informer::{Check, registry};
+use macros_rs::{str, string, crashln};
+use update_informer::{registry, Check};
+use std::fs;
+use global_placeholders::global;
 
 use crate::{
-    cli::{Args, Item, Items, internal::Internal},
+    cli::{internal::Internal, Args, Item, Items},
     globals::defaults,
 };
 
@@ -252,12 +254,29 @@ enum Commands {
         server: Option<String>,
     },
 
+    /// Backup management
+    #[command(visible_alias = "bkp")]
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
+
     /// Agent management (client-side daemon for server connection)
     #[command(visible_alias = "server", visible_alias = "remote")]
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum BackupCommand {
+    /// Restore process dump from backup file
+    #[command(visible_alias = "recover")]
+    Restore,
+    /// Show backup file information
+    #[command(visible_alias = "info")]
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -302,11 +321,19 @@ enum AgentCommand {
 }
 
 fn agent_list(format: &String, server_name: &String) {
+    use colored::Colorize as ColorizeStr;
     use opm::{helpers, process::http};
     use serde_json::json;
-    use tabled::{Table, Tabled, settings::{Style, Modify, Color, themes::Colorization, object::{Rows, Segment}, style::BorderColor}};
-    use colored::Colorize as ColorizeStr;
-    
+    use tabled::{
+        settings::{
+            object::{Rows, Segment},
+            style::BorderColor,
+            themes::Colorization,
+            Color, Modify, Style,
+        },
+        Table, Tabled,
+    };
+
     #[derive(Tabled, Debug)]
     struct AgentItem {
         id: String,
@@ -339,7 +366,10 @@ fn agent_list(format: &String, server_name: &String) {
     // Get server config to connect to API
     let config = opm::config::read();
     let server = if matches!(&**server_name, "internal" | "local") {
-        format!("http://{}:{}", config.daemon.web.address, config.daemon.web.port)
+        format!(
+            "http://{}:{}",
+            config.daemon.web.address, config.daemon.web.port
+        )
     } else if let Some(servers) = opm::config::servers().servers {
         if let Some(srv) = servers.get(server_name) {
             srv.address.clone()
@@ -358,21 +388,27 @@ fn agent_list(format: &String, server_name: &String) {
             match response.json::<Vec<opm::agent::types::AgentInfo>>() {
                 Ok(agents) => {
                     let mut agent_items: Vec<AgentItem> = Vec::new();
-                    
+
                     for agent in agents {
                         let status_str = match agent.status {
                             opm::agent::types::AgentStatus::Online => "online".green().to_string(),
                             opm::agent::types::AgentStatus::Offline => "offline".red().to_string(),
-                            opm::agent::types::AgentStatus::Connecting => "connecting".yellow().to_string(),
-                            opm::agent::types::AgentStatus::Reconnecting => "reconnecting".yellow().to_string(),
+                            opm::agent::types::AgentStatus::Connecting => {
+                                "connecting".yellow().to_string()
+                            }
+                            opm::agent::types::AgentStatus::Reconnecting => {
+                                "reconnecting".yellow().to_string()
+                            }
                         };
-                        
+
                         let (cpu, memory) = if let Some(ref sys_info) = agent.system_info {
                             if let Some(ref usage) = sys_info.resource_usage {
-                                let cpu_str = usage.cpu_usage
+                                let cpu_str = usage
+                                    .cpu_usage
                                     .map(|c| format!("{:.1}%", c))
                                     .unwrap_or_else(|| "N/A".to_string());
-                                let mem_str = usage.memory_percent
+                                let mem_str = usage
+                                    .memory_percent
                                     .map(|m| format!("{:.1}%", m))
                                     .unwrap_or_else(|| "N/A".to_string());
                                 (cpu_str, mem_str)
@@ -385,15 +421,13 @@ fn agent_list(format: &String, server_name: &String) {
 
                         // Get process count by fetching processes for this agent
                         let process_count = match http::agent_processes(&server, &agent.id) {
-                            Ok(resp) => {
-                                match resp.json::<Vec<opm::process::ProcessItem>>() {
-                                    Ok(processes) => processes.len().to_string(),
-                                    Err(_) => "N/A".to_string(),
-                                }
-                            }
+                            Ok(resp) => match resp.json::<Vec<opm::process::ProcessItem>>() {
+                                Ok(processes) => processes.len().to_string(),
+                                Err(_) => "N/A".to_string(),
+                            },
                             Err(_) => "N/A".to_string(),
                         };
-                        
+
                         agent_items.push(AgentItem {
                             id: agent.id.clone(),
                             name: agent.name.clone(),
@@ -418,9 +452,13 @@ fn agent_list(format: &String, server_name: &String) {
                             "default" => {
                                 let table = Table::new(&agent_items)
                                     .with(Style::rounded().remove_verticals())
-                                    .with(Modify::new(Segment::all())
-                                        .with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
-                                    .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
+                                    .with(Modify::new(Segment::all()).with(BorderColor::filled(
+                                        Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"),
+                                    )))
+                                    .with(Colorization::exact(
+                                        [Color::FG_BRIGHT_CYAN],
+                                        Rows::first(),
+                                    ))
                                     .to_string();
                                 println!("{}", table);
                             }
@@ -435,7 +473,10 @@ fn agent_list(format: &String, server_name: &String) {
         }
         Err(e) => {
             eprintln!("{} Failed to fetch agent list: {}", *helpers::FAIL, e);
-            eprintln!("{} Make sure the daemon is running with API enabled:", *helpers::INFO);
+            eprintln!(
+                "{} Make sure the daemon is running with API enabled:",
+                *helpers::INFO
+            );
             eprintln!("   opm daemon restore --api");
         }
     }
@@ -449,11 +490,19 @@ fn truncate_agent_name(name: &str) -> String {
 }
 
 fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: &String) {
+    use colored::Colorize as ColorizeStr;
     use opm::{helpers, process::http};
     use serde_json::json;
-    use tabled::{Table, Tabled, settings::{Style, Modify, Color, themes::Colorization, Width, object::{Rows, Columns, Segment}, style::BorderColor}};
-    use colored::Colorize as ColorizeStr;
-    
+    use tabled::{
+        settings::{
+            object::{Columns, Rows, Segment},
+            style::BorderColor,
+            themes::Colorization,
+            Color, Modify, Style, Width,
+        },
+        Table, Tabled,
+    };
+
     #[derive(Tabled, Debug)]
     struct ProcessDisplayItem {
         id: String,
@@ -485,7 +534,10 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
     // Get server config to connect to API
     let config = opm::config::read();
     let server = if matches!(&**server_name, "internal" | "local") {
-        format!("http://{}:{}", config.daemon.web.address, config.daemon.web.port)
+        format!(
+            "http://{}:{}",
+            config.daemon.web.address, config.daemon.web.port
+        )
     } else if let Some(servers) = opm::config::servers().servers {
         if let Some(srv) = servers.get(server_name) {
             srv.address.clone()
@@ -500,18 +552,19 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
 
     // First, get list of agents
     let agents = match http::agent_list(&server) {
-        Ok(response) => {
-            match response.json::<Vec<opm::agent::types::AgentInfo>>() {
-                Ok(agents) => agents,
-                Err(e) => {
-                    eprintln!("{} Failed to parse agent list: {}", *helpers::FAIL, e);
-                    return;
-                }
+        Ok(response) => match response.json::<Vec<opm::agent::types::AgentInfo>>() {
+            Ok(agents) => agents,
+            Err(e) => {
+                eprintln!("{} Failed to parse agent list: {}", *helpers::FAIL, e);
+                return;
             }
-        }
+        },
         Err(e) => {
             eprintln!("{} Failed to fetch agent list: {}", *helpers::FAIL, e);
-            eprintln!("{} Make sure the daemon is running with API enabled:", *helpers::INFO);
+            eprintln!(
+                "{} Make sure the daemon is running with API enabled:",
+                *helpers::INFO
+            );
             eprintln!("   opm daemon restore --api");
             return;
         }
@@ -520,7 +573,8 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
     // Filter agents if specified
     let agents_to_query: Vec<_> = if let Some(filter) = agent_filter {
         // Filter by ID or name
-        agents.into_iter()
+        agents
+            .into_iter()
             .filter(|a| a.id == *filter || a.name == *filter)
             .collect()
     } else {
@@ -541,43 +595,49 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
     // Fetch processes from each agent
     for agent in agents_to_query.iter() {
         match http::agent_processes(&server, &agent.id) {
-            Ok(resp) => {
-                match resp.json::<Vec<opm::process::ProcessItem>>() {
-                    Ok(processes) => {
-                        let agent_prefix = if is_multi_agent {
-                            format!("[{}]", truncate_agent_name(&agent.name))
+            Ok(resp) => match resp.json::<Vec<opm::process::ProcessItem>>() {
+                Ok(processes) => {
+                    let agent_prefix = if is_multi_agent {
+                        format!("[{}]", truncate_agent_name(&agent.name))
+                    } else {
+                        String::new()
+                    };
+
+                    for process in processes {
+                        let process_name = if is_multi_agent {
+                            format!("{}{}", agent_prefix, process.name)
                         } else {
-                            String::new()
+                            process.name.clone()
                         };
 
-                        for process in processes {
-                            let process_name = if is_multi_agent {
-                                format!("{}{}", agent_prefix, process.name)
-                            } else {
-                                process.name.clone()
-                            };
-
-                            all_processes.push(ProcessDisplayItem {
-                                id: process.id.to_string().cyan().to_string(),
-                                name: process_name,
-                                agent: agent.name.clone(),
-                                pid: process.pid.to_string(),
-                                status: process.status.clone(),
-                                cpu: process.cpu.clone(),
-                                mem: process.mem.clone(),
-                                uptime: process.uptime.clone(),
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("{} Failed to parse processes for agent '{}': {}", 
-                            *helpers::WARN, agent.name, e);
+                        all_processes.push(ProcessDisplayItem {
+                            id: process.id.to_string().cyan().to_string(),
+                            name: process_name,
+                            agent: agent.name.clone(),
+                            pid: process.pid.to_string(),
+                            status: process.status.clone(),
+                            cpu: process.cpu.clone(),
+                            mem: process.mem.clone(),
+                            uptime: process.uptime.clone(),
+                        });
                     }
                 }
-            }
+                Err(e) => {
+                    eprintln!(
+                        "{} Failed to parse processes for agent '{}': {}",
+                        *helpers::WARN,
+                        agent.name,
+                        e
+                    );
+                }
+            },
             Err(e) => {
-                eprintln!("{} Failed to fetch processes for agent '{}': {}", 
-                    *helpers::WARN, agent.name, e);
+                eprintln!(
+                    "{} Failed to fetch processes for agent '{}': {}",
+                    *helpers::WARN,
+                    agent.name,
+                    e
+                );
             }
         }
     }
@@ -595,8 +655,12 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
             "default" => {
                 let table = Table::new(&all_processes)
                     .with(Style::rounded().remove_verticals())
-                    .with(Modify::new(Segment::all())
-                        .with(BorderColor::filled(Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"))))
+                    .with(
+                        Modify::new(Segment::all()).with(BorderColor::filled(Color::new(
+                            "\x1b[38;2;45;55;72m",
+                            "\x1b[39m",
+                        ))),
+                    )
                     .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
                     .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
                     .to_string();
@@ -733,7 +797,7 @@ fn remove_agent_config() -> Result<(), std::io::Error> {
 const DAEMON_INIT_WAIT_SECS: u64 = 2;
 
 fn start_agent_daemon() {
-    use nix::unistd::{ForkResult, fork, setsid};
+    use nix::unistd::{fork, setsid, ForkResult};
     use opm::agent::connection::AgentConnection;
     use opm::helpers;
     use std::fs::OpenOptions;
@@ -934,6 +998,43 @@ fn main() {
             server,
         } => cli::adjust(item, command, name, &defaults(server)),
 
+        Commands::Backup { command } => match command {
+            BackupCommand::Restore => {
+                use opm::{process::dump, helpers};
+                match dump::restore_from_backup() {
+                    Ok(()) => {
+                        println!("{} Successfully restored from backup file", *helpers::SUCCESS);
+                        println!("{} Restart the daemon to apply changes: opm daemon restore", *helpers::WARN);
+                    }
+                    Err(e) => {
+                        crashln!("{} {}", *helpers::FAIL, e);
+                    }
+                }
+            }
+            BackupCommand::Status => {
+                use opm::{process::dump, helpers};
+                let backup_path = format!("{}.bak", global!("opm.dump"));
+                if dump::has_backup() {
+                    match fs::metadata(&backup_path) {
+                        Ok(metadata) => {
+                            println!("{} Backup file information:", *helpers::SUCCESS);
+                            println!("  Path: {}", backup_path);
+                            println!("  Size: {} bytes", metadata.len());
+                            if let Ok(modified) = metadata.modified() {
+                                let datetime: chrono::DateTime<chrono::Utc> = modified.into();
+                                println!("  Last modified: {}", datetime.format("%Y-%m-%d %H:%M:%S UTC"));
+                            }
+                        }
+                        Err(e) => {
+                            crashln!("{} Failed to read backup file metadata: {}", *helpers::FAIL, e);
+                        }
+                    }
+                } else {
+                    crashln!("{} No backup file found at {}", *helpers::FAIL, backup_path);
+                }
+            }
+        },
+
         Commands::Agent { command } => match command {
             AgentCommand::Connect {
                 server_url,
@@ -941,9 +1042,11 @@ fn main() {
                 token,
             } => agent_connect(server_url.clone(), name.clone(), token.clone()),
             AgentCommand::List { format, server } => agent_list(format, &defaults(server)),
-            AgentCommand::Processes { agent, format, server } => {
-                agent_processes(agent, format, &defaults(server))
-            }
+            AgentCommand::Processes {
+                agent,
+                format,
+                server,
+            } => agent_processes(agent, format, &defaults(server)),
             AgentCommand::Disconnect => agent_disconnect(),
             AgentCommand::Status => agent_status(),
         },

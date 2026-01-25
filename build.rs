@@ -93,7 +93,9 @@ fn download_node() -> PathBuf {
     }
 
     /* download node */
-    let node_archive = download_dir.join(format!("node-v{NODE_VERSION}-{target_os}-{target_arch}.tar.gz"));
+    let node_archive = download_dir.join(format!(
+        "node-v{NODE_VERSION}-{target_os}-{target_arch}.tar.gz"
+    ));
     download_file(download_url, &node_archive, &download_dir);
 
     /* extract node */

@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod prelude {
-    pub use super::{Config, Daemon, Notifications, RestoreCleanup, Role, Runner, Secure, Server, Servers, Web};
+    pub use super::{
+        Config, Daemon, Notifications, RestoreCleanup, Role, Runner, Secure, Server, Servers, Web,
+    };
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

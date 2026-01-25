@@ -34,18 +34,18 @@
 use crate::{
     file::{self, Exists},
     helpers, log,
-    process::{Runner, id::Id},
+    process::{id::Id, Runner},
 };
 
 use chrono::Utc;
 use colored::Colorize;
 use global_placeholders::global;
 use macros_rs::{crashln, fmtstr, string};
+use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
-use std::{collections::BTreeMap, fs, sync::Mutex};
 use std::sync::atomic::Ordering;
-use once_cell::sync::Lazy;
+use std::{collections::BTreeMap, fs, sync::Mutex};
 
 /// Global in-memory cache for process state (replaces temporary file)
 /// This stores the transient process state in RAM instead of writing to disk
@@ -78,6 +78,68 @@ fn read_permanent_dump() -> Runner {
             runner
         }
     }
+}
+
+/// Helper function to merge memory cache into permanent dump
+fn merge_runners(mut permanent: Runner, memory: Runner) -> Runner {
+    use std::sync::atomic::Ordering;
+    
+    // Merge memory processes into permanent
+    for (id, process) in memory.list {
+        permanent.list.insert(id, process);
+    }
+    
+    // Use maximum ID counter
+    let mem_counter = memory.id.counter.load(Ordering::SeqCst);
+    let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
+    if mem_counter > perm_counter {
+        permanent.id.counter.store(mem_counter, Ordering::SeqCst);
+    }
+    
+    permanent
+}
+
+/// Public version of merge_runners for socket server
+pub fn merge_runners_public(permanent: Runner, memory: Runner) -> Runner {
+    merge_runners(permanent, memory)
+}
+
+/// Public version for socket server to avoid recursion
+pub fn read_permanent_direct() -> Runner {
+    read_permanent_dump()
+}
+
+/// Public version for socket server to avoid recursion
+pub fn read_memory_direct() -> Runner {
+    let cache = MEMORY_CACHE.lock().unwrap();
+    match &*cache {
+        Some(runner) => runner.clone(),
+        None => empty_runner(),
+    }
+}
+
+/// Public version for socket server to avoid recursion
+pub fn write_memory_direct(dump: &Runner) {
+    let mut cache = MEMORY_CACHE.lock().unwrap();
+    *cache = Some(dump.clone());
+    log!("[dump::write_memory_direct] Updated in-memory process cache");
+}
+
+/// Public version for socket server to avoid recursion
+pub fn commit_memory_direct() {
+    // Read permanent dump directly
+    let permanent = read_permanent_dump();
+    let memory = read_memory_direct();
+
+    // Merge memory processes into permanent
+    let merged = merge_runners(permanent, memory);
+
+    // Write merged state to permanent
+    write(&merged);
+
+    // Clear memory cache
+    clear_memory();
+    log!("[dump::commit_memory_direct] Committed memory cache to permanent storage");
 }
 
 pub fn from(address: &str, token: Option<&str>) -> Result<Runner, anyhow::Error> {
@@ -166,6 +228,18 @@ pub fn raw() -> Vec<u8> {
 }
 
 pub fn write(dump: &Runner) {
+    let dump_path = global!("opm.dump");
+    
+    // Create backup of existing dump file before writing new one
+    if Exists::check(&dump_path).file() {
+        let backup_path = format!("{}.bak", dump_path);
+        if let Err(e) = fs::copy(&dump_path, &backup_path) {
+            log!("[dump::write] Failed to create backup: {}", e);
+        } else {
+            log!("[dump::write] Created backup at {}", backup_path);
+        }
+    }
+    
     let encoded = match ron::ser::to_string(&dump) {
         Ok(contents) => contents,
         Err(err) => crashln!(
@@ -175,7 +249,7 @@ pub fn write(dump: &Runner) {
         ),
     };
 
-    if let Err(err) = fs::write(global!("opm.dump"), encoded) {
+    if let Err(err) = fs::write(&dump_path, encoded) {
         crashln!(
             "{} Error writing dumpfile.\n{}",
             *helpers::FAIL,
@@ -194,7 +268,30 @@ pub fn read_memory() -> Runner {
 }
 
 /// Write to memory cache (replaces write_temp)
+/// If daemon is running, sends state via socket. Otherwise, writes to memory cache.
 pub fn write_memory(dump: &Runner) {
+    use global_placeholders::global;
+
+    // Try to send to daemon via socket first
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(
+        &socket_path,
+        crate::socket::SocketRequest::SetState(dump.clone()),
+    ) {
+        Ok(crate::socket::SocketResponse::Success) => {
+            log!("[dump::write_memory] Updated state in daemon via socket");
+            return;
+        }
+        Ok(_) => {
+            log!("[dump::write_memory] Unexpected response from daemon socket, falling back to memory");
+        }
+        Err(_) => {
+            // Daemon not running, fall back to in-memory cache
+            log!("[dump::write_memory] Daemon not running, using in-memory cache");
+        }
+    }
+
+    // Fallback: Write to local memory cache
     let mut cache = MEMORY_CACHE.lock().unwrap();
     *cache = Some(dump.clone());
     log!("[dump::write_memory] Updated in-memory process cache");
@@ -208,64 +305,86 @@ pub fn clear_memory() {
 }
 
 /// Merge memory cache into permanent and clear memory (replaces commit_temp)
+/// If daemon is running, sends SavePermanent command via socket. Otherwise, commits locally.
 pub fn commit_memory() {
-    // Read permanent dump directly
-    let mut permanent = read_permanent_dump();
+    use global_placeholders::global;
+
+    // Try to commit via daemon socket first
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::SavePermanent) {
+        Ok(crate::socket::SocketResponse::Success) => {
+            log!("[dump::commit_memory] Committed memory to permanent storage via daemon");
+            return;
+        }
+        Ok(_) => {
+            log!("[dump::commit_memory] Unexpected response from daemon socket, falling back to local commit");
+        }
+        Err(_) => {
+            // Daemon not running, fall back to local commit
+            log!("[dump::commit_memory] Daemon not running, committing locally");
+        }
+    }
+
+    // Fallback: Local commit
+    let permanent = read_permanent_dump();
     let memory = read_memory();
-    
+
     // Merge memory processes into permanent
-    for (id, process) in memory.list {
-        permanent.list.insert(id, process);
-    }
-    
-    // Update ID counter to maximum
-    let mem_counter = memory.id.counter.load(Ordering::SeqCst);
-    let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
-    if mem_counter > perm_counter {
-        permanent.id.counter.store(mem_counter, Ordering::SeqCst);
-    }
-    
+    let merged = merge_runners(permanent, memory);
+
     // Write merged state to permanent
-    write(&permanent);
-    
+    write(&merged);
+
     // Clear memory cache
     clear_memory();
     log!("[dump::commit_memory] Committed memory cache to permanent storage");
 }
 
 /// Read merged state (permanent + memory) - replaces read_merged
+/// If daemon is running, queries state via socket. Otherwise, reads from disk.
 pub fn read_merged() -> Runner {
-    // Read permanent dump directly without triggering recursive operations
-    let mut permanent = read_permanent_dump();
-    
+    use global_placeholders::global;
+
+    // Try to read from daemon via socket first
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::GetState) {
+        Ok(crate::socket::SocketResponse::State(runner)) => {
+            log!("[dump::read_merged] Retrieved state from daemon via socket");
+            return runner;
+        }
+        Ok(_) => {
+            log!(
+                "[dump::read_merged] Unexpected response from daemon socket, falling back to file"
+            );
+        }
+        Err(_) => {
+            // Daemon not running, fall back to file-based read
+            log!("[dump::read_merged] Daemon not running, reading from disk");
+        }
+    }
+
+    // Fallback: Read permanent dump directly without triggering recursive operations
+    let permanent = read_permanent_dump();
+
     // Read memory cache if it exists
     let memory = read_memory();
-    
-    // Merge memory processes into permanent
-    for (id, process) in memory.list {
-        permanent.list.insert(id, process);
-    }
-    
-    // Use maximum ID counter
-    let mem_counter = memory.id.counter.load(Ordering::SeqCst);
-    let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
-    if mem_counter > perm_counter {
-        permanent.id.counter.store(mem_counter, Ordering::SeqCst);
-    }
-    
-    permanent
+
+    // Merge and return
+    merge_runners(permanent, memory)
 }
 
 /// Initialize on daemon startup: merge any old temp file into permanent, clean temp, clear memory
 pub fn init_on_startup() -> Runner {
     // Read permanent dump
     let mut permanent = read_permanent_dump();
-    
+
     // Check if old temp dump file exists from previous version (for migration)
     let temp_dump_path = global!("opm.dump.temp");
     if Exists::check(&temp_dump_path).file() {
-        log!("[dump::init_on_startup] Found old temp dump file from previous version, migrating...");
-        
+        log!(
+            "[dump::init_on_startup] Found old temp dump file from previous version, migrating..."
+        );
+
         // Read old temp file
         match file::try_read_object::<Runner>(temp_dump_path.clone()) {
             Ok(temporary) => {
@@ -273,21 +392,21 @@ pub fn init_on_startup() -> Runner {
                 for (id, process) in temporary.list {
                     permanent.list.insert(id, process);
                 }
-                
+
                 // Update ID counter to maximum
                 let temp_counter = temporary.id.counter.load(Ordering::SeqCst);
                 let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
                 if temp_counter > perm_counter {
                     permanent.id.counter.store(temp_counter, Ordering::SeqCst);
                 }
-                
+
                 log!("[dump::init_on_startup] Merged old temp dump file");
             }
             Err(err) => {
                 log!("[dump::init_on_startup] Failed to read old temp dump: {err}");
             }
         }
-        
+
         // Delete old temp file after migration
         let _ = fs::remove_file(&temp_dump_path);
         log!("[dump::init_on_startup] Cleaned up old temp dump file");
@@ -304,3 +423,32 @@ pub fn init_on_startup() -> Runner {
     permanent
 }
 
+/// Restore dump from backup file
+pub fn restore_from_backup() -> Result<(), String> {
+    let dump_path = global!("opm.dump");
+    let backup_path = format!("{}.bak", dump_path);
+    
+    // Check if backup exists
+    if !Exists::check(&backup_path).file() {
+        return Err("No backup file found. Create a backup first by saving processes.".to_string());
+    }
+    
+    // Try to read the backup file to validate it
+    match file::try_read_object::<Runner>(backup_path.clone()) {
+        Ok(backup_runner) => {
+            // Backup is valid, restore it
+            write(&backup_runner);
+            log!("[dump::restore_from_backup] Restored from backup: {}", backup_path);
+            Ok(())
+        }
+        Err(e) => {
+            Err(format!("Backup file is corrupted or invalid: {}", e))
+        }
+    }
+}
+
+/// Check if backup file exists
+pub fn has_backup() -> bool {
+    let backup_path = format!("{}.bak", global!("opm.dump"));
+    Exists::check(&backup_path).file()
+}

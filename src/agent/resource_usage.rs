@@ -5,7 +5,7 @@ pub fn gather_resource_usage() -> Option<ResourceUsage> {
     let mem_info = sys_info::mem_info().ok()?;
     let disk_info = sys_info::disk_info().ok();
     let loadavg = sys_info::loadavg().ok();
-    
+
     // Calculate memory usage - show as usage percentage
     let memory_used = mem_info.total.saturating_sub(mem_info.avail);
     let memory_percent = if mem_info.total > 0 {
@@ -13,7 +13,7 @@ pub fn gather_resource_usage() -> Option<ResourceUsage> {
     } else {
         0.0
     };
-    
+
     // Calculate disk usage - show as usage percentage
     let (disk_total, disk_free, disk_percent) = if let Some(disk) = disk_info {
         let total = disk.total;
@@ -27,13 +27,11 @@ pub fn gather_resource_usage() -> Option<ResourceUsage> {
     } else {
         (None, None, None)
     };
-    
+
     // CPU usage based on load average normalized by CPU count
     let cpu_count = num_cpus::get() as f64;
-    let cpu_usage = loadavg.as_ref().map(|la| {
-        (la.one / cpu_count) * 100.0
-    });
-    
+    let cpu_usage = loadavg.as_ref().map(|la| (la.one / cpu_count) * 100.0);
+
     Some(ResourceUsage {
         cpu_usage,
         memory_used: Some(memory_used),

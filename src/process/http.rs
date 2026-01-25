@@ -1,7 +1,7 @@
 use crate::process::Remote;
 use macros_rs::{fmtstr, string};
-use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::Client;
 use serde::Serialize;
 use std::path::PathBuf;
 

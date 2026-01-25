@@ -2,7 +2,7 @@ use colored::Colorize;
 use lazy_static::lazy_static;
 use macros_rs::{crashln, string, ternary, then};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use opm::process::{MemoryInfo, unix::NativeProcess as Process};
+use opm::process::{unix::NativeProcess as Process, MemoryInfo};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
@@ -16,19 +16,19 @@ use opm::{
     helpers::{self, ColoredString},
     log,
     process::{
-        ItemSingle, Runner, get_process_cpu_usage_with_children_from_process,
-        get_process_memory_with_children, http, is_pid_alive,
+        get_process_cpu_usage_with_children_from_process, get_process_memory_with_children, http,
+        is_pid_alive, ItemSingle, Runner,
     },
 };
 
 use tabled::{
-    Table, Tabled,
     settings::{
-        Color, Modify, Rotate, Width,
         object::{Columns, Rows, Segment},
         style::{BorderColor, Style},
         themes::Colorization,
+        Color, Modify, Rotate, Width,
     },
+    Table, Tabled,
 };
 
 lazy_static! {
@@ -230,7 +230,7 @@ impl<'i> Internal<'i> {
                 self.id
             );
             log!("process started (id={})", self.id);
-            
+
             // Emit event for CLI operation if on local server
             if matches!(self.server_name, "internal" | "local") {
                 if let Some(process) = self.runner.info(self.id) {
@@ -243,7 +243,15 @@ impl<'i> Internal<'i> {
                         event_type,
                         self.id,
                         &process.name,
-                        &format!("Process '{}' {} via CLI", process.name, if increment_counter { "restarted" } else { "started" }),
+                        &format!(
+                            "Process '{}' {} via CLI",
+                            process.name,
+                            if increment_counter {
+                                "restarted"
+                            } else {
+                                "started"
+                            }
+                        ),
                     );
                 }
             }
@@ -302,7 +310,7 @@ impl<'i> Internal<'i> {
                 self.id
             );
             log!("process reloaded (id={})", self.id);
-            
+
             // Emit event for CLI operation if on local server
             if matches!(self.server_name, "internal" | "local") {
                 if let Some(process) = self.runner.info(self.id) {
@@ -354,7 +362,11 @@ impl<'i> Internal<'i> {
             };
         }
 
-        let process_name = self.runner.info(self.id).map(|p| p.name.clone()).unwrap_or_default(); // Get name before stop
+        let process_name = self
+            .runner
+            .info(self.id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default(); // Get name before stop
         let mut item = self.runner.get(self.id);
         item.stop();
         self.runner = item.get_runner().clone();
@@ -362,7 +374,7 @@ impl<'i> Internal<'i> {
         if !silent {
             println!("{} Stopped {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
             log!("process stopped {}(id={})", self.kind, self.id);
-            
+
             // Emit event for CLI operation if on local server
             if matches!(self.server_name, "internal" | "local") {
                 super::events::emit_event(
@@ -411,11 +423,11 @@ impl<'i> Internal<'i> {
 
         // Get process info before removal for event emission
         let process_name = self.runner.info(self.id).map(|p| p.name.clone());
-        
+
         self.runner.remove(self.id);
         println!("{} Removed {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
         log!("process removed (id={})", self.id);
-        
+
         // Emit event for CLI operation if on local server
         if matches!(self.server_name, "internal" | "local") {
             if let Some(name) = process_name {
@@ -651,10 +663,10 @@ impl<'i> Internal<'i> {
                     memory_usage,
                     memory_limit,
                     id: string!(self.id),
-                    restarts: if item.crash.crashed { 
-                        item.crash.value 
-                    } else { 
-                        item.restarts 
+                    restarts: if item.crash.crashed {
+                        item.crash.value
+                    } else {
+                        item.restarts
                     },
                     name: item.name.clone(),
                     log_out: item.logs().out,
@@ -770,10 +782,10 @@ impl<'i> Internal<'i> {
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
-                    restarts: if item.crash.crashed { 
-                        item.crash.value 
-                    } else { 
-                        item.restarts 
+                    restarts: if item.crash.crashed {
+                        item.crash.value
+                    } else {
+                        item.restarts
                     },
                     name: item.name.clone(),
                     pid: ternary!(
@@ -1092,12 +1104,10 @@ impl<'i> Internal<'i> {
         // Get restore cleanup configuration
         let config = config::read();
         let restore_cleanup = config.daemon.restore_cleanup.as_ref();
-        
+
         // Clear process logs if enabled (default: true)
-        let should_cleanup_process_logs = restore_cleanup
-            .map(|rc| rc.process_logs)
-            .unwrap_or(true);
-        
+        let should_cleanup_process_logs = restore_cleanup.map(|rc| rc.process_logs).unwrap_or(true);
+
         if should_cleanup_process_logs {
             let log_path = &config.runner.log_path;
             if file::Exists::check(log_path).folder() {
@@ -1110,7 +1120,11 @@ impl<'i> Internal<'i> {
                                 if let Some(ext) = path.extension() {
                                     if ext == "log" {
                                         if let Err(e) = fs::remove_file(&path) {
-                                            ::log::warn!("Failed to delete process log {:?}: {}", path, e);
+                                            ::log::warn!(
+                                                "Failed to delete process log {:?}: {}",
+                                                path,
+                                                e
+                                            );
                                         }
                                     }
                                 }
@@ -1120,12 +1134,10 @@ impl<'i> Internal<'i> {
                 }
             }
         }
-        
+
         // Clear daemon log if enabled (default: true)
-        let should_cleanup_daemon_log = restore_cleanup
-            .map(|rc| rc.daemon_log)
-            .unwrap_or(true);
-        
+        let should_cleanup_daemon_log = restore_cleanup.map(|rc| rc.daemon_log).unwrap_or(true);
+
         if should_cleanup_daemon_log {
             if let Some(path) = home::home_dir() {
                 let daemon_log_path = path.join(".opm").join("daemon.log");
@@ -1136,12 +1148,10 @@ impl<'i> Internal<'i> {
                 }
             }
         }
-        
+
         // Clear agent log if enabled (default: true)
-        let should_cleanup_agent_log = restore_cleanup
-            .map(|rc| rc.agent_log)
-            .unwrap_or(true);
-        
+        let should_cleanup_agent_log = restore_cleanup.map(|rc| rc.agent_log).unwrap_or(true);
+
         if should_cleanup_agent_log {
             if let Some(path) = home::home_dir() {
                 let agent_log_path = path.join(".opm").join("agent.log");
@@ -1207,7 +1217,7 @@ impl<'i> Internal<'i> {
                 restored_ids.push(*id);
                 continue;
             }
-            
+
             // For processes that were running normally, restart them
             // status_str is currently unused but kept for potential future logging
             let _status_str = if *was_crashed {

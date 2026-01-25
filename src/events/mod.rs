@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::fs;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,7 +62,7 @@ impl EventManager {
     pub fn new(max_events: usize) -> Self {
         let storage_path = Self::get_storage_path();
         let events = Self::load_from_file(&storage_path, max_events);
-        
+
         Self {
             events: Arc::new(RwLock::new(events)),
             max_events,
@@ -111,17 +111,17 @@ impl EventManager {
 
     pub async fn add_event(&self, event: Event) {
         let mut events = self.events.write().await;
-        
+
         // Log before moving the event
         log::info!("Event added: {:?} - {}", event.event_type, event.message);
-        
+
         // If we've reached the max, remove the oldest event
         if events.len() >= self.max_events {
             events.pop_front();
         }
-        
+
         events.push_back(event);
-        
+
         // Save to file after adding
         self.save_to_file(&events);
     }
@@ -129,21 +129,16 @@ impl EventManager {
     pub async fn get_events(&self, limit: Option<usize>) -> Vec<Event> {
         let events = self.events.read().await;
         let limit = limit.unwrap_or(events.len()).min(events.len());
-        
+
         // Return events in reverse order (newest first)
-        events
-            .iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        events.iter().rev().take(limit).cloned().collect()
     }
 
     pub async fn clear_events(&self) {
         let mut events = self.events.write().await;
         events.clear();
         log::info!("All events cleared");
-        
+
         // Save empty state to file
         self.save_to_file(&events);
     }

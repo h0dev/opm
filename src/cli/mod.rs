@@ -1,9 +1,9 @@
 mod args;
 pub use args::*;
 
+pub(crate) mod events;
 pub(crate) mod import;
 pub(crate) mod internal;
-pub(crate) mod events;
 
 use internal::{Internal, STATS_PRE_LIST_DELAY_MS};
 use macros_rs::{crashln, string, ternary};
@@ -147,7 +147,7 @@ pub fn start(
         }
 
         runner.save();
-        
+
         println!(
             "{} All {} workers started successfully",
             *helpers::SUCCESS,

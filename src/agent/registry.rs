@@ -26,12 +26,12 @@ impl AgentRegistry {
         let mut agents = self.agents.write().unwrap();
         agents.insert(agent.id.clone(), agent);
     }
-    
+
     pub fn register_with_sender(&self, agent: AgentInfo, sender: mpsc::UnboundedSender<String>) {
         let agent_id = agent.id.clone();
         let mut agents = self.agents.write().unwrap();
         agents.insert(agent_id.clone(), agent);
-        
+
         let mut senders = self.agent_senders.write().unwrap();
         senders.insert(agent_id, sender);
     }
@@ -95,12 +95,14 @@ impl AgentRegistry {
                 .collect()
         })
     }
-    
+
     /// Send a message to an agent via its WebSocket connection
     pub fn send_to_agent(&self, agent_id: &str, message: String) -> Result<(), String> {
         let senders = self.agent_senders.read().unwrap();
         if let Some(sender) = senders.get(agent_id) {
-            sender.send(message).map_err(|e| format!("Failed to send message: {}", e))
+            sender
+                .send(message)
+                .map_err(|e| format!("Failed to send message: {}", e))
         } else {
             Err(format!("Agent {} not connected via WebSocket", agent_id))
         }
