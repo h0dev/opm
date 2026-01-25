@@ -1269,6 +1269,11 @@ impl<'i> Internal<'i> {
             }
         }
 
+        // Save all changes to permanent storage
+        // This ensures crashed processes marked as stopped are persisted
+        // even if daemon crashes before next graceful shutdown
+        runner.save_permanent();
+
         Internal::list(&string!("default"), &list_name);
     }
 

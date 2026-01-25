@@ -865,7 +865,10 @@ impl Runner {
         // and marks it as crashed before the deletion is saved
         self.list.remove(&id);
         self.compact(); // Compact IDs after removal
-        self.save();
+        
+        // Save to permanent storage immediately to ensure removal persists
+        // even if daemon crashes before next graceful shutdown
+        self.save_permanent();
         
         // Now kill the actual process using the saved PID info
         // We do this after saving so the daemon never sees a dead process in the list
