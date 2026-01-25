@@ -81,13 +81,17 @@ fn read_permanent_dump() -> Runner {
 }
 
 /// Helper function to merge memory cache into permanent dump
+/// If memory cache has processes, it represents the complete current state and replaces permanent
+/// If memory cache is empty, permanent state is preserved
 fn merge_runners(mut permanent: Runner, memory: Runner) -> Runner {
     use std::sync::atomic::Ordering;
     
-    // Merge memory processes into permanent
-    for (id, process) in memory.list {
-        permanent.list.insert(id, process);
+    // If memory cache is non-empty, it represents the complete current state
+    // Replace permanent's list with memory's list to reflect deletions
+    if !memory.list.is_empty() {
+        permanent.list = memory.list;
     }
+    // If memory is empty, keep permanent as-is (no changes to commit)
     
     // Use maximum ID counter
     let mem_counter = memory.id.counter.load(Ordering::SeqCst);

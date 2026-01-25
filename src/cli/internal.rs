@@ -1293,27 +1293,6 @@ impl<'i> Internal<'i> {
             }
         }
 
-        // Issue #1: Move all processes from permanent dump to RAM
-        // After restore completes, ensure all processes exist only in memory cache
-        // This way, deleted processes disappear immediately without needing a save
-        
-        // Get the current state (which includes all restored processes)
-        let current_runner = Runner::new();
-        
-        // Write to memory cache (this will update the daemon's in-memory state via socket)
-        opm::process::dump::write_memory(&current_runner);
-        
-        // Clear the permanent dump by saving an empty runner
-        // Keep the ID counter to ensure new processes get correct IDs
-        let empty_runner = opm::process::Runner {
-            id: opm::process::id::Id::new(current_runner.id.counter.load(std::sync::atomic::Ordering::SeqCst)),
-            list: std::collections::BTreeMap::new(),
-            remote: None,
-        };
-        opm::process::dump::write(&empty_runner);
-        
-        println!("{} All processes moved to RAM (permanent dump cleared)", *helpers::SUCCESS);
-
         Internal::list(&string!("default"), &list_name);
     }
 
