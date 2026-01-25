@@ -6,6 +6,7 @@ pub mod helpers;
 pub mod log;
 pub mod notifications;
 pub mod process;
+pub mod socket;
 
 // Deprecated
 // #[cxx::bridge]

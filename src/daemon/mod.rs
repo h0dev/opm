@@ -605,6 +605,16 @@ pub fn start(verbose: bool) {
             }
         }
 
+        // Start Unix socket server for CLI-daemon communication
+        let socket_path = global!("opm.socket").to_string();
+        let socket_path_clone = socket_path.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = opm::socket::start_socket_server(&socket_path) {
+                log!("[daemon] Unix socket server error", "error" => format!("{}", e));
+            }
+        });
+        log!("[daemon] Unix socket server started", "path" => socket_path_clone);
+
         // Initialize on daemon startup: load state from disk and clear any old temp files
         // This must be done before the main loop starts
         use opm::process::dump;

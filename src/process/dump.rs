@@ -194,7 +194,27 @@ pub fn read_memory() -> Runner {
 }
 
 /// Write to memory cache (replaces write_temp)
+/// If daemon is running, sends state via socket. Otherwise, writes to memory cache.
 pub fn write_memory(dump: &Runner) {
+    use global_placeholders::global;
+    
+    // Try to send to daemon via socket first
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::SetState(dump.clone())) {
+        Ok(crate::socket::SocketResponse::Success) => {
+            log!("[dump::write_memory] Updated state in daemon via socket");
+            return;
+        }
+        Ok(_) => {
+            log!("[dump::write_memory] Unexpected response from daemon socket, falling back to memory");
+        }
+        Err(_) => {
+            // Daemon not running, fall back to in-memory cache
+            log!("[dump::write_memory] Daemon not running, using in-memory cache");
+        }
+    }
+    
+    // Fallback: Write to local memory cache
     let mut cache = MEMORY_CACHE.lock().unwrap();
     *cache = Some(dump.clone());
     log!("[dump::write_memory] Updated in-memory process cache");
@@ -208,7 +228,27 @@ pub fn clear_memory() {
 }
 
 /// Merge memory cache into permanent and clear memory (replaces commit_temp)
+/// If daemon is running, sends SavePermanent command via socket. Otherwise, commits locally.
 pub fn commit_memory() {
+    use global_placeholders::global;
+    
+    // Try to commit via daemon socket first
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::SavePermanent) {
+        Ok(crate::socket::SocketResponse::Success) => {
+            log!("[dump::commit_memory] Committed memory to permanent storage via daemon");
+            return;
+        }
+        Ok(_) => {
+            log!("[dump::commit_memory] Unexpected response from daemon socket, falling back to local commit");
+        }
+        Err(_) => {
+            // Daemon not running, fall back to local commit
+            log!("[dump::commit_memory] Daemon not running, committing locally");
+        }
+    }
+    
+    // Fallback: Local commit
     // Read permanent dump directly
     let mut permanent = read_permanent_dump();
     let memory = read_memory();
@@ -234,8 +274,27 @@ pub fn commit_memory() {
 }
 
 /// Read merged state (permanent + memory) - replaces read_merged
+/// If daemon is running, queries state via socket. Otherwise, reads from disk.
 pub fn read_merged() -> Runner {
-    // Read permanent dump directly without triggering recursive operations
+    use global_placeholders::global;
+    
+    // Try to read from daemon via socket first
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::GetState) {
+        Ok(crate::socket::SocketResponse::State(runner)) => {
+            log!("[dump::read_merged] Retrieved state from daemon via socket");
+            return runner;
+        }
+        Ok(_) => {
+            log!("[dump::read_merged] Unexpected response from daemon socket, falling back to file");
+        }
+        Err(_) => {
+            // Daemon not running, fall back to file-based read
+            log!("[dump::read_merged] Daemon not running, reading from disk");
+        }
+    }
+    
+    // Fallback: Read permanent dump directly without triggering recursive operations
     let mut permanent = read_permanent_dump();
     
     // Read memory cache if it exists
