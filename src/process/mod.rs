@@ -861,10 +861,37 @@ impl Runner {
                 );
             };
         } else {
-            self.stop(id);
+            // Get PID info before removing from list
+            let pid = self.info(id).map(|p| p.pid).unwrap_or(0);
+            let shell_pid = self.info(id).and_then(|p| p.shell_pid);
+            let children = self.info(id).map(|p| p.children.clone()).unwrap_or_default();
+            
+            // Remove from list first, before stopping the process
+            // This prevents a race condition where the daemon sees a dead PID
+            // and marks it as crashed before the deletion is saved
             self.list.remove(&id);
             self.compact(); // Compact IDs after removal
             self.save();
+            
+            // Now kill the actual process using the saved PID info
+            // We do this after saving so the daemon never sees a dead process in the list
+            if pid > 0 {
+                kill_children(children);
+                let _ = process_stop(pid);
+                
+                // Wait for process termination
+                if !wait_for_process_termination(pid) {
+                    log::warn!("Process {} did not terminate within timeout during remove", pid);
+                }
+                
+                // Remove child handle from global state if it exists
+                let handle_pid = shell_pid.unwrap_or(pid);
+                if let Some((_, handle)) = PROCESS_HANDLES.remove(&handle_pid) {
+                    if let Ok(mut child) = handle.lock() {
+                        let _ = child.wait();
+                    }
+                }
+            }
         }
     }
 

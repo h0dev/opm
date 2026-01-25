@@ -145,6 +145,8 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::SetState(runner) => {
             // Write to memory cache directly
             dump::write_memory_direct(&runner);
+            // Commit to permanent storage to ensure state persists
+            dump::commit_memory_direct();
             SocketResponse::Success
         }
         SocketRequest::SavePermanent => {
