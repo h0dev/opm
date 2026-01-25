@@ -1109,24 +1109,17 @@ impl<'i> Internal<'i> {
             let mut modified = false;
             
             // Mark all crashed processes as stopped in the dump file
-            for (id, process) in dump_runner.list.iter_mut() {
+            for (_id, process) in dump_runner.list.iter_mut() {
                 if process.crash.crashed {
                     process.running = false;
                     process.crash.crashed = false;
                     modified = true;
-                    println!(
-                        "{} Process '{}' (id={}) was crashed - marked as stopped in dump file",
-                        *helpers::SUCCESS,
-                        process.name,
-                        id
-                    );
                 }
             }
             
             // Save the modified dump file if any changes were made
             if modified {
                 opm::process::dump::write(&dump_runner);
-                println!("{} Updated dump file with stopped crashed processes", *helpers::SUCCESS);
             }
         }
 
@@ -1150,8 +1143,6 @@ impl<'i> Internal<'i> {
             // Give daemon a moment to initialize
             std::thread::sleep(std::time::Duration::from_millis(500));
             println!("{} OPM daemon started", *helpers::SUCCESS);
-        } else {
-            println!("{} OPM daemon already running", *helpers::SUCCESS);
         }
         
         // Now load runner from the updated dump file (with crashed processes marked as stopped)

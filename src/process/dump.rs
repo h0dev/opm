@@ -90,14 +90,16 @@ fn merge_runners(mut permanent: Runner, memory: Runner) -> Runner {
     // Replace permanent's list with memory's list to reflect deletions
     if !memory.list.is_empty() {
         permanent.list = memory.list;
-    }
-    // If memory is empty, keep permanent as-is (no changes to commit)
-    
-    // Use maximum ID counter
-    let mem_counter = memory.id.counter.load(Ordering::SeqCst);
-    let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
-    if mem_counter > perm_counter {
+        // When memory has state, also update the counter to match memory's counter
+        // This ensures deletions properly decrease the counter
+        let mem_counter = memory.id.counter.load(Ordering::SeqCst);
         permanent.id.counter.store(mem_counter, Ordering::SeqCst);
+    } else {
+        // If memory is empty, check if we should reset the counter
+        // Empty memory with empty permanent means reset to 0
+        if permanent.list.is_empty() {
+            permanent.id.counter.store(0, Ordering::SeqCst);
+        }
     }
     
     permanent
