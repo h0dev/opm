@@ -238,24 +238,27 @@ fn restart_process() {
             // PID > 0 means we thought the process was alive, so this is a new crash event
             let is_new_crash = item.pid > 0;
 
-            // Reset PID to 0 if it wasn't already (for new crashes)
-            if is_new_crash {
-                let process = runner.process(id);
-                process.pid = 0; // Set to 0 to indicate no valid PID
-            }
-
             // Increment crash counter for newly detected crashes to track actual crash count
             // This happens when PID was > 0 (we thought process was alive) and now it's dead
             // This ensures we count each actual crash, even beyond the restart limit
             if is_new_crash {
-                // Get crash count after incrementing
-                let crash_count = {
-                    let process = runner.process(id);
-                    // Increment crash counter - allow it to exceed limit to show total crash history
-                    process.crash.value += 1;
-                    process.crash.crashed = true;
-                    process.crash.value
-                };
+                // Reload runner to check if process was deleted concurrently by CLI
+                // This must be done BEFORE modifying state to avoid race conditions
+                runner = Runner::new();
+                if !runner.exists(id) {
+                    log!("[daemon] process was deleted during crash detection, skipping", 
+                         "name" => item.name, "id" => id);
+                    continue;
+                }
+                
+                // Reset PID to 0 to indicate no valid PID
+                let process = runner.process(id);
+                process.pid = 0;
+                
+                // Increment crash counter - allow it to exceed limit to show total crash history
+                process.crash.value += 1;
+                process.crash.crashed = true;
+                let crash_count = process.crash.value;
 
                 // Only handle restart logic if process was supposed to be running
                 if item.running {
@@ -275,14 +278,12 @@ fn restart_process() {
                     // Counter can exceed limit to track total crashes, but restarts stop at limit
                     if crash_count >= daemon_config.restarts {
                         // Reached max restarts - give up and set running=false
-                        let process = runner.process(id);
                         process.running = false;
                         log!("[daemon] process reached max crash limit", 
                              "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();
                     } else {
                         // Still within crash limit - mark as crashed and save
-                        // Next daemon cycle will restart it
                         log!("[daemon] process crashed", 
                              "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
                         runner.save();

@@ -159,10 +159,45 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::RemoveProcess(id) => {
             // Handle process removal through daemon to avoid race conditions
             // This ensures the daemon's monitoring loop sees the removal immediately
-            use crate::process::Runner;
-            let mut runner = Runner::new();
+            // Read state directly to avoid socket recursion
+            let permanent = dump::read_permanent_direct();
+            let memory = dump::read_memory_direct();
+            let mut runner = dump::merge_runners_public(permanent, memory);
+            
             if runner.exists(id) {
-                runner.remove_direct_internal(id);
+                // Get PID info before removing
+                let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
+                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
+                
+                // Remove from list
+                runner.list.remove(&id);
+                runner.compact();
+                
+                // Write directly to permanent storage to avoid socket recursion
+                // This bypasses the normal save() path which would try to use the socket
+                use crate::process::dump;
+                dump::write(&runner);
+                dump::clear_memory();
+                
+                // Now kill the process
+                if pid > 0 {
+                    use crate::process::process_stop;
+                    
+                    // Kill children
+                    for child_pid in children {
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(child_pid as i32),
+                            nix::sys::signal::Signal::SIGTERM,
+                        );
+                    }
+                    
+                    // Kill main process
+                    let _ = process_stop(pid);
+                    
+                    // Wait for termination (simple version without accessing private function)
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
