@@ -3,14 +3,17 @@ mod log;
 mod api;
 mod fork;
 
-use api::{DAEMON_CPU_PERCENTAGE, DAEMON_MEM_USAGE, DAEMON_START_TIME, GLOBAL_EVENT_MANAGER, GLOBAL_NOTIFICATION_MANAGER};
+use api::{
+    DAEMON_CPU_PERCENTAGE, DAEMON_MEM_USAGE, DAEMON_START_TIME, GLOBAL_EVENT_MANAGER,
+    GLOBAL_NOTIFICATION_MANAGER,
+};
 use chrono::{DateTime, Utc};
 use colored::Colorize;
-use fork::{Fork, daemon};
+use fork::{daemon, Fork};
 use global_placeholders::global;
 use macros_rs::{crashln, str, string, ternary};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use opm::process::{MemoryInfo, unix::NativeProcess as Process};
+use opm::process::{unix::NativeProcess as Process, MemoryInfo};
 use serde::Serialize;
 use serde_json::json;
 use std::panic;
@@ -20,17 +23,17 @@ use std::{process, thread::sleep, time::Duration};
 use opm::{
     config,
     helpers::{self, ColoredString},
-    process::{Runner, get_process_cpu_usage_with_children_from_process, hash, id::Id},
+    process::{get_process_cpu_usage_with_children_from_process, hash, id::Id, Runner},
 };
 
 use tabled::{
-    Table, Tabled,
     settings::{
-        Color, Rotate,
         object::Columns,
         style::{BorderColor, Style},
         themes::Colorization,
+        Color, Rotate,
     },
+    Table, Tabled,
 };
 
 // Grace period in seconds to wait after process start before checking for crashes
@@ -49,7 +52,7 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
     // 1. The alternative (losing crashed process state) is worse
     // 2. This only runs on daemon shutdown, not during normal operation
     // 3. Worst case: state isn't saved, but daemon still exits cleanly
-    
+
     // Try to save crashed process state before exiting
     // Use catch_unwind to prevent panics from crashing the signal handler
     let save_result = std::panic::catch_unwind(|| {
@@ -67,19 +70,19 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
             }
         }
         runner.save();
-        
+
         // Commit memory cache to permanent storage on shutdown
         use opm::process::dump;
         dump::commit_memory();
         log!("[daemon] committed memory cache to permanent storage", "action" => "shutdown");
     });
-    
+
     // If save failed, log a warning (but still proceed with cleanup)
     if save_result.is_err() {
         // Note: Can't use log! macro without key-value pairs, using eprintln instead
         eprintln!("[daemon] warning: failed to save crashed process state during shutdown");
     }
-    
+
     pid::remove();
     log!("[daemon] killed", "pid" => process::id());
     unsafe { libc::_exit(0) }
@@ -104,14 +107,16 @@ async fn emit_crash_event_and_notification(id: usize, name: String) {
         );
         event_manager.add_event(event).await;
     }
-    
+
     // Send notification if NotificationManager is available
     if let Some(notification_manager) = GLOBAL_NOTIFICATION_MANAGER.get() {
-        notification_manager.send(
-            opm::notifications::NotificationEvent::ProcessCrash,
-            "Process Crashed",
-            &format!("Process '{}' has crashed", name),
-        ).await;
+        notification_manager
+            .send(
+                opm::notifications::NotificationEvent::ProcessCrash,
+                "Process Crashed",
+                &format!("Process '{}' has crashed", name),
+            )
+            .await;
     }
 }
 
@@ -232,7 +237,7 @@ fn restart_process() {
             // Check if this is a newly detected crash by looking at PID
             // PID > 0 means we thought the process was alive, so this is a new crash event
             let is_new_crash = item.pid > 0;
-            
+
             // Reset PID to 0 if it wasn't already (for new crashes)
             if is_new_crash {
                 let process = runner.process(id);
@@ -262,7 +267,7 @@ fn restart_process() {
                         log!("[daemon] warning: crash event not emitted (no tokio runtime)", 
                              "name" => item.name, "id" => id);
                     }
-                    
+
                     // Check if we've reached or exceeded the maximum crash limit
                     // Using >= to stop when counter reaches the limit:
                     // - crash_count < 10 with max_restarts=10: allow restart (crash counter 1-9)
@@ -527,14 +532,17 @@ pub fn start(verbose: bool) {
             Ok(runtime) => runtime,
             Err(err) => {
                 log!("[daemon] Failed to create tokio runtime", "error" => format!("{:?}", err));
-                eprintln!("[daemon] Fatal error: Failed to create tokio runtime: {:?}", err);
+                eprintln!(
+                    "[daemon] Fatal error: Failed to create tokio runtime: {:?}",
+                    err
+                );
                 panic!("Failed to create tokio runtime: {:?}", err);
             }
         };
-        
+
         // Enter the runtime context so all async operations work correctly
         let _guard = rt.enter();
-        
+
         pid::name("OPM Restart Handler Daemon");
 
         let config = config::read().daemon;
@@ -608,12 +616,23 @@ pub fn start(verbose: bool) {
         // Start Unix socket server for CLI-daemon communication
         let socket_path = global!("opm.socket").to_string();
         let socket_path_clone = socket_path.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = opm::socket::start_socket_server(&socket_path) {
-                log!("[daemon] Unix socket server error", "error" => format!("{}", e));
+        match std::thread::Builder::new()
+            .name("socket-server".to_string())
+            .spawn(move || {
+                if let Err(e) = opm::socket::start_socket_server(&socket_path) {
+                    log!("[daemon] Unix socket server error", "error" => format!("{}", e));
+                    eprintln!("[daemon] Critical: Unix socket server failed to start: {}", e);
+                }
+            })
+        {
+            Ok(_) => {
+                log!("[daemon] Unix socket server started", "path" => socket_path_clone);
             }
-        });
-        log!("[daemon] Unix socket server started", "path" => socket_path_clone);
+            Err(e) => {
+                log!("[daemon] Failed to spawn socket server thread", "error" => format!("{}", e));
+                eprintln!("[daemon] Warning: Socket server could not be started. CLI commands may not work correctly.");
+            }
+        }
 
         // Initialize on daemon startup: load state from disk and clear any old temp files
         // This must be done before the main loop starts

@@ -3,19 +3,14 @@ use opm::{config, events::EventType};
 /// Emit an event to the daemon if it's running
 /// This is a best-effort operation using synchronous blocking HTTP
 /// If the daemon is not running or not accessible, it silently fails
-/// 
+///
 /// Note: Spawns a detached thread for each call. This is acceptable since CLI
 /// operations are infrequent (not called in hot loops).
-pub fn emit_event(
-    event_type: EventType,
-    process_id: usize,
-    process_name: &str,
-    message: &str,
-) {
+pub fn emit_event(event_type: EventType, process_id: usize, process_name: &str, message: &str) {
     // Convert to owned strings before spawning thread
     let process_name = process_name.to_string();
     let message = message.to_string();
-    
+
     // Try to send event to local daemon API with a very short timeout
     // This is done in a separate thread to avoid blocking CLI operations
     std::thread::spawn(move || {

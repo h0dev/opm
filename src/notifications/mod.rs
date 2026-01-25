@@ -1,5 +1,5 @@
 use crate::config::structs::Notifications;
-use notify_rust::{Notification, Urgency, Hint};
+use notify_rust::{Hint, Notification, Urgency};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

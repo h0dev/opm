@@ -14,15 +14,15 @@
 //!
 //! The socket is created at `~/.opm/opm.sock`
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::thread;
 
-use crate::process::{Runner, dump};
+use crate::process::{dump, Runner};
 
 /// Request types that can be sent to the daemon via socket
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,17 +62,51 @@ pub fn start_socket_server(socket_path: &str) -> Result<()> {
     }
 
     let listener = UnixListener::bind(socket_path)?;
+    
+    // Set restrictive permissions (600 - owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(socket_path, permissions)?;
+    }
+    
     log::info!("Unix socket server started at {}", socket_path);
 
-    // Handle connections in a loop
+    // Use a bounded channel to limit concurrent connections
+    const MAX_CONCURRENT_CONNECTIONS: usize = 100;
+    let (tx, rx) = std::sync::mpsc::sync_channel::<UnixStream>(MAX_CONCURRENT_CONNECTIONS);
+    let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
+    
+    // Spawn worker threads to handle connections
+    const WORKER_THREADS: usize = 4;
+    for i in 0..WORKER_THREADS {
+        let rx = std::sync::Arc::clone(&rx);
+        thread::spawn(move || {
+            loop {
+                let stream = {
+                    let rx = rx.lock().unwrap();
+                    match rx.recv() {
+                        Ok(stream) => stream,
+                        Err(_) => break, // Channel closed
+                    }
+                };
+                if let Err(e) = handle_client(stream) {
+                    log::error!("Error handling socket client: {}", e);
+                }
+            }
+            log::info!("Socket worker thread {} exiting", i);
+        });
+    }
+    
+    // Accept connections and send to worker threads
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                thread::spawn(move || {
-                    if let Err(e) = handle_client(stream) {
-                        log::error!("Error handling socket client: {}", e);
-                    }
-                });
+                // Try to send to worker threads, drop connection if queue is full
+                if tx.send(stream).is_err() {
+                    log::warn!("Socket connection queue full, dropping connection");
+                }
             }
             Err(e) => {
                 log::error!("Error accepting socket connection: {}", e);
@@ -85,37 +119,28 @@ pub fn start_socket_server(socket_path: &str) -> Result<()> {
 
 /// Handle a single client connection
 fn handle_client(mut stream: UnixStream) -> Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+    // Set read timeout to prevent hanging on malicious clients
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    
+    let reader = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
     
-    // Read request line
-    reader.read_line(&mut line)?;
-    
+    // Limit input size to 10MB to prevent memory exhaustion
+    const MAX_REQUEST_SIZE: usize = 10 * 1024 * 1024;
+    let mut limited_reader = reader.take(MAX_REQUEST_SIZE as u64);
+    limited_reader.read_line(&mut line)?;
+
     // Parse request
     let request: SocketRequest = serde_json::from_str(&line)?;
-    
+
     // Process request
     let response = match request {
         SocketRequest::GetState => {
             // Read merged state directly without recursion
-            // Read permanent dump
-            let mut permanent = dump::read_permanent_direct();
+            let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct();
-            
-            // Merge memory processes into permanent
-            for (id, process) in memory.list {
-                permanent.list.insert(id, process);
-            }
-            
-            // Use maximum ID counter
-            use std::sync::atomic::Ordering;
-            let mem_counter = memory.id.counter.load(Ordering::SeqCst);
-            let perm_counter = permanent.id.counter.load(Ordering::SeqCst);
-            if mem_counter > perm_counter {
-                permanent.id.counter.store(mem_counter, Ordering::SeqCst);
-            }
-            
-            SocketResponse::State(permanent)
+            let merged = dump::merge_runners_public(permanent, memory);
+            SocketResponse::State(merged)
         }
         SocketRequest::SetState(runner) => {
             // Write to memory cache directly
@@ -127,39 +152,41 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             dump::commit_memory_direct();
             SocketResponse::Success
         }
-        SocketRequest::Ping => {
-            SocketResponse::Pong
-        }
+        SocketRequest::Ping => SocketResponse::Pong,
     };
-    
+
     // Send response
     let response_json = serde_json::to_string(&response)?;
     stream.write_all(response_json.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.flush()?;
-    
+
     Ok(())
 }
 
 /// Client function to send a request to the daemon via socket
 pub fn send_request(socket_path: &str, request: SocketRequest) -> Result<SocketResponse> {
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|e| anyhow!("Failed to connect to daemon socket: {}. Is the daemon running?", e))?;
-    
+    let mut stream = UnixStream::connect(socket_path).map_err(|e| {
+        anyhow!(
+            "Failed to connect to daemon socket: {}. Is the daemon running?",
+            e
+        )
+    })?;
+
     // Send request
     let request_json = serde_json::to_string(&request)?;
     stream.write_all(request_json.as_bytes())?;
     stream.write_all(b"\n")?;
     stream.flush()?;
-    
+
     // Read response
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
-    
+
     // Parse response
     let response: SocketResponse = serde_json::from_str(&line)?;
-    
+
     Ok(response)
 }
 

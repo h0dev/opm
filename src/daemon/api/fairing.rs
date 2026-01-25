@@ -1,7 +1,8 @@
 use rocket::{
-    Data, Orbit, Request, Response, Rocket, async_trait,
+    async_trait,
     fairing::{Fairing, Info, Kind},
     http::{ContentType, Header},
+    Data, Orbit, Request, Response, Rocket,
 };
 
 #[async_trait]

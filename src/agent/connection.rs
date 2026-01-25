@@ -1,6 +1,6 @@
 use super::messages::AgentMessage;
 use super::types::{AgentConfig, AgentInfo, AgentStatus};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -90,18 +90,17 @@ impl AgentConnection {
             // Check if the configured address is a bind-all address (0.0.0.0, ::, 127.0.0.1, ::1)
             const BIND_ALL_IPV4: &str = "0.0.0.0";
             const LOCALHOST_IPV4: &str = "127.0.0.1";
-            
-            if self.config.api_address == BIND_ALL_IPV4 || 
-               self.config.api_address == LOCALHOST_IPV4 ||
-               self.config.api_address == "::" ||
-               self.config.api_address == "::1" {
+
+            if self.config.api_address == BIND_ALL_IPV4
+                || self.config.api_address == LOCALHOST_IPV4
+                || self.config.api_address == "::"
+                || self.config.api_address == "::1"
+            {
                 // Try to get the hostname for better network accessibility
                 // In containerized or complex network environments, the hostname
                 // might need to be configured explicitly via the agent config
-                let detected_hostname = hostname::get()
-                    .ok()
-                    .and_then(|h| h.into_string().ok());
-                
+                let detected_hostname = hostname::get().ok().and_then(|h| h.into_string().ok());
+
                 match detected_hostname {
                     Some(hostname) if hostname != "localhost" && !hostname.is_empty() => {
                         Some(format!("http://{}:{}", hostname, self.config.api_port))
@@ -128,7 +127,10 @@ impl AgentConnection {
                     }
                 }
             } else {
-                Some(format!("http://{}:{}", self.config.api_address, self.config.api_port))
+                Some(format!(
+                    "http://{}:{}",
+                    self.config.api_address, self.config.api_port
+                ))
             }
         };
 
@@ -196,14 +198,14 @@ impl AgentConnection {
                         }
                         log::debug!("[Agent] Heartbeat sent");
                     }
-                    
+
                     // Also send system info update with heartbeat
                     let system_info = self.collect_system_info();
                     let system_info_msg = AgentMessage::SystemInfoUpdate {
                         id: self.config.id.clone(),
                         system_info,
                     };
-                    
+
                     match serde_json::to_string(&system_info_msg) {
                         Ok(system_info_json) => {
                             if let Err(e) = ws_sender.send(Message::Text(system_info_json)).await {
@@ -225,7 +227,7 @@ impl AgentConnection {
                     use crate::process::Runner;
                     let runner = Runner::new();
                     let processes = runner.fetch();
-                    
+
                     // Convert to JSON values for serialization
                     let process_values: Vec<serde_json::Value> = processes
                         .into_iter()
@@ -271,11 +273,11 @@ impl AgentConnection {
                                     }
                                     AgentMessage::ActionRequest { request_id, process_id, method } => {
                                         log::info!("[Agent] Received action request: {} for process {}", method, process_id);
-                                        
+
                                         // Execute the action locally
                                         use crate::process::Runner;
                                         let mut runner = Runner::new();
-                                        
+
                                         let (success, message) = if runner.exists(process_id) {
                                             match method.as_str() {
                                                 "start" => {
@@ -323,26 +325,26 @@ impl AgentConnection {
                                         } else {
                                             (false, format!("Process {} not found", process_id))
                                         };
-                                        
+
                                         // Send response back to server
                                         let response_msg = AgentMessage::ActionResponse {
                                             request_id,
                                             success,
                                             message,
                                         };
-                                        
+
                                         if let Ok(response_json) = serde_json::to_string(&response_msg) {
                                             if let Err(e) = ws_sender.send(Message::Text(response_json)).await {
                                                 log::error!("[Agent] Failed to send action response: {}", e);
                                             }
                                         }
-                                        
+
                                         // Immediately send process update after action to ensure UI reflects changes quickly
                                         // Only send immediate updates for actions that modify process state
                                         if success && matches!(method.as_str(), "start" | "restart" | "reload" | "stop" | "kill" | "remove" | "delete") {
                                             let runner = Runner::new();
                                             let processes = runner.fetch();
-                                            
+
                                             let process_values: Vec<serde_json::Value> = processes
                                                 .into_iter()
                                                 .filter_map(|p| {
@@ -397,7 +399,7 @@ impl AgentConnection {
     fn collect_system_info(&self) -> super::types::SystemInfo {
         let os_info = os_info::get();
         let mem_info = sys_info::mem_info().ok();
-        
+
         super::types::SystemInfo {
             os_name: format!("{:?}", os_info.os_type()),
             os_version: os_info.version().to_string(),
@@ -414,7 +416,7 @@ impl AgentConnection {
             "http://{}:{}",
             self.config.api_address, self.config.api_port
         );
-        
+
         AgentInfo {
             id: self.config.id.clone(),
             name: self.config.name.clone(),

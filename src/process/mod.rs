@@ -20,7 +20,7 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
 use nix::{
-    sys::signal::{Signal, kill},
+    sys::signal::{kill, Signal},
     unistd::Pid,
 };
 
@@ -34,7 +34,8 @@ use utoipa::ToSchema;
 // Global process handle storage to prevent child processes from being dropped and becoming zombies
 // Key: PID, Value: Child process handle wrapped in Arc<Mutex> for thread-safe access
 // This is the PM2-like daemon state that keeps processes alive
-static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> = Lazy::new(DashMap::new);
+static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> =
+    Lazy::new(DashMap::new);
 
 // Constants for process termination waiting
 const MAX_TERMINATION_WAIT_ATTEMPTS: u32 = 50;
@@ -557,7 +558,7 @@ impl Runner {
                     process.running = false;
                 }
                 process.children = vec![];
-                
+
                 // Increment crash counter for restart failures to count against restart limit
                 // When dead=true (daemon restart): don't increment (daemon already incremented)
                 // When dead=false (manual restart): increment (first time counting this failure)
@@ -621,7 +622,7 @@ impl Runner {
                         process.running = false;
                     }
                     process.children = vec![];
-                    
+
                     // Increment crash counter for restart failures to count against restart limit
                     // When dead=true (daemon restart): don't increment (daemon already incremented)
                     // When dead=false (manual restart): increment (first time counting this failure)
@@ -718,7 +719,7 @@ impl Runner {
                     process.running = false;
                 }
                 process.children = vec![];
-                
+
                 // Increment crash counter for reload failures to count against restart limit
                 // When dead=true (daemon reload): don't increment (daemon already incremented)
                 // When dead=false (manual reload): increment (first time counting this failure)
@@ -782,7 +783,7 @@ impl Runner {
                         process.running = false;
                     }
                     process.children = vec![];
-                    
+
                     // Increment crash counter for reload failures to count against restart limit
                     // When dead=true (daemon reload): don't increment (daemon already incremented)
                     // When dead=false (manual reload): increment (first time counting this failure)
@@ -892,7 +893,7 @@ impl Runner {
         // BTreeMap is already sorted, so we can use into_iter() directly
         // Extract all processes by replacing the list with an empty one
         let old_list = std::mem::replace(&mut self.list, BTreeMap::new());
-        
+
         // Re-insert with new sequential IDs starting from 0
         // BTreeMap::into_iter() yields items in sorted key order
         for (new_id, (_old_id, mut process)) in old_list.into_iter().enumerate() {
@@ -1042,12 +1043,18 @@ impl Runner {
 
     /// Handle restart/reload failure by optionally incrementing crash counter and checking limit
     /// Sets running=false if the limit is reached or exceeded
-    /// 
+    ///
     /// # Arguments
     /// * `increment_counter` - Whether to increment crash counter. Set to false if counter was already incremented by daemon.
-    fn handle_restart_failure(&mut self, id: usize, process_name: &str, max_restarts: u64, increment_counter: bool) {
+    fn handle_restart_failure(
+        &mut self,
+        id: usize,
+        process_name: &str,
+        max_restarts: u64,
+        increment_counter: bool,
+    ) {
         let process = self.process(id);
-        
+
         // Only increment if not already incremented by caller (e.g., daemon)
         if increment_counter {
             process.crash.value += 1;
@@ -1106,7 +1113,7 @@ impl Runner {
             process.crash.crashed = false;
             // Keep crash.value to preserve crash history - only reset via reset_counters()
             process.children = vec![];
-            
+
             // Save state after stopping to ensure changes are persisted
             self.save();
         }
@@ -1459,10 +1466,10 @@ impl ProcessWrapper {
             stats: Stats {
                 cpu_percent,
                 memory_usage,
-                restarts: if item.crash.crashed { 
-                    item.crash.value 
-                } else { 
-                    item.restarts 
+                restarts: if item.crash.crashed {
+                    item.crash.value
+                } else {
+                    item.restarts
                 },
                 start_time: item.started.timestamp_millis(),
             },
@@ -2829,7 +2836,7 @@ mod tests {
     fn test_restart_failure_increments_crash_counter() {
         // Test that when restart() fails repeatedly due to bad config (e.g., bad working directory),
         // the crash counter is NOT double-incremented (bug fix for counter stopping at 8).
-        // 
+        //
         // OLD BEHAVIOR (BUG): Daemon increments + restart failure increments = counter jumps by 2
         // NEW BEHAVIOR (FIX): Only daemon increments, restart failure does NOT increment for dead=true
         //
@@ -2897,10 +2904,10 @@ mod tests {
                 let process = runner.process(id);
                 process.crash.value += 1;
             }
-            
+
             // Daemon tries to restart (will fail)
             runner.restart(id, true, true);
-            
+
             let process = runner.info(id).unwrap();
             assert_eq!(
                 process.crash.value, expected_crash_value,
@@ -2919,7 +2926,7 @@ mod tests {
             process.crash.value += 1; // 10
         }
         runner.restart(id, true, true);
-        
+
         let process = runner.info(id).unwrap();
         assert_eq!(
             process.crash.value, 10,
@@ -2939,7 +2946,7 @@ mod tests {
     fn test_crash_counter_increments_after_manual_restart() {
         // Test for the bug: "The crash counter stops at 9th crash and doesn't increment after restart"
         // This test verifies that the crash counter properly increments even after manual restarts
-        
+
         let mut runner = setup_test_runner();
         let id = runner.id.next();
 
@@ -2974,7 +2981,7 @@ mod tests {
         // Verify initial state: 9 crashes, crashed=true
         assert_eq!(runner.info(id).unwrap().crash.value, 9);
         assert_eq!(runner.info(id).unwrap().crash.crashed, true);
-        
+
         // Now simulate a manual restart by user (this should succeed in starting the process)
         // In a real scenario, this would start the process, but we'll simulate it by
         // manually setting the state as if restart succeeded
@@ -2987,17 +2994,21 @@ mod tests {
             // After the fix, we need to manually clear it to simulate successful restart
             process.crash.crashed = false; // This simulates the fix: cleared AFTER success
         }
-        
+
         // Verify process is running and crashed flag was cleared
-        assert_eq!(runner.info(id).unwrap().crash.crashed, false, "crashed flag should be cleared after successful restart");
+        assert_eq!(
+            runner.info(id).unwrap().crash.crashed,
+            false,
+            "crashed flag should be cleared after successful restart"
+        );
         assert_eq!(runner.info(id).unwrap().running, true);
-        
+
         // Now simulate the process crashing again (pid dies)
         {
             let process = runner.process(id);
             process.pid = 0; // Process died
         }
-        
+
         // At this point, the daemon would detect the crash and increment the counter
         // Simulate what daemon does in daemon/mod.rs around line 177-185
         {
@@ -3008,10 +3019,10 @@ mod tests {
                 process.crash.crashed = true;
             }
         }
-        
+
         // Verify the counter incremented from 9 to 10
         assert_eq!(
-            runner.info(id).unwrap().crash.value, 
+            runner.info(id).unwrap().crash.value,
             10,
             "Crash counter should increment from 9 to 10 after process crashes again"
         );
@@ -3028,7 +3039,7 @@ mod tests {
         // 1. Verify auto-restart happens while counter < limit (max_restarts=10)
         // 2. Verify counter stops at 10 when limit is reached
         // 3. Verify after manual restart, crash counter continues to increment
-        
+
         let mut runner = setup_test_runner();
         let id = runner.id.next();
         const MAX_RESTARTS: u64 = 10;
@@ -3072,7 +3083,7 @@ mod tests {
                 let process = runner.process(id);
                 process.pid = 0; // Process died
             }
-            
+
             // Daemon detects crash and increments counter
             {
                 let process_info = runner.info(id).unwrap();
@@ -3082,7 +3093,7 @@ mod tests {
                     process.crash.crashed = true;
                 }
             }
-            
+
             // Verify crash was counted
             assert_eq!(
                 runner.info(id).unwrap().crash.value,
@@ -3091,10 +3102,10 @@ mod tests {
                 expected_crash_count,
                 expected_crash_count
             );
-            
+
             // Check if we should continue auto-restarting (crash_count < MAX_RESTARTS)
             let should_auto_restart = expected_crash_count < MAX_RESTARTS;
-            
+
             if should_auto_restart {
                 // Daemon attempts auto-restart (simulating successful restart)
                 {
@@ -3105,7 +3116,7 @@ mod tests {
                     // With our fix: crashed flag cleared AFTER successful restart
                     process.crash.crashed = false;
                 }
-                
+
                 assert_eq!(
                     runner.info(id).unwrap().running,
                     true,
@@ -3128,7 +3139,7 @@ mod tests {
                 );
             }
         }
-        
+
         // Verify we're at 10 crashes and process is stopped
         assert_eq!(
             runner.info(id).unwrap().crash.value,
@@ -3140,7 +3151,7 @@ mod tests {
             false,
             "Process should be stopped when counter reaches the limit (10)"
         );
-        
+
         // NOW TEST MANUAL RESTART AFTER LIMIT
         // User manually restarts the process
         {
@@ -3150,7 +3161,7 @@ mod tests {
             // With our fix: crashed flag cleared AFTER successful manual restart
             process.crash.crashed = false;
         }
-        
+
         assert_eq!(
             runner.info(id).unwrap().running,
             true,
@@ -3166,13 +3177,13 @@ mod tests {
             10,
             "Manual restart does not reset crash counter (preserves history at 10)"
         );
-        
+
         // Process crashes again after manual restart
         {
             let process = runner.process(id);
             process.pid = 0; // Process died again
         }
-        
+
         // Daemon detects the new crash - THIS IS THE CRITICAL TEST
         // Before the fix, crashed=false was set too early and this wouldn't work
         // After the fix, crashed=false is only set after successful restart, so detection works
@@ -3184,7 +3195,7 @@ mod tests {
                 process.crash.crashed = true;
             }
         }
-        
+
         // CRITICAL VERIFICATION: Counter should increment from 10 to 11
         assert_eq!(
             runner.info(id).unwrap().crash.value,
@@ -3202,7 +3213,7 @@ mod tests {
     fn test_compact_process_ids() {
         // Test that process IDs are compacted (reindexed) after removal
         let mut runner = setup_test_runner();
-        
+
         // Create 5 processes - ID counter starts at 1, so IDs will be 1, 2, 3, 4, 5
         // After compaction, IDs will be renumbered starting from 0
         for i in 0..5 {
@@ -3233,7 +3244,7 @@ mod tests {
             };
             runner.list.insert(id, process);
         }
-        
+
         // Verify initial state - should have IDs 1, 2, 3, 4, 5
         assert_eq!(runner.list.len(), 5, "Should have 5 processes");
         assert!(runner.exists(1), "Process 1 should exist");
@@ -3241,31 +3252,44 @@ mod tests {
         assert!(runner.exists(3), "Process 3 should exist");
         assert!(runner.exists(4), "Process 4 should exist");
         assert!(runner.exists(5), "Process 5 should exist");
-        
+
         // Remove processes 1 and 3 (creating gaps)
         runner.list.remove(&1);
         runner.list.remove(&3);
-        
+
         // Before compact: IDs should be 2, 4, 5 (with gaps)
-        assert_eq!(runner.list.len(), 3, "Should have 3 processes after removal");
+        assert_eq!(
+            runner.list.len(),
+            3,
+            "Should have 3 processes after removal"
+        );
         assert!(!runner.exists(1), "Process 1 should not exist");
         assert!(runner.exists(2), "Process 2 should still exist");
         assert!(!runner.exists(3), "Process 3 should not exist");
         assert!(runner.exists(4), "Process 4 should still exist");
         assert!(runner.exists(5), "Process 5 should still exist");
-        
+
         // Now compact the IDs
         runner.compact();
-        
+
         // After compact: IDs should be 0, 1, 2 (sequential starting from 0)
         assert_eq!(runner.list.len(), 3, "Should still have 3 processes");
         assert!(runner.exists(0), "Process 0 should exist after compact");
         assert!(runner.exists(1), "Process 1 should exist after compact");
         assert!(runner.exists(2), "Process 2 should exist after compact");
-        assert!(!runner.exists(3), "Process 3 should not exist after compact");
-        assert!(!runner.exists(4), "Process 4 should not exist after compact");
-        assert!(!runner.exists(5), "Process 5 should not exist after compact");
-        
+        assert!(
+            !runner.exists(3),
+            "Process 3 should not exist after compact"
+        );
+        assert!(
+            !runner.exists(4),
+            "Process 4 should not exist after compact"
+        );
+        assert!(
+            !runner.exists(5),
+            "Process 5 should not exist after compact"
+        );
+
         // Verify the names are correct (should maintain order)
         assert_eq!(
             runner.info(0).unwrap().name,
@@ -3282,13 +3306,10 @@ mod tests {
             "process_4",
             "Third process should be process_4 (was ID 5)"
         );
-        
+
         // Verify ID counter is reset correctly
         let next_id = runner.id.next();
-        assert_eq!(
-            next_id, 3,
-            "Next ID should be 3 (after processes 0, 1, 2)"
-        );
+        assert_eq!(next_id, 3, "Next ID should be 3 (after processes 0, 1, 2)");
     }
 
     #[test]
@@ -3343,11 +3364,13 @@ mod tests {
 
         // After successful restart with increment_counter=true, both counters should be 11
         assert_eq!(
-            runner.info(id).unwrap().restarts, 11,
+            runner.info(id).unwrap().restarts,
+            11,
             "restarts counter should be 11 after increment"
         );
         assert_eq!(
-            runner.info(id).unwrap().crash.value, 11,
+            runner.info(id).unwrap().crash.value,
+            11,
             "crash.value should be 11 after increment"
         );
 
@@ -3368,7 +3391,8 @@ mod tests {
 
         // Both counters should be in sync
         assert_eq!(
-            runner.info(id).unwrap().crash.value, 12,
+            runner.info(id).unwrap().crash.value,
+            12,
             "crash.value should be 12 after crash"
         );
 
