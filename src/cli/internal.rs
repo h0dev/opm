@@ -1181,7 +1181,7 @@ impl<'i> Internal<'i> {
         // Restore processes that were running OR crashed before daemon stopped
         // This includes:
         // 1. Processes with running=true (were running normally) - these will be restarted
-        // 2. Processes with crashed=true (were crashed) - these will be set to stopped to avoid auto-restart loops
+        // 2. Processes with crashed=true (regardless of running flag) - these will be set to stopped to avoid auto-restart loops
         // Do NOT restore processes that were manually stopped (running=false, crashed=false)
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
@@ -1202,8 +1202,10 @@ impl<'i> Internal<'i> {
 
         for (id, name, _was_running, was_crashed) in &processes_to_restore {
             // For crashed processes, set them to stopped instead of restarting
-            // This prevents pointless auto-restart loops for processes that were crashing
+            // This prevents auto-restart loops for processes that were repeatedly crashing
             // Reset ALL crashed processes to stopped, regardless of running flag
+            // This is important because crashed processes may have had running=true before
+            // daemon shutdown, but continuing to restart them would just cause more crashes
             if *was_crashed {
                 runner.process(*id).running = false;
                 runner.process(*id).crash.crashed = false;
