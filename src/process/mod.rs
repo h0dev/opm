@@ -863,7 +863,10 @@ impl Runner {
         } else {
             self.stop(id);
             self.list.remove(&id);
-            self.compact(); // Compact IDs after removal
+            // Don't compact IDs after removal to keep process IDs stable
+            // This prevents confusion where users think deleted processes are being recreated
+            // when other processes shift to lower IDs (e.g., deleting process 1 causes 
+            // process 2 to become the new process 1, making it look like process 1 was recreated)
             self.save();
         }
     }
