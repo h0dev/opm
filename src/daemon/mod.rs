@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use colored::Colorize;
 use fork::{daemon, Fork};
 use global_placeholders::global;
-use macros_rs::{crashln, str, string, ternary};
+use macros_rs::{crashln, string, ternary};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use opm::process::{unix::NativeProcess as Process, MemoryInfo};
 use serde::Serialize;
@@ -23,7 +23,7 @@ use std::{process, thread::sleep, time::Duration};
 use opm::{
     config,
     helpers::{self, ColoredString},
-    process::{get_process_cpu_usage_with_children_from_process, hash, id::Id, Runner},
+    process::{get_process_cpu_usage_with_children_from_process, hash, Runner},
 };
 
 use tabled::{
