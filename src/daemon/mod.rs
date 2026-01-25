@@ -23,7 +23,7 @@ use std::{process, thread::sleep, time::Duration};
 use opm::{
     config,
     helpers::{self, ColoredString},
-    process::{get_process_cpu_usage_with_children_from_process, hash, Runner},
+    process::{dump, get_process_cpu_usage_with_children_from_process, hash, Runner},
 };
 
 use tabled::{
@@ -767,13 +767,11 @@ pub fn reset() {
     // Use the compact() function to compress all IDs and fill gaps
     // This ensures IDs are sequential: 0, 1, 2, etc.
     runner.compact();
-    runner.save();
+    
+    // Save to permanent storage to ensure counter is persisted
+    dump::commit_memory();
+    dump::write(&runner);
 
-    println!(
-        "{} Successfully reset and compressed IDs (next ID={})",
-        *helpers::SUCCESS,
-        runner.id
-    );
     log!("[daemon] reset and compressed IDs", "next_id" => runner.id.to_string());
 }
 
