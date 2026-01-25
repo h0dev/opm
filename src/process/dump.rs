@@ -81,22 +81,21 @@ fn read_permanent_dump() -> Runner {
 }
 
 /// Helper function to merge memory cache into permanent dump
-/// If memory cache has processes, it represents the complete current state and replaces permanent
-/// If memory cache is empty, permanent state is preserved
-fn merge_runners(mut permanent: Runner, memory: Runner) -> Runner {
+/// If memory cache exists (Some), it represents the complete current state and replaces permanent
+/// If memory cache is None, permanent state is preserved
+fn merge_runners(mut permanent: Runner, memory: Option<Runner>) -> Runner {
     use std::sync::atomic::Ordering;
     
-    // If memory cache is non-empty, it represents the complete current state
+    // If memory cache exists, it represents the complete current state
     // Replace permanent's list with memory's list to reflect deletions
-    if !memory.list.is_empty() {
+    if let Some(memory) = memory {
         permanent.list = memory.list;
         // When memory has state, also update the counter to match memory's counter
         // This ensures deletions properly decrease the counter
         let mem_counter = memory.id.counter.load(Ordering::SeqCst);
         permanent.id.counter.store(mem_counter, Ordering::SeqCst);
-    } else {
-        // If memory is empty, check if we should reset the counter
-        // Empty memory with empty permanent means reset to 0
+        
+        // If both lists are empty, reset counter to 0
         if permanent.list.is_empty() {
             permanent.id.counter.store(0, Ordering::SeqCst);
         }
@@ -106,7 +105,7 @@ fn merge_runners(mut permanent: Runner, memory: Runner) -> Runner {
 }
 
 /// Public version of merge_runners for socket server
-pub fn merge_runners_public(permanent: Runner, memory: Runner) -> Runner {
+pub fn merge_runners_public(permanent: Runner, memory: Option<Runner>) -> Runner {
     merge_runners(permanent, memory)
 }
 
@@ -124,6 +123,13 @@ pub fn read_memory_direct() -> Runner {
     }
 }
 
+/// Public version for socket server that returns Option<Runner>
+/// Used by merge logic to distinguish between no cache vs empty cache
+pub fn read_memory_direct_option() -> Option<Runner> {
+    let cache = MEMORY_CACHE.lock().unwrap();
+    cache.clone()
+}
+
 /// Public version for socket server to avoid recursion
 pub fn write_memory_direct(dump: &Runner) {
     let mut cache = MEMORY_CACHE.lock().unwrap();
@@ -135,7 +141,7 @@ pub fn write_memory_direct(dump: &Runner) {
 pub fn commit_memory_direct() {
     // Read permanent dump directly
     let permanent = read_permanent_dump();
-    let memory = read_memory_direct();
+    let memory = read_memory_direct_option();
 
     // Merge memory processes into permanent
     let merged = merge_runners(permanent, memory);
@@ -333,7 +339,10 @@ pub fn commit_memory() {
 
     // Fallback: Local commit
     let permanent = read_permanent_dump();
-    let memory = read_memory();
+    let memory = {
+        let cache = MEMORY_CACHE.lock().unwrap();
+        cache.clone()
+    };
 
     // Merge memory processes into permanent
     let merged = merge_runners(permanent, memory);
@@ -373,7 +382,10 @@ pub fn read_merged() -> Runner {
     let permanent = read_permanent_dump();
 
     // Read memory cache if it exists
-    let memory = read_memory();
+    let memory = {
+        let cache = MEMORY_CACHE.lock().unwrap();
+        cache.clone()
+    };
 
     // Merge and return
     merge_runners(permanent, memory)

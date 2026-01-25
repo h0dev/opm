@@ -148,7 +148,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::GetState => {
             // Read merged state directly without recursion
             let permanent = dump::read_permanent_direct();
-            let memory = dump::read_memory_direct();
+            let memory = dump::read_memory_direct_option();
             let merged = dump::merge_runners_public(permanent, memory);
             SocketResponse::State(merged)
         }
@@ -168,7 +168,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             // This ensures the daemon's monitoring loop sees the removal immediately
             // Read state directly to avoid socket recursion
             let permanent = dump::read_permanent_direct();
-            let memory = dump::read_memory_direct();
+            let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
@@ -210,7 +210,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::StopProcess(id) => {
             // Stop a process by setting running=false and killing the PID
             let permanent = dump::read_permanent_direct();
-            let memory = dump::read_memory_direct();
+            let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
@@ -249,7 +249,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::StartProcess(id) => {
             // Start a stopped process
             let permanent = dump::read_permanent_direct();
-            let memory = dump::read_memory_direct();
+            let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
@@ -269,7 +269,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::RestartProcess(id) => {
             // Restart a process by stopping and starting it
             let permanent = dump::read_permanent_direct();
-            let memory = dump::read_memory_direct();
+            let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
@@ -310,7 +310,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         SocketRequest::EditProcess { id, name, command } => {
             // Edit a process's name and/or command in RAM
             let permanent = dump::read_permanent_direct();
-            let memory = dump::read_memory_direct();
+            let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
