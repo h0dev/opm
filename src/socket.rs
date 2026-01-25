@@ -33,6 +33,8 @@ pub enum SocketRequest {
     SetState(Runner),
     /// Save the current state to permanent storage
     SavePermanent,
+    /// Remove a process by ID (handled by daemon to avoid race conditions)
+    RemoveProcess(usize),
     /// Ping to check if daemon is responsive
     Ping,
 }
@@ -153,6 +155,18 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             // Commit memory cache to permanent storage directly
             dump::commit_memory_direct();
             SocketResponse::Success
+        }
+        SocketRequest::RemoveProcess(id) => {
+            // Handle process removal through daemon to avoid race conditions
+            // This ensures the daemon's monitoring loop sees the removal immediately
+            use crate::process::Runner;
+            let mut runner = Runner::new();
+            if runner.exists(id) {
+                runner.remove_direct_internal(id);
+                SocketResponse::Success
+            } else {
+                SocketResponse::Error(format!("Process {} not found", id))
+            }
         }
         SocketRequest::Ping => SocketResponse::Pong,
     };

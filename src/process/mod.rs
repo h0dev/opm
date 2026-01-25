@@ -851,6 +851,43 @@ impl Runner {
         return self;
     }
 
+    /// Direct process removal without daemon delegation
+    /// This is called by the socket handler to avoid infinite recursion
+    /// DO NOT call this directly from CLI - use remove() instead
+    pub fn remove_direct_internal(&mut self, id: usize) {
+        // Get PID info before removing from list
+        let pid = self.info(id).map(|p| p.pid).unwrap_or(0);
+        let shell_pid = self.info(id).and_then(|p| p.shell_pid);
+        let children = self.info(id).map(|p| p.children.clone()).unwrap_or_default();
+        
+        // Remove from list first, before stopping the process
+        // This prevents a race condition where the daemon sees a dead PID
+        // and marks it as crashed before the deletion is saved
+        self.list.remove(&id);
+        self.compact(); // Compact IDs after removal
+        self.save();
+        
+        // Now kill the actual process using the saved PID info
+        // We do this after saving so the daemon never sees a dead process in the list
+        if pid > 0 {
+            kill_children(children);
+            let _ = process_stop(pid);
+            
+            // Wait for process termination
+            if !wait_for_process_termination(pid) {
+                log::warn!("Process {} did not terminate within timeout during remove", pid);
+            }
+            
+            // Remove child handle from global state if it exists
+            let handle_pid = shell_pid.unwrap_or(pid);
+            if let Some((_, handle)) = PROCESS_HANDLES.remove(&handle_pid) {
+                if let Ok(mut child) = handle.lock() {
+                    let _ = child.wait();
+                }
+            }
+        }
+    }
+
     pub fn remove(&mut self, id: usize) {
         if let Some(remote) = &self.remote {
             if let Err(err) = http::remove(remote, id) {
@@ -861,37 +898,33 @@ impl Runner {
                 );
             };
         } else {
-            // Get PID info before removing from list
-            let pid = self.info(id).map(|p| p.pid).unwrap_or(0);
-            let shell_pid = self.info(id).and_then(|p| p.shell_pid);
-            let children = self.info(id).map(|p| p.children.clone()).unwrap_or_default();
-            
-            // Remove from list first, before stopping the process
-            // This prevents a race condition where the daemon sees a dead PID
-            // and marks it as crashed before the deletion is saved
-            self.list.remove(&id);
-            self.compact(); // Compact IDs after removal
-            self.save();
-            
-            // Now kill the actual process using the saved PID info
-            // We do this after saving so the daemon never sees a dead process in the list
-            if pid > 0 {
-                kill_children(children);
-                let _ = process_stop(pid);
-                
-                // Wait for process termination
-                if !wait_for_process_termination(pid) {
-                    log::warn!("Process {} did not terminate within timeout during remove", pid);
-                }
-                
-                // Remove child handle from global state if it exists
-                let handle_pid = shell_pid.unwrap_or(pid);
-                if let Some((_, handle)) = PROCESS_HANDLES.remove(&handle_pid) {
-                    if let Ok(mut child) = handle.lock() {
-                        let _ = child.wait();
+            // Check if daemon is running - if so, delegate to daemon via socket
+            // This ensures daemon's monitoring loop sees the removal immediately
+            let socket_path = global!("opm.socket");
+            if crate::socket::is_daemon_running(&socket_path) {
+                match crate::socket::send_request(
+                    &socket_path,
+                    crate::socket::SocketRequest::RemoveProcess(id),
+                ) {
+                    Ok(crate::socket::SocketResponse::Success) => {
+                        // Reload state to reflect the removal
+                        *self = Runner::new();
+                        return;
+                    }
+                    Ok(crate::socket::SocketResponse::Error(msg)) => {
+                        crashln!("{} Failed to remove process {id}: {msg}", *helpers::FAIL);
+                    }
+                    Ok(_) => {
+                        crashln!("{} Unexpected response from daemon", *helpers::FAIL);
+                    }
+                    Err(_) => {
+                        // Fall through to direct removal if socket communication fails
                     }
                 }
             }
+            
+            // Direct removal (daemon not running or socket failed)
+            self.remove_direct_internal(id);
         }
     }
 
