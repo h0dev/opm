@@ -35,6 +35,12 @@ pub enum SocketRequest {
     SavePermanent,
     /// Remove a process by ID (handled by daemon to avoid race conditions)
     RemoveProcess(usize),
+    /// Stop a process by ID
+    StopProcess(usize),
+    /// Start a process by ID
+    StartProcess(usize),
+    /// Restart a process by ID
+    RestartProcess(usize),
     /// Ping to check if daemon is responsive
     Ping,
 }
@@ -145,10 +151,9 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             SocketResponse::State(merged)
         }
         SocketRequest::SetState(runner) => {
-            // Write to memory cache directly
+            // Write to memory cache only - don't commit to permanent storage
+            // Changes stay in RAM until explicit save command
             dump::write_memory_direct(&runner);
-            // Commit to permanent storage to ensure state persists
-            dump::commit_memory_direct();
             SocketResponse::Success
         }
         SocketRequest::SavePermanent => {
@@ -173,11 +178,8 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                 runner.list.remove(&id);
                 runner.compact();
                 
-                // Write directly to permanent storage to avoid socket recursion
-                // This bypasses the normal save() path which would try to use the socket
-                use crate::process::dump;
-                dump::write(&runner);
-                dump::clear_memory();
+                // Write to memory cache only - don't persist until save
+                dump::write_memory_direct(&runner);
                 
                 // Now kill the process
                 if pid > 0 {
@@ -197,6 +199,106 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     // Wait for termination (simple version without accessing private function)
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
+                
+                SocketResponse::Success
+            } else {
+                SocketResponse::Error(format!("Process {} not found", id))
+            }
+        }
+        SocketRequest::StopProcess(id) => {
+            // Stop a process by setting running=false and killing the PID
+            let permanent = dump::read_permanent_direct();
+            let memory = dump::read_memory_direct();
+            let mut runner = dump::merge_runners_public(permanent, memory);
+            
+            if runner.exists(id) {
+                let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
+                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
+                
+                // Mark as stopped
+                runner.process(id).running = false;
+                
+                // Write to memory cache only
+                dump::write_memory_direct(&runner);
+                
+                // Kill the process
+                if pid > 0 {
+                    use crate::process::process_stop;
+                    
+                    // Kill children
+                    for child_pid in children {
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(child_pid as i32),
+                            nix::sys::signal::Signal::SIGTERM,
+                        );
+                    }
+                    
+                    // Kill main process
+                    let _ = process_stop(pid);
+                    
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                
+                SocketResponse::Success
+            } else {
+                SocketResponse::Error(format!("Process {} not found", id))
+            }
+        }
+        SocketRequest::StartProcess(id) => {
+            // Start a stopped process
+            let permanent = dump::read_permanent_direct();
+            let memory = dump::read_memory_direct();
+            let mut runner = dump::merge_runners_public(permanent, memory);
+            
+            if runner.exists(id) {
+                // This is a simplified start - full implementation would need process spawning logic
+                // For now, just mark as running and let the daemon handle actual process start
+                runner.process(id).running = true;
+                runner.process(id).crash.crashed = false;
+                
+                // Write to memory cache only
+                dump::write_memory_direct(&runner);
+                
+                SocketResponse::Success
+            } else {
+                SocketResponse::Error(format!("Process {} not found", id))
+            }
+        }
+        SocketRequest::RestartProcess(id) => {
+            // Restart a process by stopping and starting it
+            let permanent = dump::read_permanent_direct();
+            let memory = dump::read_memory_direct();
+            let mut runner = dump::merge_runners_public(permanent, memory);
+            
+            if runner.exists(id) {
+                let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
+                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
+                
+                // Kill existing process
+                if pid > 0 {
+                    use crate::process::process_stop;
+                    
+                    // Kill children
+                    for child_pid in children {
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(child_pid as i32),
+                            nix::sys::signal::Signal::SIGTERM,
+                        );
+                    }
+                    
+                    // Kill main process
+                    let _ = process_stop(pid);
+                    
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                
+                // Mark for restart - daemon will handle actual spawning
+                runner.process(id).running = true;
+                runner.process(id).crash.crashed = false;
+                runner.process(id).restarts += 1;
+                
+                // Write to memory cache only
+                dump::write_memory_direct(&runner);
                 
                 SocketResponse::Success
             } else {
