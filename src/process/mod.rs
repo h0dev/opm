@@ -666,6 +666,9 @@ impl Runner {
                     log::warn!("Failed to restore working directory after restart: {}", err);
                 }
             }
+
+            // Save state after successful restart to persist changes
+            self.save();
         }
 
         return self;
@@ -846,6 +849,9 @@ impl Runner {
                     log::warn!("Failed to restore working directory after reload: {}", err);
                 }
             }
+
+            // Save state after successful reload to persist changes
+            self.save();
         }
 
         return self;

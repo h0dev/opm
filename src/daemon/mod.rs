@@ -223,6 +223,8 @@ fn restart_process() {
                     let process = runner.process(id);
                     // Clear crashed flag but keep crash.value to preserve history
                     process.crash.crashed = false;
+                    // Save state after clearing crashed flag
+                    runner.save();
                 }
             }
         }
@@ -287,6 +289,9 @@ fn restart_process() {
                     log!("[daemon] stopped process crashed again", 
                          "name" => item.name, "id" => id, "crash_count" => crash_count);
                 }
+                
+                // Save state after crash detection to persist crash counter and PID updates
+                runner.save();
             } else if item.running {
                 // Process is already marked as crashed - check limit before attempting restart
                 // This handles cases where counter may have been incremented by restart failures
@@ -296,6 +301,8 @@ fn restart_process() {
                     process.running = false;
                     log!("[daemon] process already reached max crash limit, stopping restart attempts", 
                          "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
+                    // Save state after updating running flag
+                    runner.save();
                 } else {
                     // Still within limit - attempt restart now
                     // Reload runner to check if process was deleted by CLI
@@ -306,6 +313,7 @@ fn restart_process() {
                         runner.restart(id, true, true);
                         log!("[daemon] restart complete", 
                              "name" => item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
+                        // Note: restart() now calls save() internally, so we don't need to save here
                     } else {
                         log!("[daemon] process was deleted, skipping restart",
                              "name" => item.name, "id" => id);
