@@ -1108,21 +1108,19 @@ impl<'i> Internal<'i> {
             let mut dump_runner = opm::process::dump::read();
             let mut modified = false;
             
-            // First, mark all crashed processes as stopped in the dump file
-            // Always set running=false for crashed processes, regardless of current state
-            for (_id, process) in dump_runner.list.iter_mut() {
-                if process.crash.crashed {
-                    process.running = false;
-                    modified = true;
-                }
-            }
-            
-            // Reset restart and crash counters for ALL processes after restore
+            // Process each entry: mark crashed processes as stopped and reset all counters
             // This gives each process a fresh start after system restore/reboot
             // Both running and stopped processes get their counters reset so they have
             // full restart attempts available
             for (_id, process) in dump_runner.list.iter_mut() {
-                // Reset all counters
+                // First, mark all crashed processes as stopped
+                // Always set running=false for crashed processes, regardless of current state
+                if process.crash.crashed {
+                    process.running = false;
+                    modified = true;
+                }
+                
+                // Reset all restart and crash counters for ALL processes
                 if process.restarts > 0 || process.crash.value > 0 || process.crash.crashed {
                     process.restarts = 0;
                     process.crash.value = 0;
