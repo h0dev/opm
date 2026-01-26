@@ -325,24 +325,9 @@ const View = (props: { id: string; base: string }) => {
 		return (
 			<Fragment>
 				<ToastContainer toasts={toasts} onClose={closeToast} />
-				<div className="absolute top-2 right-3 z-[200]">
-					<span className="text-xs text-gray-900 dark:text-gray-400 dark:text-zinc-500 mr-2">{liveReload ? 'Fetching logs live' : 'Live logs paused'}</span>
-					<span className={`inline-flex items-center gap-x-1.5 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${
-						server === 'local' 
-							? 'bg-blue-500/10 text-blue-400 ring-blue-500/20' 
-							: 'bg-green-500/10 text-green-400 ring-green-500/20'
-					}`}>
-						<svg viewBox="0 0 6 6" aria-hidden="true" className={`h-1.5 w-1.5 ${
-							server === 'local' ? 'fill-blue-400' : 'fill-green-400'
-						}`}>
-							<circle r={3} cx={3} cy={3} />
-						</svg>
-						{server}
-					</span>
-				</div>
 				<div className="flex items-start justify-between gap-x-8 gap-y-4 bg-gray-200 dark:bg-zinc-700/10 px-4 py-4 flex-row items-center sm:px-6 lg:px-8">
-					<div>
-						<div className="flex items-center gap-x-3">
+					<div className="flex-1 min-w-0">
+						<div className="flex items-center gap-x-3 flex-wrap">
 							<h1 className="flex gap-x-1 text-base leading-7">
 								<InlineRename 
 									ref={renameRef}
@@ -367,7 +352,22 @@ const View = (props: { id: string; base: string }) => {
 						</div>
 						<p className="text-xs leading-6 text-gray-500 dark:text-zinc-400">{item.info.command}</p>
 					</div>
-					<div className="flex lg:ml-4 mt-0">
+					<div className="flex items-center gap-2 flex-shrink-0">
+						<div className="flex items-center gap-2">
+							<span className="text-xs text-gray-900 dark:text-gray-400 dark:text-zinc-500">{liveReload ? 'Live' : 'Paused'}</span>
+							<span className={`inline-flex items-center gap-x-1.5 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${
+								server === 'local' 
+									? 'bg-blue-500/10 text-blue-400 ring-blue-500/20' 
+									: 'bg-green-500/10 text-green-400 ring-green-500/20'
+							}`}>
+								<svg viewBox="0 0 6 6" aria-hidden="true" className={`h-1.5 w-1.5 ${
+									server === 'local' ? 'fill-blue-400' : 'fill-green-400'
+								}`}>
+									<circle r={3} cx={3} cy={3} />
+								</svg>
+								{server}
+							</span>
+						</div>
 						<span>
 							<button
 								type="button"
@@ -392,7 +392,7 @@ const View = (props: { id: string; base: string }) => {
 								)}
 							</button>
 						</span>
-						<span className="ml-3">
+						<span>
 							<Menu as="div" className="relative inline-block text-left">
 								<div>
 									<MenuButton className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 bg-transparent hover:bg-gray-100 dark:bg-zinc-800 p-2 text-sm font-semibold rounded-lg">
