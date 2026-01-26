@@ -1185,6 +1185,8 @@ impl Runner {
             process.crash.crashed = false;
             // Keep crash.value to preserve crash history - only reset via reset_counters()
             process.children = vec![];
+            // Set PID to 0 to indicate no valid PID and prevent monitor from treating this as a crash
+            process.pid = 0;
 
             // Save state after stopping to ensure changes are persisted
             self.save();

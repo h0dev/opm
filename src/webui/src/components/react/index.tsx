@@ -278,12 +278,26 @@ const Index = (props: { base: string }) => {
 			<Fragment>
 				<ToastContainer toasts={toasts} onClose={closeToast} />
 				<Header name="No processes running" description="Start managing your processes with OPM.">
-					<button
-						type="button"
-						onClick={fetch}
-						className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-gray-200 dark:border-zinc-800 bg-zinc-950 text-white dark:text-zinc-50 hover:bg-white hover:text-gray-900 dark:hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
-						Refresh
-					</button>
+					<div className="flex gap-2">
+						<button
+							type="button"
+							onClick={saveAll}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							Save
+						</button>
+						<button
+							type="button"
+							onClick={restoreAll}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							Restore
+						</button>
+						<button
+							type="button"
+							onClick={fetch}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-zinc-900 hover:border-gray-200 dark:border-zinc-800 bg-zinc-950 text-white dark:text-zinc-50 hover:bg-white hover:text-gray-900 dark:hover:bg-zinc-900 px-4 py-2 text-sm font-semibold rounded-lg">
+							Refresh
+						</button>
+					</div>
 				</Header>
 				<div className="text-center py-12 px-4">
 					<div className="text-gray-500 dark:text-zinc-400 text-lg mb-4">No processes are currently running</div>
@@ -337,27 +351,25 @@ const Index = (props: { base: string }) => {
 							</>
 						)}
 						{!showBulkActions && (
-							<>
-								<button
-									type="button"
-									onClick={selectAll}
-									className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
-									Select All
-								</button>
-								<button
-									type="button"
-									onClick={saveAll}
-									className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
-									Save All
-								</button>
-								<button
-									type="button"
-									onClick={restoreAll}
-									className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
-									Restore All
-								</button>
-							</>
+							<button
+								type="button"
+								onClick={selectAll}
+								className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+								Select All
+							</button>
 						)}
+						<button
+							type="button"
+							onClick={saveAll}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							Save
+						</button>
+						<button
+							type="button"
+							onClick={restoreAll}
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							Restore
+						</button>
 						<button
 							type="button"
 							onClick={fetch}
