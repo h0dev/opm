@@ -282,13 +282,13 @@ const Index = (props: { base: string }) => {
 						<button
 							type="button"
 							onClick={saveAll}
-							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
 							Save
 						</button>
 						<button
 							type="button"
 							onClick={restoreAll}
-							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
 							Restore
 						</button>
 						<button
@@ -345,7 +345,7 @@ const Index = (props: { base: string }) => {
 								<button
 									type="button"
 									onClick={clearSelection}
-									className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+									className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
 									Clear
 								</button>
 							</>
@@ -354,20 +354,20 @@ const Index = (props: { base: string }) => {
 							<button
 								type="button"
 								onClick={selectAll}
-								className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+								className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
 								Select All
 							</button>
 						)}
 						<button
 							type="button"
 							onClick={saveAll}
-							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
 							Save
 						</button>
 						<button
 							type="button"
 							onClick={restoreAll}
-							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
+							className="transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-3 py-2 text-sm font-semibold rounded-lg">
 							Restore
 						</button>
 						<button
