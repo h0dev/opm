@@ -278,8 +278,8 @@ fn restart_process() {
                     if crash_count >= daemon_config.restarts {
                         // Reached max restarts - give up and set running=false
                         process.running = false;
-                        // Clear crashed flag so the process is treated as stopped (not crashed)
-                        // This prevents the daemon from trying to restart it again
+                        // Clear crashed flag to maintain consistent state representation
+                        // Process is now stopped (not crashed), matching manually stopped processes
                         process.crash.crashed = false;
                         log!("[daemon] process reached max crash limit", 
                              "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
@@ -304,8 +304,8 @@ fn restart_process() {
                     // Already reached max restarts - set running=false and stop trying
                     let process = runner.process(id);
                     process.running = false;
-                    // Clear crashed flag so the process is treated as stopped (not crashed)
-                    // This prevents the daemon from trying to restart it again
+                    // Clear crashed flag to maintain consistent state representation
+                    // Process is now stopped (not crashed), matching manually stopped processes
                     process.crash.crashed = false;
                     log!("[daemon] process already reached max crash limit, stopping restart attempts", 
                          "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
