@@ -358,7 +358,10 @@ pub fn remove(items: &Items, server_name: &String) {
         }
     }
 
-    super::daemon::reset();
+    // NOTE: Removed daemon::reset() call here to fix Bug #2
+    // Deletions should only be persisted to disk when user explicitly runs 'opm save'
+    // The reset() function was directly writing to permanent storage (process.dump)
+    // which violated the memory-first architecture where changes stay in RAM until saved
 }
 
 pub fn info(item: &Item, format: &String, server_name: &String) {
