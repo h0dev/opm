@@ -1071,7 +1071,7 @@ impl<'i> Internal<'i> {
             process.name = new_name.clone();
         }
 
-        
+        self.runner.save();
 
         println!(
             "{} Adjusted {}({}) ✓",
@@ -1220,7 +1220,7 @@ impl<'i> Internal<'i> {
         for id in all_process_ids {
             runner.reset_counters(id);
         }
-        
+        runner.save();
 
         let mut restored_ids = Vec::new();
         let mut failed_ids = Vec::new();

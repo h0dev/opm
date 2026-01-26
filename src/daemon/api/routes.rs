@@ -882,12 +882,12 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
             process.pid = -1; // Mark as no valid PID
         }
     }
-    
+    runner.save();
 
     let total_processes = running_ids.len();
     for (index, id) in running_ids.iter().enumerate() {
         runner.restart(*id, false, false);
-        
+        runner.save();
 
         // Only add delay between processes when restoring multiple processes
         // This prevents resource conflicts and false crash detection
@@ -903,7 +903,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
     for id in all_process_ids {
         runner.reset_counters(id);
     }
-    
+    runner.save();
 
     timer.observe_duration();
     Json(attempt(true, "restore"))
@@ -1785,7 +1785,7 @@ pub async fn create_handler(
         .map(|(id, p)| (*id, p.name.clone()))
     {
         let (id, process_name) = process_info;
-        
+        runner.save();
 
         // Emit process start event
         let event = opm::events::Event::new(
@@ -1799,7 +1799,7 @@ pub async fn create_handler(
         event_manager.add_event(event).await;
     } else {
         // Process not found, just save without event
-        
+        runner.save();
     }
 
     timer.observe_duration();
@@ -1850,7 +1850,7 @@ pub async fn rename_handler(
     if is_running {
         runner.restart(id, false, true); // API rename+restart should increment
     }
-     // Persist the renamed process to dump file
+    runner.save(); // Persist the renamed process to dump file
     timer.observe_duration();
     Ok(Json(attempt(true, "rename")))
 }
@@ -1922,7 +1922,7 @@ pub async fn action_handler(
             "start" => {
                 let mut item = runner.get(id);
                 item.restart(false); // start should not increment
-                
+                item.get_runner().save();
 
                 // Emit process start event
                 let event = opm::events::Event::new(
@@ -1941,7 +1941,7 @@ pub async fn action_handler(
             "restart" => {
                 let mut item = runner.get(id);
                 item.restart(true); // restart should increment
-                
+                item.get_runner().save();
 
                 // Emit process restart event
                 let event = opm::events::Event::new(
@@ -1960,7 +1960,7 @@ pub async fn action_handler(
             "reload" => {
                 let mut item = runner.get(id);
                 item.reload(true); // reload should increment
-                
+                item.get_runner().save();
 
                 // Emit process restart event (reload is essentially a restart)
                 let event = opm::events::Event::new(
@@ -1979,7 +1979,7 @@ pub async fn action_handler(
             "stop" | "kill" => {
                 let mut item = runner.get(id);
                 item.stop();
-                
+                item.get_runner().save();
 
                 // Emit process stop event
                 let event = opm::events::Event::new(
@@ -1998,7 +1998,7 @@ pub async fn action_handler(
             "reset_env" | "clear_env" => {
                 let mut item = runner.get(id);
                 item.clear_env();
-                
+                item.get_runner().save();
                 timer.observe_duration();
                 Ok(Json(attempt(true, method)))
             }
@@ -2082,25 +2082,25 @@ pub async fn bulk_action_handler(
                 "start" => {
                     let mut item = runner.get(*id);
                     item.restart(false);
-                    
+                    item.get_runner().save();
                     success.push(*id);
                 }
                 "restart" => {
                     let mut item = runner.get(*id);
                     item.restart(true);
-                    
+                    item.get_runner().save();
                     success.push(*id);
                 }
                 "reload" => {
                     let mut item = runner.get(*id);
                     item.reload(true);
-                    
+                    item.get_runner().save();
                     success.push(*id);
                 }
                 "stop" | "kill" => {
                     let mut item = runner.get(*id);
                     item.stop();
-                    
+                    item.get_runner().save();
                     success.push(*id);
                 }
                 "delete" | "remove" => {
@@ -2641,35 +2641,35 @@ pub async fn agent_action_handler(
                 "start" => {
                     let mut item = runner.get(process_id);
                     item.restart(false);
-                    
+                    item.get_runner().save();
                     timer.observe_duration();
                     Ok(Json(attempt(true, method)))
                 }
                 "restart" => {
                     let mut item = runner.get(process_id);
                     item.restart(true);
-                    
+                    item.get_runner().save();
                     timer.observe_duration();
                     Ok(Json(attempt(true, method)))
                 }
                 "reload" => {
                     let mut item = runner.get(process_id);
                     item.reload(true);
-                    
+                    item.get_runner().save();
                     timer.observe_duration();
                     Ok(Json(attempt(true, method)))
                 }
                 "stop" | "kill" => {
                     let mut item = runner.get(process_id);
                     item.stop();
-                    
+                    item.get_runner().save();
                     timer.observe_duration();
                     Ok(Json(attempt(true, method)))
                 }
                 "reset_env" | "clear_env" => {
                     let mut item = runner.get(process_id);
                     item.clear_env();
-                    
+                    item.get_runner().save();
                     timer.observe_duration();
                     Ok(Json(attempt(true, method)))
                 }

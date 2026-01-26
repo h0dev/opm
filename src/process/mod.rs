@@ -865,7 +865,7 @@ impl Runner {
         // and marks it as crashed before the deletion is saved
         self.list.remove(&id);
         self.compact(); // Compact IDs after removal
-        
+        self.save();
         
         // Now kill the actual process using the saved PID info
         // We do this after saving so the daemon never sees a dead process in the list
@@ -975,12 +975,12 @@ impl Runner {
     pub fn set_id(&mut self, id: id::Id) {
         self.id = id;
         self.id.next();
-        
+        self.save();
     }
 
     pub fn set_status(&mut self, id: usize, status: Status) {
         self.process(id).running = status.to_bool();
-        
+        self.save();
     }
 
     pub fn items(&self) -> BTreeMap<usize, Process> {
@@ -1016,7 +1016,7 @@ impl Runner {
     #[deprecated(note = "Use save() instead - it now writes directly to permanent storage")]
     pub fn save_temp(&self) {
         // Deprecated: now save directly to memory cache
-        
+        self.save();
     }
 
     pub fn count(&mut self) -> usize {
@@ -1181,7 +1181,7 @@ impl Runner {
             process.children = vec![];
 
             // Save state after stopping to ensure changes are persisted
-            
+            self.save();
         }
 
         return self;

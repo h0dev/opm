@@ -69,9 +69,10 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
                 }
             }
         }
-        // Auto-save removed: state changes are only persisted via manual 'opm save' command
+        runner.save(); // Save to memory cache on shutdown
         
-        log!("[daemon] shutdown complete (auto-save disabled)", "action" => "shutdown");
+        // Note: dump::commit_memory() removed - permanent storage commits only via manual 'opm save'
+        log!("[daemon] shutdown complete", "action" => "shutdown");
     });
 
     // If save failed, log a warning (but still proceed with cleanup)

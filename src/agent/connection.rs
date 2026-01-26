@@ -283,31 +283,31 @@ impl AgentConnection {
                                                 "start" => {
                                                     let mut item = runner.get(process_id);
                                                     item.restart(false);
-                                                    
+                                                    item.get_runner().save();
                                                     (true, format!("Process {} started", process_id))
                                                 }
                                                 "restart" => {
                                                     let mut item = runner.get(process_id);
                                                     item.restart(true);
-                                                    
+                                                    item.get_runner().save();
                                                     (true, format!("Process {} restarted", process_id))
                                                 }
                                                 "reload" => {
                                                     let mut item = runner.get(process_id);
                                                     item.reload(true);
-                                                    
+                                                    item.get_runner().save();
                                                     (true, format!("Process {} reloaded", process_id))
                                                 }
                                                 "stop" | "kill" => {
                                                     let mut item = runner.get(process_id);
                                                     item.stop();
-                                                    
+                                                    item.get_runner().save();
                                                     (true, format!("Process {} stopped", process_id))
                                                 }
                                                 "reset_env" | "clear_env" => {
                                                     let mut item = runner.get(process_id);
                                                     item.clear_env();
-                                                    
+                                                    item.get_runner().save();
                                                     (true, format!("Process {} environment cleared", process_id))
                                                 }
                                                 "remove" | "delete" => {
