@@ -44,7 +44,6 @@ use macros_rs::{crashln, fmtstr, string};
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
-use std::sync::atomic::Ordering;
 use std::{collections::BTreeMap, fs, sync::Mutex};
 
 /// Global in-memory cache for process state (replaces temporary file)
