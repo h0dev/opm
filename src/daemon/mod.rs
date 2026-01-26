@@ -61,7 +61,9 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
         for id in process_ids {
             // Get process info once and clone name if needed to avoid multiple lookups
             if let Some(process) = runner.info(id) {
-                if process.crash.crashed && process.running {
+                // Always set crashed processes to stopped, regardless of current running state
+                // This ensures crashed processes are properly marked as stopped for restore
+                if process.crash.crashed {
                     let name = process.name.clone();
                     runner.process(id).running = false;
                     log!("[daemon] marking crashed process as stopped for restore", 

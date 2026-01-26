@@ -1109,11 +1109,10 @@ impl<'i> Internal<'i> {
             let mut modified = false;
             
             // Mark all crashed processes as stopped in the dump file
+            // Always set running=false for crashed processes, regardless of current state
             // Keep crash.crashed = true so users can identify which processes crashed
-            // Only process crashed processes that are still marked as running=true
-            // (already-stopped crashed processes don't need modification)
             for (_id, process) in dump_runner.list.iter_mut() {
-                if process.crash.crashed && process.running {
+                if process.crash.crashed {
                     process.running = false;
                     // Keep crashed flag set so users know which processes crashed
                     modified = true;
@@ -1213,15 +1212,19 @@ impl<'i> Internal<'i> {
             }
         }
 
-        // Reset restart and crash counters after restore for ALL processes in the system
-        // This gives each process a fresh start after system restore/reboot
-        // Both running and stopped processes get their counters reset so they have
-        // full restart attempts available
-        // Do this BEFORE checking if there are processes to restore, so counters are reset
-        // even when all processes are stopped
+        // Reset restart and crash counters only for non-crashed processes
+        // This gives successfully running processes a fresh start after system restore/reboot
+        // Crashed processes keep their crash history and counters to show they failed
+        // Do this BEFORE checking if there are processes to restore
         let all_process_ids: Vec<usize> = runner.items().keys().copied().collect();
         for id in all_process_ids {
-            runner.reset_counters(id);
+            // Only reset counters for processes that aren't crashed
+            // Crashed processes need to keep their state for proper tracking
+            if let Some(process_info) = runner.info(id) {
+                if !process_info.crash.crashed {
+                    runner.reset_counters(id);
+                }
+            }
         }
         // Use save_permanent() to persist counter reset to permanent dump file
         // This ensures subsequent commands (like 'opm ls') see the reset counters
@@ -1301,6 +1304,10 @@ impl<'i> Internal<'i> {
                 // Don't auto-save here - save will happen at the end of restore
             }
         }
+
+        // Save final state after restore attempts to persist any crashed process states
+        // This ensures processes that failed to restore are properly marked as crashed
+        runner.save_permanent();
 
         Internal::list(&string!("default"), &list_name);
     }
