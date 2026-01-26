@@ -1109,11 +1109,10 @@ impl<'i> Internal<'i> {
             let mut modified = false;
             
             // Mark all crashed processes as stopped in the dump file
+            // Always set running=false for crashed processes, regardless of current state
             // Keep crash.crashed = true so users can identify which processes crashed
-            // Only process crashed processes that are still marked as running=true
-            // (already-stopped crashed processes don't need modification)
             for (_id, process) in dump_runner.list.iter_mut() {
-                if process.crash.crashed && process.running {
+                if process.crash.crashed {
                     process.running = false;
                     // Keep crashed flag set so users know which processes crashed
                     modified = true;
@@ -1301,6 +1300,11 @@ impl<'i> Internal<'i> {
                 // Don't auto-save here - save will happen at the end of restore
             }
         }
+
+        // Save final state after restore attempts to persist crashed process states
+        // This ensures processes that failed to restore (via set_crashed() calls) are properly
+        // marked as crashed in permanent storage for daemon monitoring
+        runner.save_permanent();
 
         Internal::list(&string!("default"), &list_name);
     }
