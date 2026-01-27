@@ -210,19 +210,25 @@ button, a, input, select {
 @media (max-width: 640px) {
 	.mobile-navbar-scroll {
 		scrollbar-width: thin;  /* Firefox: make scrollbar visible */
+		overflow-x: scroll !important;  /* Force scrollbar to always show */
+		scrollbar-gutter: stable;  /* Reserve space for scrollbar */
 	}
 	
 	/* Ensure webkit scrollbar is always visible on mobile */
 	.mobile-navbar-scroll::-webkit-scrollbar {
 		height: 6px;
+		-webkit-appearance: none;
+		appearance: none;
 	}
 	
 	.mobile-navbar-scroll::-webkit-scrollbar-thumb {
 		@apply bg-gray-400 dark:bg-zinc-500 rounded;
+		visibility: visible;
 	}
 	
 	.mobile-navbar-scroll::-webkit-scrollbar-track {
 		@apply bg-gray-200 dark:bg-zinc-800;
+		visibility: visible;
 	}
 }
 
