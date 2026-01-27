@@ -206,6 +206,27 @@ button, a, input, select {
 ::-webkit-scrollbar-thumb:hover { @apply bg-gray-400 dark:bg-zinc-600; }
 *:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
 
+/* Mobile navbar scrollbar - always visible */
+@media (max-width: 640px) {
+	.mobile-navbar-scroll {
+		scrollbar-width: thin;  /* Firefox: make scrollbar visible */
+		-webkit-overflow-scrolling: touch;  /* Enable smooth momentum scrolling on iOS */
+	}
+	
+	/* Ensure webkit scrollbar is always visible on mobile */
+	.mobile-navbar-scroll::-webkit-scrollbar {
+		height: 6px;
+	}
+	
+	.mobile-navbar-scroll::-webkit-scrollbar-thumb {
+		@apply bg-gray-400 dark:bg-zinc-500 rounded;
+	}
+	
+	.mobile-navbar-scroll::-webkit-scrollbar-track {
+		@apply bg-gray-200 dark:bg-zinc-800;
+	}
+}
+
 /* Nav Fade In */
 @keyframes navFadeIn { 0% { opacity: 0; } 100% { opacity: 1; } }
 .nav-container { animation: navFadeIn 0.3s ease-out forwards; }

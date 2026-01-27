@@ -1121,10 +1121,12 @@ impl<'i> Internal<'i> {
                 }
                 
                 // Reset all restart and crash counters for ALL processes
-                if process.restarts > 0 || process.crash.value > 0 || process.crash.crashed {
+                // Also reset PID to 0 to prevent daemon from treating old PIDs as new crashes
+                if process.restarts > 0 || process.crash.value > 0 || process.crash.crashed || process.pid > 0 {
                     process.restarts = 0;
                     process.crash.value = 0;
                     process.crash.crashed = false;
+                    process.pid = 0;  // Clear PID so daemon doesn't misidentify as newly crashed
                     modified = true;
                 }
             }
