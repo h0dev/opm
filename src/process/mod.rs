@@ -877,6 +877,9 @@ impl Runner {
         self.list.remove(&id);
         self.compact(); // Compact IDs after removal
         self.save();
+        // Persist in-memory deletions immediately to permanent storage
+        // so that deleted processes do not reappear after a restart/restore.
+        dump::commit_memory();
         
         // Now kill the actual process using the saved PID info
         if pid > 0 {

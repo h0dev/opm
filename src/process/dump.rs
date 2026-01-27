@@ -432,6 +432,17 @@ pub fn init_on_startup() -> Runner {
     // The daemon will mark crashed processes as stopped (running=false) when it detects they're dead
     // but we keep crash.crashed=true so users can restore them with 'opm restore'
 
+    // Additionally, on startup we ensure that any crashed processes are reset to a stopped state
+    // so that they don't resuscitate with an stale PID after a restart. This aligns with the
+    // expectation that crashed processes should not be considered running until explicitly restarted.
+    for (_id, pr) in permanent.list.iter_mut() {
+        if pr.crash.crashed {
+            pr.running = false;
+            pr.pid = 0;
+            pr.crash.crashed = false;
+        }
+    }
+
     permanent
 }
 
