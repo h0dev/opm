@@ -210,7 +210,6 @@ button, a, input, select {
 @media (max-width: 640px) {
 	.mobile-navbar-scroll {
 		scrollbar-width: thin;  /* Firefox: make scrollbar visible */
-		-webkit-overflow-scrolling: touch;  /* Enable smooth momentum scrolling on iOS */
 	}
 	
 	/* Ensure webkit scrollbar is always visible on mobile */
