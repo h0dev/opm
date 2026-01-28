@@ -1082,4 +1082,5 @@ fn main() {
             daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
         }
     }
+  }
 }
