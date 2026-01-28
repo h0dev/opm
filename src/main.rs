@@ -914,14 +914,16 @@ fn main() {
     for cert in load_native_certs()? {
         root_store.add(cert?).unwrap();
     }
-    tls_config = tls_config.with_root_certificates(root_store);
-        let pem_certs = certs(&mut Cursor::new(cert)).unwrap();
+tls_config = tls_config.with_root_certificates(root_store);
+    
+    for cert_bytes in &custom_certs {
+        let pem_certs = certs(&mut Cursor::new(cert_bytes)).unwrap();
         for cert in pem_certs {
             let mut root_store = RootCertStore::empty();
-            root_store.add(&Certificate(cert)).unwrap();
+            root_store.add(&rustls::Certificate(cert)).unwrap();
             tls_config = tls_config.with_root_certificates(root_store);
         }
-        tls_config.root_store.add_pem_file(&mut BufReader::new(cert)).unwrap();
+        tls_config.root_store.add_pem_file(&mut BufReader::new(cert_bytes)).unwrap();
     }
 
     // Pass `tls_config` when establishing connections using tokio-tungstenite.
