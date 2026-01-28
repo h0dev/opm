@@ -71,7 +71,7 @@ sys-info = "0.9.1"
 dotenvy = "0.15.7"
 uuid = { version = "1.11.0", features = ["v4", "serde"] }
 hostname = "0.4.0"
-tokio-tungstenite = { version = "0.24.0", default-features = false, features = ["rustls-tls"] }
+tokio-tungstenite = { version = "0.24.0", default-features = false, features = ["__rustls-tls"] }
 futures-util = "0.3.31"
 notify-rust = "4.11.7"
 rocket_ws = "0.1.1"
