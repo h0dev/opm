@@ -885,7 +885,7 @@ fn start_agent_daemon() {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let cli = Cli::parse();
     let mut env = env_logger::Builder::new();
     let level = cli.verbose.log_level_filter();
@@ -901,21 +901,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     globals::init();
 
     // Configure custom certificates for TLS
-    use std::io::BufReader;
     use rustls::ClientConfig;
     use rustls::crypto::ring::default_provider;
-    let provider = default_provider();
-    use rustls_pemfile::certs;
+    use std::sync::Arc;
+    let provider = Arc::new(default_provider());
     use rustls_native_certs::load_native_certs;
-    use std::io::Cursor;
     let mut root_store = rustls::RootCertStore::empty();
-    for cert in load_native_certs()? {
-        root_store.add(cert)?;
+    for cert in load_native_certs().unwrap() {
+        root_store.add(cert).unwrap();
     }
     let tls_config = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()?
-        .with_safe_default_cipher_suites()?
-        .with_safe_default_kx_groups()?
+        .with_safe_default_protocol_versions().unwrap()
         .with_root_certificates(root_store)
         .with_no_client_auth();
 

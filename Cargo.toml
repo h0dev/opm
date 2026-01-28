@@ -38,7 +38,6 @@ features = [
 webpki-roots = "0.26.0"
 rustls = "0.23.0"
 rustls-native-certs = "0.7.0"
-rustls-pemfile = "2.0"
 ron = "0.8.1"
 log = "0.4.22"
 home = "0.5.9"
