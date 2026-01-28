@@ -638,6 +638,7 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
                     agent.name,
                     e
                 );
+            }
         }
     }
 
@@ -1082,5 +1083,4 @@ fn main() {
             daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
         }
     }
-  }
 }

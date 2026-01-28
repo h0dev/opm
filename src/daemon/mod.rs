@@ -566,8 +566,8 @@ pub fn start(verbose: bool) {
         let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
 
         unsafe {
-            libc::signal(libc::SIGTERM, handle_termination_signal as usize);
-            libc::signal(libc::SIGPIPE, handle_sigpipe as usize);
+            libc::signal(libc::SIGTERM, handle_termination_signal as *const () as usize);
+            libc::signal(libc::SIGPIPE, handle_sigpipe as *const () as usize);
         };
 
         DAEMON_START_TIME.set(Utc::now().timestamp_millis() as f64);
