@@ -5,7 +5,9 @@ use futures_util::{SinkExt, StreamExt};
 use rustls::crypto::ring;
 use std::time::Duration;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use rustls::{ClientConfig, RootCertStore};
+use std::sync::Arc;
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message, Connector};
 
 pub struct AgentConnection {
     config: AgentConfig,
@@ -78,8 +80,31 @@ impl AgentConnection {
 
         println!("[Agent] Connecting to WebSocket: {}", ws_url);
 
+        // Create a TLS connector with native root certificates
+        let mut root_store = RootCertStore::empty();
+        match rustls_native_certs::load_native_certs() {
+            Ok(certs) => {
+                for cert in certs {
+                    if root_store.add(cert).is_err() {
+                        log::warn!("[Agent] Failed to add a native certificate to the trust store");
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("[Agent] Could not load native certs: {}", e);
+                // Depending on security policy, you might want to stop here
+                // For now, we'll proceed with an empty root store, which will likely fail
+            }
+        }
+
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        let connector = Connector::Rustls(Arc::new(config));
+
         // Connect to WebSocket server
-        let (ws_stream, _) = connect_async(&ws_url)
+        let (ws_stream, _) = connect_async_tls_with_config(&ws_url, None, false, Some(connector))
             .await
             .map_err(|e| anyhow!("Failed to connect to WebSocket: {}", e))?;
 
