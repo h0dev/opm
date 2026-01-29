@@ -26,10 +26,7 @@ use std::os::unix::io::AsRawFd;
 use structs::ErrorMessage;
 use tera::Context;
 
-use utoipa::{
-    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
-    Modify, OpenApi,
-};
+// use utoipa::openapi;
 
 use rocket::{
     catch,
@@ -74,30 +71,30 @@ lazy_static! {
     .unwrap();
 }
 
-// #[derive(OpenApi)]
-// #[openapi(
-    // ... (keeping the content for later)
-// )]
-struct ApiDoc;
+// struct ApiDoc;
 struct Logger;
 struct AddCORS;
 struct EnableWebUI;
-struct SecurityAddon;
+// struct SecurityAddon;
 
 struct TeraState {
     path: String,
     tera: tera::Tera,
 }
 
-impl Modify for SecurityAddon {
-    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        let components = openapi.components.as_mut().unwrap();
-        components.add_security_scheme(
-            "api_key",
-            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("token"))),
-        )
-    }
-}
+// impl Modify for SecurityAddon {
+//     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+//         // Add security schemes
+//         openapi.components = Some(
+//             utoipa::openapi::ComponentsBuilder::new()
+//                 .security_scheme(
+//                     "api_key",
+//                     SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("Authorization"))),
+//                 )
+//                 .build(),
+//         );
+//     }
+// }}
 
 #[catch(500)]
 fn internal_error<'m>() -> Json<ErrorMessage> {
