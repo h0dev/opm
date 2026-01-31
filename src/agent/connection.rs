@@ -306,49 +306,79 @@ impl AgentConnection {
                                          let mut runner = Runner::new();
 
                                          let (success, message) = if runner.exists(process_id) {
-                                             match method.as_str() {
-                                                 "start" => {
-                                                     let mut item = runner.get(process_id);
-                                                     item.restart(false);
-                                                     item.get_runner().save();
-                                                     (true, format!("Process {} started", process_id))
-                                                 }
-                                                 "restart" => {
-                                                     let mut item = runner.get(process_id);
-                                                     item.restart(true);
-                                                     item.get_runner().save();
-                                                     (true, format!("Process {} restarted", process_id))
-                                                 }
-                                                 "reload" => {
-                                                     let mut item = runner.get(process_id);
-                                                     item.reload(true);
-                                                     item.get_runner().save();
-                                                     (true, format!("Process {} reloaded", process_id))
-                                                 }
-                                                 "stop" | "kill" => {
-                                                     let mut item = runner.get(process_id);
-                                                     item.stop();
-                                                     item.get_runner().save();
-                                                     (true, format!("Process {} stopped", process_id))
-                                                 }
-                                                 "reset_env" | "clear_env" => {
-                                                     let mut item = runner.get(process_id);
-                                                     item.clear_env();
-                                                     item.get_runner().save();
-                                                     (true, format!("Process {} environment cleared", process_id))
-                                                 }
-                                                 "remove" | "delete" => {
-                                                     runner.remove(process_id);
-                                                     (true, format!("Process {} removed", process_id))
-                                                 }
-                                                 "flush" | "clean" => {
-                                                     runner.flush(process_id);
-                                                     (true, format!("Process {} logs flushed", process_id))
-                                                 }
-                                                 _ => {
-                                                     (false, format!("Unknown action: {}", method))
-                                                 }
-                                             }
+                                              match method.as_str() {
+                                                  "start" => {
+                                                      let mut item = runner.get(process_id);
+                                                      item.restart(false);
+                                                      item.get_runner().save();
+                                                      // Create timestamp file for this action to prevent daemon from overriding state
+                                                      if let Some(home_dir) = home::home_dir() {
+                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
+                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      }
+                                                      (true, format!("Process {} started", process_id))
+                                                  }
+                                                  "restart" => {
+                                                      let mut item = runner.get(process_id);
+                                                      item.restart(true);
+                                                      item.get_runner().save();
+                                                      // Create timestamp file for this action to prevent daemon from overriding state
+                                                      if let Some(home_dir) = home::home_dir() {
+                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
+                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      }
+                                                      (true, format!("Process {} restarted", process_id))
+                                                  }
+                                                  "reload" => {
+                                                      let mut item = runner.get(process_id);
+                                                      item.reload(true);
+                                                      item.get_runner().save();
+                                                      // Create timestamp file for this action to prevent daemon from overriding state
+                                                      if let Some(home_dir) = home::home_dir() {
+                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
+                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      }
+                                                      (true, format!("Process {} reloaded", process_id))
+                                                  }
+                                                  "stop" | "kill" => {
+                                                      let mut item = runner.get(process_id);
+                                                      item.stop();
+                                                      item.get_runner().save();
+                                                      // Create timestamp file for this action to prevent daemon from overriding state
+                                                      if let Some(home_dir) = home::home_dir() {
+                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
+                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      }
+                                                      (true, format!("Process {} stopped", process_id))
+                                                  }
+                                                  "reset_env" | "clear_env" => {
+                                                      let mut item = runner.get(process_id);
+                                                      item.clear_env();
+                                                      item.get_runner().save();
+                                                      // Create timestamp file for this action to prevent daemon from overriding state
+                                                      if let Some(home_dir) = home::home_dir() {
+                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
+                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      }
+                                                      (true, format!("Process {} environment cleared", process_id))
+                                                  }
+                                                  "remove" | "delete" => {
+                                                      runner.remove(process_id);
+                                                      // Clean up any action timestamp file after removal
+                                                      if let Some(home_dir) = home::home_dir() {
+                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
+                                                          let _ = std::fs::remove_file(action_file);
+                                                      }
+                                                      (true, format!("Process {} removed", process_id))
+                                                  }
+                                                  "flush" | "clean" => {
+                                                      runner.flush(process_id);
+                                                      (true, format!("Process {} logs flushed", process_id))
+                                                  }
+                                                  _ => {
+                                                      (false, format!("Unknown action: {}", method))
+                                                  }
+                                              }
                                          } else {
                                              (false, format!("Process {} not found", process_id))
                                          };
@@ -366,36 +396,39 @@ impl AgentConnection {
                                              }
                                          }
 
-                                         // Immediately send process update after action to ensure UI reflects changes quickly
-                                         // Only send immediate updates for actions that modify process state
-                                         if success && matches!(method.as_str(), "start" | "restart" | "reload" | "stop" | "kill" | "remove" | "delete") {
-                                             // Fetch current process list after action has been processed
-                                             let updated_runner = Runner::new();
-                                             let processes = updated_runner.fetch();
+                                          // Immediately send process update after action to ensure UI reflects changes quickly
+                                          // Only send immediate updates for actions that modify process state
+                                          if success && matches!(method.as_str(), "start" | "restart" | "reload" | "stop" | "kill" | "remove" | "delete") {
+                                              // Small delay to ensure action completion before fetching process list
+                                              tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-                                             let process_values: Vec<serde_json::Value> = processes
-                                                 .into_iter()
-                                                 .filter_map(|p| {
-                                                     serde_json::to_value(p).map_err(|e| {
-                                                         log::warn!("[Agent] Failed to serialize process: {}", e);
-                                                         e
-                                                     }).ok()
-                                                 })
-                                                 .collect();
+                                              // Fetch current process list after action has been processed
+                                              let updated_runner = Runner::new();
+                                              let processes = updated_runner.fetch();
 
-                                             let process_update_msg = AgentMessage::ProcessUpdate {
-                                                 id: self.config.id.clone(),
-                                                 processes: process_values,
-                                             };
+                                              let process_values: Vec<serde_json::Value> = processes
+                                                  .into_iter()
+                                                  .filter_map(|p| {
+                                                      serde_json::to_value(p).map_err(|e| {
+                                                          log::warn!("[Agent] Failed to serialize process: {}", e);
+                                                          e
+                                                      }).ok()
+                                                  })
+                                                  .collect();
 
-                                             if let Ok(update_json) = serde_json::to_string(&process_update_msg) {
-                                                 if let Err(e) = ws_sender.send(Message::Text(update_json)).await {
-                                                     log::error!("[Agent] Failed to send immediate process update: {}", e);
-                                                 } else {
-                                                     log::info!("[Agent] Immediate process update sent to server after action");
-                                                 }
-                                             }
-                                         }
+                                              let process_update_msg = AgentMessage::ProcessUpdate {
+                                                  id: self.config.id.clone(),
+                                                  processes: process_values,
+                                              };
+
+                                              if let Ok(update_json) = serde_json::to_string(&process_update_msg) {
+                                                  if let Err(e) = ws_sender.send(Message::Text(update_json)).await {
+                                                      log::error!("[Agent] Failed to send immediate process update: {}", e);
+                                                  } else {
+                                                      log::info!("[Agent] Immediate process update sent to server after action");
+                                                  }
+                                              }
+                                          }
                                     }
                                     _ => {}
                                 }

@@ -19,6 +19,7 @@ use serde_json::json;
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread::sleep, time::Duration};
+use home;
 
 use opm::{
     config,
@@ -231,16 +232,18 @@ fn restart_process() {
             }
         }
 
-        // If process is dead, handle crash/restart logic
-        if !process_alive {
-            // Check if this is a newly detected crash by looking at PID
-            // PID > 0 means we thought the process was alive, so this is a new crash event
-            let is_new_crash = item.pid > 0;
+         // If process is dead, handle crash/restart logic
+         if !process_alive {
+             // Check if there was a recent manual action (to prevent daemon from marking as crashed immediately after manual start/restart)
+             let recently_acted = has_recent_action_timestamp(id);
+             
+             // Check if this is a newly detected crash by looking at PID
+             // PID > 0 means we thought the process was alive, so this is a new crash event
+             let is_new_crash = item.pid > 0;
 
-            // Increment crash counter for newly detected crashes to track actual crash count
-            // This happens when PID was > 0 (we thought process was alive) and now it's dead
-            // This ensures we count each actual crash, even beyond the restart limit
-            if is_new_crash {
+             // Don't mark as crashed if there was a recent manual action and process was expected to be running
+             // This prevents the daemon from overriding manual start/restart actions
+             if is_new_crash && !(recently_acted && item.running) {
                 // Reload runner to check if process was deleted concurrently by CLI
                 // This must be done BEFORE modifying state to avoid race conditions
                 runner = Runner::new();
@@ -294,42 +297,49 @@ fn restart_process() {
                 
                 // Save state after crash detection to persist crash counter and PID updates
                 runner.save();
-            } else if item.running {
-                // Process is already marked as crashed - check limit before attempting restart
-                // This handles cases where counter may have been incremented by restart failures
-                if item.crash.value >= daemon_config.restarts {
-                    // Already reached max restarts - set running=false and stop trying
-                    let process = runner.process(id);
-                    process.running = false;
-                    log!("[daemon] process already reached max crash limit, stopping restart attempts", 
-                         "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
-                    // Save state after updating running flag
-                    runner.save();
-                } else {
-                    // Still within limit - attempt restart now
-                    // Reload runner to check if process was deleted by CLI
-                    runner = Runner::new();
-                    if runner.exists(id) {
-                        // Check if process is still marked as running after reload
-                        // This prevents restarting processes that were stopped/removed during reload
-                        if let Some(proc) = runner.info(id) {
-                            if proc.running {
-                                log!("[daemon] restarting crashed process", 
-                                     "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
-                                runner.restart(id, true, true);
-                                log!("[daemon] restart complete", 
-                                     "name" => item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
-                                // Note: restart() now calls save() internally, so we don't need to save here
-                            } else {
-                                log!("[daemon] process was marked as stopped during reload, skipping restart",
-                                     "name" => item.name, "id" => id);
-                            }
-                        }
-                    } else {
-                        log!("[daemon] process was deleted, skipping restart",
-                             "name" => item.name, "id" => id);
-                    }
-                }
+             } else if item.running {
+                 // Check if there was a recent manual action (to prevent daemon from setting running=false immediately after manual start/restart)
+                 let recently_acted = has_recent_action_timestamp(id);
+                 
+                 // Process is already marked as crashed - check limit before attempting restart
+                 // This handles cases where counter may have been incremented by restart failures
+                 if item.crash.value >= daemon_config.restarts && !recently_acted {
+                     // Already reached max restarts - set running=false and stop trying
+                     // Skip setting to false if there was a recent manual action
+                     let process = runner.process(id);
+                     process.running = false;
+                     log!("[daemon] process already reached max crash limit, stopping restart attempts", 
+                          "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
+                     // Save state after updating running flag
+                     runner.save();
+                 } else if !recently_acted {
+                     // Still within limit and no recent action - attempt restart now
+                     // Reload runner to check if process was deleted by CLI
+                     runner = Runner::new();
+                     if runner.exists(id) {
+                         // Check if process is still marked as running after reload
+                         // This prevents restarting processes that were stopped/removed during reload
+                         if let Some(proc) = runner.info(id) {
+                             if proc.running {
+                                 log!("[daemon] restarting crashed process", 
+                                      "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
+                                 runner.restart(id, true, true);
+                                 log!("[daemon] restart complete", 
+                                      "name" => item.name, "id" => id, "new_pid" => runner.info(id).unwrap().pid);
+                                 // Note: restart() now calls save() internally, so we don't need to save here
+                             } else {
+                                 log!("[daemon] process was marked as stopped during reload, skipping restart",
+                                      "name" => item.name, "id" => id);
+                             }
+                         }
+                     } else {
+                         log!("[daemon] process was deleted, skipping restart",
+                              "name" => item.name, "id" => id);
+                     }
+                 } else {
+                     // Recent action was taken, skip automatic restart attempts
+                     log!("[daemon] skipping restart due to recent manual action", "name" => item.name, "id" => id);
+                 }
             } else {
                 // Process was already stopped and marked as crashed
                 // Don't log anything to avoid spam - user already knows it's stopped
@@ -942,3 +952,28 @@ WantedBy={}
 }
 
 pub mod pid;
+
+// Helper function to check if there was a recent action timestamp file
+fn has_recent_action_timestamp(id: usize) -> bool {
+    match home::home_dir() {
+        Some(home_dir) => {
+            let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+            let path = std::path::Path::new(&action_file);
+            if !path.exists() {
+                return false;
+            }
+            
+            // Check if file is less than 3 seconds old
+            if let Ok(metadata) = std::fs::metadata(&action_file) {
+                if let Ok(modified_time) = metadata.modified() {
+                    let now = std::time::SystemTime::now();
+                    if let Ok(elapsed) = now.duration_since(modified_time) {
+                        return elapsed.as_secs() < 3; // Less than 3 seconds old
+                    }
+                }
+            }
+            false
+        },
+        None => false,
+    }
+}
