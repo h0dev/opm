@@ -118,7 +118,8 @@ const SystemPage = (props: { base: string }) => {
 
 	useEffect(() => {
 		fetchData(true);
-		const interval = setInterval(() => fetchData(false), 5000); // Refresh every 5 seconds
+		// Real-time updates for dynamic data (RAM, CPU, uptime) every 5 seconds
+		const interval = setInterval(() => fetchData(false), 5000);
 		return () => clearInterval(interval);
 	}, []);
 

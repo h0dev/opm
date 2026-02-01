@@ -234,6 +234,11 @@ fn restart_process() {
 
          // If process is dead, handle crash/restart logic
          if !process_alive {
+             // Check if process was very recently started (within 2 seconds)
+             // This prevents the daemon from immediately restarting a process that just started
+             // and gives the process time to initialize
+             let just_started = (Utc::now() - item.started).num_seconds() < 2;
+             
              // Check if there was a recent manual action (to prevent daemon from marking as crashed immediately after manual start/restart)
              let recently_acted = has_recent_action_timestamp(id);
              
@@ -241,9 +246,10 @@ fn restart_process() {
              // PID > 0 means we thought the process was alive, so this is a new crash event
              let is_new_crash = item.pid > 0;
 
-             // Don't mark as crashed if there was a recent manual action and process was expected to be running
-             // This prevents the daemon from overriding manual start/restart actions
-             if is_new_crash && !(recently_acted && item.running) {
+             // Don't mark as crashed if:
+             // 1. There was a recent manual action and process was expected to be running, OR
+             // 2. Process was just started (less than 2 seconds ago) - give it time to initialize
+             if is_new_crash && !(recently_acted && item.running) && !just_started {
                 // Reload runner to check if process was deleted concurrently by CLI
                 // This must be done BEFORE modifying state to avoid race conditions
                 runner = Runner::new();
@@ -298,6 +304,10 @@ fn restart_process() {
                 // Save state after crash detection to persist crash counter and PID updates
                 runner.save();
              } else if item.running {
+                 // Check if process was very recently started (within 2 seconds)
+                 // This prevents the daemon from immediately restarting a process that just started
+                 let just_started = (Utc::now() - item.started).num_seconds() < 2;
+                 
                  // Check if there was a recent manual action (to prevent daemon from setting running=false immediately after manual start/restart)
                  let recently_acted = has_recent_action_timestamp(id);
                  
@@ -312,8 +322,8 @@ fn restart_process() {
                           "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
                      // Save state after updating running flag
                      runner.save();
-                 } else if !recently_acted {
-                     // Still within limit and no recent action - attempt restart now
+                 } else if !recently_acted && !just_started {
+                     // Still within limit, no recent action, and not just started - attempt restart now
                      // Reload runner to check if process was deleted by CLI
                      runner = Runner::new();
                      if runner.exists(id) {
@@ -337,8 +347,12 @@ fn restart_process() {
                               "name" => item.name, "id" => id);
                      }
                  } else {
-                     // Recent action was taken, skip automatic restart attempts
-                     log!("[daemon] skipping restart due to recent manual action", "name" => item.name, "id" => id);
+                     // Recent action was taken or process just started, skip automatic restart attempts
+                     if just_started {
+                         log!("[daemon] skipping restart - process just started (giving it time to initialize)", "name" => item.name, "id" => id);
+                     } else {
+                         log!("[daemon] skipping restart due to recent manual action", "name" => item.name, "id" => id);
+                     }
                  }
             } else {
                 // Process was already stopped and marked as crashed

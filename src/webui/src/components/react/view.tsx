@@ -108,7 +108,19 @@ const LogViewer = (props: { liveReload; setLiveReload; server: string | null; ba
 		api
 			.get(url)
 			.json()
-			.then((data) => setLogs(data.logs))
+			.then((data) => {
+				if (data && data.logs) {
+					setLogs(data.logs);
+				} else {
+					// If no logs data, set empty array
+					setLogs([]);
+				}
+			})
+			.catch((err) => {
+				console.error('Failed to fetch logs:', err);
+				// Set empty logs on error to prevent infinite loading
+				setLogs([]);
+			})
 			.finally(() => setLoaded(true));
 	};
 

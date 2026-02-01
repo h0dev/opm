@@ -80,43 +80,37 @@ const { active } = Astro.props;
 </nav>
 
 <script>
-  // Ensure navbar scroll is properly initialized after Astro view transitions
-  // This fixes an issue where the scrollbar functionality only works after switching tabs
+  // Ensure navbar scroll is properly initialized on mobile devices
   function initNavbarScroll() {
     const scrollContainer = document.getElementById('navbar-scroll-container');
-    if (scrollContainer) {
-      // Reset scroll position to ensure scrollbar is visible and functional
-      scrollContainer.scrollLeft = 0;
+    if (!scrollContainer) return;
+    
+    // Reset scroll position
+    scrollContainer.scrollLeft = 0;
+    
+    // On mobile, force scrollbar to be visible if content overflows
+    const isOverflowing = scrollContainer.scrollWidth > scrollContainer.clientWidth;
+    if (isOverflowing && window.innerWidth <= 640) {
+      // Force scroll mode to ensure scrollbar appears
+      scrollContainer.style.overflowX = 'scroll';
       
-      // Check if scroll is needed and ensure scrollbar is visible
-      const isOverflowing = scrollContainer.scrollWidth > scrollContainer.clientWidth;
-      if (isOverflowing && window.innerWidth <= 640) { // Mobile breakpoint
-        // Ensure scrollbar is visible by forcing overflow state
-        scrollContainer.style.overflowX = 'scroll';
-        // Use triple requestAnimationFrame to ensure browser properly renders the scrollbar
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              scrollContainer.style.overflowX = 'auto';
-            });
-          });
-        });
-      }
+      // Use single requestAnimationFrame for simplicity and reliability
+      requestAnimationFrame(() => {
+        scrollContainer.style.overflowX = 'auto';
+      });
     }
   }
 
-  // Initialize immediately on script load (for first page load)
+  // Initialize on various events to ensure it works on first load and after navigation
   initNavbarScroll();
-
-  // Initialize on DOM load as backup
+  
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initNavbarScroll);
   }
-
-  // Re-initialize after Astro view transitions
+  
   document.addEventListener('astro:page-load', initNavbarScroll);
-
-  // Re-initialize on window resize to handle orientation changes
+  
+  // Handle window resize with debouncing
   let resizeTimeout: ReturnType<typeof setTimeout>;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimeout);
