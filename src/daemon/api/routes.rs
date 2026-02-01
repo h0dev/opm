@@ -884,11 +884,12 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
     // Restore those processes (without incrementing counters)
     let mut runner = Runner::new();
 
-    // Mark crashed processes as stopped
+    // Mark crashed processes as stopped and reset crash flag
     for id in crashed_ids {
         if let Some(process) = runner.list.get_mut(&id) {
             process.running = false;
-            process.pid = -1; // Mark as no valid PID
+            process.pid = 0; // Mark as no valid PID (consistent with init_on_startup)
+            process.crash.crashed = false; // Reset crash flag so process can be restarted
         }
     }
     runner.save();
@@ -2411,7 +2412,13 @@ pub async fn stream_agent_detail(
                     "processes": processes
                 });
 
-                yield Event::data(serde_json::to_string(&response).unwrap());
+                // Ensure JSON serialization is valid before yielding
+                if let Ok(json_str) = serde_json::to_string(&response) {
+                    // Only yield if we have valid, non-empty JSON
+                    if !json_str.is_empty() && json_str != "{}" {
+                        yield Event::data(json_str);
+                    }
+                }
             } else {
                 yield Event::data(json!({"error": "Agent not found"}).to_string());
                 break;

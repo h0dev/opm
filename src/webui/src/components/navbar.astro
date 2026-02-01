@@ -93,9 +93,16 @@ const { active } = Astro.props;
     if (window.innerWidth <= 640) {
       const isOverflowing = scrollContainer.scrollWidth > scrollContainer.clientWidth;
       if (isOverflowing) {
-        // Deliberately trigger a reflow to force browser to render scrollbar immediately
-        // Reading offsetHeight causes a synchronous layout calculation
+        // Force multiple reflows to ensure browser properly computes overflow
         void scrollContainer.offsetHeight;
+        scrollContainer.style.overflowX = 'auto';
+        void scrollContainer.offsetHeight;
+        
+        // Force scroll position update with a small timeout to bypass cache
+        setTimeout(() => {
+          scrollContainer.scrollLeft = 0;
+          void scrollContainer.offsetHeight;
+        }, 0);
       }
     }
   }
@@ -116,5 +123,12 @@ const { active } = Astro.props;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(initNavbarScroll, 100);
+  });
+  
+  // Force re-initialization on visibility change (handles mobile tab switching)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      initNavbarScroll();
+    }
   });
 </script>
