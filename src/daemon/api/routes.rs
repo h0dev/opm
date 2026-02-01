@@ -1617,10 +1617,25 @@ pub async fn list_handler(
             let agent_id = agent.id.clone();
             let agent_name = agent.name.clone();
             let agent_api_endpoint = agent.api_endpoint.clone();
+            
+            log::debug!(
+                "[list] Adding {} processes from agent '{}' (id: {})",
+                agent_processes.len(),
+                agent_name,
+                agent_id
+            );
+            
             for process in &mut agent_processes {
                 process.agent_id = Some(agent_id.clone());
                 process.agent_name = Some(agent_name.clone());
                 process.agent_api_endpoint = agent_api_endpoint.clone();
+                
+                log::debug!(
+                    "[list] Agent process: id={}, name='{}', agent_id='{}' ",
+                    process.id,
+                    process.name,
+                    agent_id
+                );
             }
             data.extend(agent_processes);
         }
@@ -2594,6 +2609,11 @@ pub async fn agent_process_logs_handler(
 
     // Handle local agent specially - get logs directly
     if agent_id == "local" {
+        log::debug!(
+            "[agent_process_logs] Handling local agent, process_id: {}, kind: {}",
+            process_id,
+            kind
+        );
         let runner = Runner::new();
         if runner.exists(process_id) {
             if let Some(process) = runner.info(process_id) {
@@ -2616,17 +2636,25 @@ pub async fn agent_process_logs_handler(
                     }
                 }
             } else {
+                log::warn!(
+                    "[agent_process_logs] Process {} not found in local runner info",
+                    process_id
+                );
                 timer.observe_duration();
                 return Err(generic_error(
                     Status::NotFound,
-                    string!("Process not found"),
+                    format!("Process {} not found", process_id),
                 ));
             }
         } else {
+            log::warn!(
+                "[agent_process_logs] Process {} does not exist in local runner",
+                process_id
+            );
             timer.observe_duration();
             return Err(generic_error(
                 Status::NotFound,
-                string!("Process not found"),
+                format!("Process {} not found", process_id),
             ));
         }
     }
