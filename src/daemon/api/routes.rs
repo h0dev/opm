@@ -2701,8 +2701,18 @@ pub async fn agent_process_logs_handler(
                     error_text
                 );
                 timer.observe_duration();
+                
+                // Use appropriate status code based on agent's response
+                let server_status = if status_code.is_client_error() {
+                    // 4xx errors from agent (e.g., 404 Not Found) - pass through
+                    Status::from_code(status_code.as_u16()).unwrap_or(Status::NotFound)
+                } else {
+                    // 5xx errors from agent - this is a Bad Gateway since upstream failed
+                    Status::BadGateway
+                };
+                
                 Err(generic_error(
-                    Status::NotFound,
+                    server_status,
                     format!(
                         "Agent API returned error (status {}): {}. \
                         Ensure the agent's local daemon API is running and accessible.",
@@ -2726,7 +2736,7 @@ pub async fn agent_process_logs_handler(
             );
             timer.observe_duration();
             Err(generic_error(
-                Status::ServiceUnavailable,
+                Status::BadGateway,
                 format!(
                     "Failed to connect to agent API at {}: {}. \
                     Verify that:\n\
