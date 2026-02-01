@@ -275,6 +275,7 @@ const Index = (props: { base: string }) => {
 	}, []);
 
 	// Auto-refresh every 5 seconds
+	// Note: Empty dependency array is correct - fetch doesn't depend on state/props that change
 	useEffect(() => {
 		const intervalId = setInterval(() => {
 			fetch();

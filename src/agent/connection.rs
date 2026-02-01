@@ -435,10 +435,20 @@ impl AgentConnection {
 
                                         // Save all processes locally
                                         use crate::process::Runner;
-                                        let runner = Runner::new();
-                                        runner.save_permanent();
-
-                                        let (success, message) = (true, "Processes saved successfully".to_string());
+                                        
+                                        let (success, message) = match std::panic::catch_unwind(|| {
+                                            let runner = Runner::new();
+                                            runner.save_permanent();
+                                        }) {
+                                            Ok(_) => {
+                                                log::info!("[Agent] Processes saved successfully");
+                                                (true, "Processes saved successfully".to_string())
+                                            }
+                                            Err(_) => {
+                                                log::error!("[Agent] Failed to save processes - operation panicked");
+                                                (false, "Failed to save processes".to_string())
+                                            }
+                                        };
 
                                         // Send response back to server
                                         let response_msg = AgentMessage::ActionResponse {

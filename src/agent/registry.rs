@@ -164,7 +164,7 @@ impl AgentRegistry {
         let mut successful_saves = Vec::new();
 
         for agent_id in agent_ids {
-            let request_id = format!("save_{}", uuid::Uuid::new_v4());
+            let request_id = format!("agent_save_{}", uuid::Uuid::new_v4());
             
             let save_request = super::messages::AgentMessage::SaveRequest {
                 request_id: request_id.clone(),

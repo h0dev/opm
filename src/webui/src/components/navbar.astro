@@ -117,7 +117,7 @@ const { active } = Astro.props;
   document.addEventListener('astro:page-load', initNavbarScroll);
 
   // Re-initialize on window resize to handle orientation changes
-  let resizeTimeout;
+  let resizeTimeout: ReturnType<typeof setTimeout>;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(initNavbarScroll, 100);
