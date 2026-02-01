@@ -85,26 +85,30 @@ const { active } = Astro.props;
     const scrollContainer = document.getElementById('navbar-scroll-container');
     if (!scrollContainer) return;
     
-    // Reset scroll position to start
-    scrollContainer.scrollLeft = 0;
-    
-    // Force browser to recognize overflow state immediately
-    // This ensures the scrollbar appears on first render
+    // For mobile devices (width <= 640px)
     if (window.innerWidth <= 640) {
-      const isOverflowing = scrollContainer.scrollWidth > scrollContainer.clientWidth;
-      if (isOverflowing) {
-        // Force multiple reflows to ensure browser properly computes overflow
-        void scrollContainer.offsetHeight;
-        scrollContainer.style.overflowX = 'auto';
-        void scrollContainer.offsetHeight;
+      // Force overflow-x to auto to ensure scrollbar appears when content overflows
+      scrollContainer.style.overflowX = 'auto';
+      
+      // Reset scroll position to start
+      scrollContainer.scrollLeft = 0;
+      
+      // Force a reflow to ensure browser computes the correct overflow state
+      void scrollContainer.offsetHeight;
+      
+      // Use requestAnimationFrame to ensure layout is complete before final positioning
+      requestAnimationFrame(() => {
+        scrollContainer.scrollLeft = 0;
         
-        // Force scroll position update using requestAnimationFrame for better browser compatibility
-        // This ensures layout calculations are complete before applying scroll changes
-        requestAnimationFrame(() => {
-          scrollContainer.scrollLeft = 0;
-          void scrollContainer.offsetHeight;
-        });
-      }
+        // Double-check overflow is set correctly after layout
+        scrollContainer.style.overflowX = 'auto';
+        
+        // Force another reflow to ensure scrollbar visibility is computed
+        void scrollContainer.offsetHeight;
+      });
+    } else {
+      // On desktop, reset to default
+      scrollContainer.scrollLeft = 0;
     }
   }
 
@@ -129,6 +133,15 @@ const { active } = Astro.props;
   // Force re-initialization on visibility change (handles mobile tab switching)
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
+      // Use a short timeout to ensure browser has completed tab switch rendering
+      setTimeout(initNavbarScroll, 50);
+    }
+  });
+  
+  // Also listen for page show event (handles back/forward cache)
+  window.addEventListener('pageshow', (event) => {
+    // If page is restored from bfcache, reinitialize
+    if (event.persisted) {
       initNavbarScroll();
     }
   });

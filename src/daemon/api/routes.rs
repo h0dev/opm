@@ -865,7 +865,7 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
     let runner = Runner::new();
 
     // Collect IDs of processes that were running AND not crashed when saved
-    // Crashed processes should remain stopped after restore
+    // These are the processes we will attempt to restore
     let running_ids: Vec<usize> = runner
         .items()
         .into_iter()
@@ -873,19 +873,21 @@ pub async fn restore_handler(_t: Token) -> Json<ActionResponse> {
         .map(|(_, item)| item.id)
         .collect();
 
-    // Collect IDs of crashed processes to mark as stopped
-    let crashed_ids: Vec<usize> = runner
+    // Collect IDs of crashed processes that were NOT running to mark as stopped
+    // Only reset crash flag for processes that won't be restored
+    let crashed_stopped_ids: Vec<usize> = runner
         .items()
         .into_iter()
-        .filter(|(_, item)| item.crash.crashed)
+        .filter(|(_, item)| item.crash.crashed && !item.running)
         .map(|(_, item)| item.id)
         .collect();
 
     // Restore those processes (without incrementing counters)
     let mut runner = Runner::new();
 
-    // Mark crashed processes as stopped and reset crash flag
-    for id in crashed_ids {
+    // Mark crashed processes that are stopped as fully stopped and reset crash flag
+    // This ensures they start fresh if manually restarted later
+    for id in crashed_stopped_ids {
         if let Some(process) = runner.list.get_mut(&id) {
             process.running = false;
             process.pid = 0; // Mark as no valid PID (consistent with init_on_startup)
@@ -2322,40 +2324,45 @@ pub async fn stream_metrics(server: String, _t: Token) -> EventStream![] {
 #[get("/live/process/<server>/<id>")]
 pub async fn stream_info(server: String, id: usize, _t: Token) -> EventStream![] {
     EventStream! {
-        let runner = Runner::new();
-
-        match config::servers().servers {
-            Some(servers) => {
-                let (address, (client, headers)) = match servers.get(&server) {
-                    Some(server) => (&server.address, client(&server.token).await),
-                    None => match &*server {
-                        "local" | "internal" => loop {
-                            let item = runner.refresh().get(id);
-                            yield Event::data(serde_json::to_string(&item.fetch()).unwrap());
-                            sleep(Duration::from_millis(500));
-                        },
-                        _ => return yield Event::data(format!("{{\"error\": \"server does not exist\"}}")),
-                    }
-                };
-
-                loop {
-                    match client.get(fmtstr!("{address}/process/{id}/info")).headers(headers.clone()).send().await {
-                        Ok(data) => {
-                            if data.status() != 200 {
-                                break yield Event::data(data.text().await.unwrap());
-                            } else {
-                                yield Event::data(data.text().await.unwrap());
-                                sleep(Duration::from_millis(500));
-                            }
-                        }
-                        Err(err) => break yield Event::data(format!("{{\"error\": \"{err}\"}}")),
-                    }
-                }
-            }
-            None => loop {
+        // Handle local/internal server directly with a simple loop
+        if server == "local" || server == "internal" {
+            let runner = Runner::new();
+            loop {
                 let item = runner.refresh().get(id);
                 yield Event::data(serde_json::to_string(&item.fetch()).unwrap());
                 sleep(Duration::from_millis(500));
+            }
+        }
+        
+        // Handle remote servers
+        match config::servers().servers {
+            Some(servers) => {
+                match servers.get(&server) {
+                    Some(remote_server) => {
+                        let (client, headers) = client(&remote_server.token).await;
+                        let address = &remote_server.address;
+                        
+                        loop {
+                            match client.get(fmtstr!("{address}/process/{id}/info")).headers(headers.clone()).send().await {
+                                Ok(data) => {
+                                    if data.status() != 200 {
+                                        break yield Event::data(data.text().await.unwrap());
+                                    } else {
+                                        yield Event::data(data.text().await.unwrap());
+                                        sleep(Duration::from_millis(500));
+                                    }
+                                }
+                                Err(err) => break yield Event::data(format!("{{\"error\": \"{err}\"}}")),
+                            }
+                        }
+                    }
+                    None => {
+                        yield Event::data(format!("{{\"error\": \"server does not exist\"}}"));
+                    }
+                }
+            }
+            None => {
+                yield Event::data(format!("{{\"error\": \"no servers configured\"}}"));
             }
         };
     }
