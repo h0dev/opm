@@ -212,7 +212,19 @@ fn restart_process() {
 
         // Check if process is alive based on PID
         // is_pid_alive() handles all PID validation (including PID <= 0)
-        let process_alive = opm::process::is_pid_alive(item.pid);
+        // For processes with children, also check if any children are alive
+        // This prevents false positives when shell scripts exit but leave background processes running
+        let main_process_alive = opm::process::is_pid_alive(item.pid);
+        let has_living_children = !item.children.is_empty() && 
+            item.children.iter().any(|&child_pid| opm::process::is_pid_alive(child_pid));
+        let process_alive = main_process_alive || has_living_children;
+        
+        // Log when process state is determined by children instead of main PID
+        if !main_process_alive && has_living_children {
+            log!("[daemon] main process dead but children alive", 
+                 "name" => item.name, "id" => id, "pid" => item.pid, 
+                 "children" => format!("{:?}", item.children));
+        }
 
         // If process is alive and has been running successfully, keep monitoring
         // Note: We no longer auto-reset crash counter here - it persists to show
