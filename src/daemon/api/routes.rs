@@ -2657,36 +2657,95 @@ pub async fn agent_process_logs_handler(
     let url = format!("{}/process/{}/logs/{}", api_endpoint, process_id, kind);
     let headers = reqwest::header::HeaderMap::new();
 
-        match client.get(&url).headers(headers).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
+    log::debug!(
+        "Fetching logs from agent API: {} for process {} ({})",
+        url,
+        process_id,
+        kind
+    );
+
+    match client.get(&url).headers(headers).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
                 match response.json::<LogResponse>().await {
                     Ok(log_response) => {
+                        log::debug!(
+                            "Successfully fetched {} log lines from agent {}",
+                            log_response.logs.len(),
+                            agent_id
+                        );
                         timer.observe_duration();
                         Ok(Json(log_response))
                     }
                     Err(e) => {
+                        log::error!(
+                            "Failed to parse logs response from agent {} API: {}",
+                            agent_id,
+                            e
+                        );
                         timer.observe_duration();
                         Err(generic_error(
                             Status::InternalServerError,
-                            format!("Failed to parse logs response: {}", e),
+                            format!("Failed to parse logs response from agent API: {}", e),
                         ))
                     }
                 }
             } else {
+                let status_code = response.status();
                 let error_text = response.text().await.unwrap_or_default();
+                log::error!(
+                    "Agent {} API returned error status {} for process {} logs: {}",
+                    agent_id,
+                    status_code,
+                    process_id,
+                    error_text
+                );
                 timer.observe_duration();
+                
+                // Use appropriate status code based on agent's response
+                let server_status = if status_code.is_client_error() {
+                    // 4xx errors from agent (e.g., 404 Not Found) - pass through
+                    Status::from_code(status_code.as_u16()).unwrap_or(Status::NotFound)
+                } else {
+                    // 5xx errors from agent - this is a Bad Gateway since upstream failed
+                    Status::BadGateway
+                };
+                
                 Err(generic_error(
-                    Status::NotFound,
-                    format!("Failed to get logs: {}", error_text),
+                    server_status,
+                    format!(
+                        "Agent API returned error (status {}): {}. \
+                        Ensure the agent's local daemon API is running and accessible.",
+                        status_code,
+                        if error_text.is_empty() {
+                            "No error details provided"
+                        } else {
+                            &error_text
+                        }
+                    ),
                 ))
             }
         }
         Err(e) => {
+            log::error!(
+                "Failed to connect to agent {} API at {}: {}. \
+                Check that the agent is online and its API endpoint is accessible from the server.",
+                agent_id,
+                api_endpoint,
+                e
+            );
             timer.observe_duration();
             Err(generic_error(
-                Status::InternalServerError,
-                format!("Failed to connect to agent API: {}", e),
+                Status::BadGateway,
+                format!(
+                    "Failed to connect to agent API at {}: {}. \
+                    Verify that:\n\
+                    1. The agent is running and connected\n\
+                    2. The agent's local daemon API is enabled\n\
+                    3. The API endpoint {} is accessible from this server\n\
+                    4. No firewall is blocking the connection",
+                    api_endpoint, e, api_endpoint
+                ),
             ))
         }
     }
