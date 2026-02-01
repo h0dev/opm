@@ -1320,7 +1320,14 @@ impl Runner {
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
-            string!("crashed")
+            // Process is marked as running but PID is not alive
+            // Special case: If PID is 0, this is a restored/new process waiting to be started
+            // Show as "online" instead of "crashed" since daemon hasn't started it yet
+            if item.pid == 0 {
+                string!("online")
+            } else {
+                string!("crashed")
+            }
         } else {
             match item.crash.crashed {
                 true => string!("crashed"),
