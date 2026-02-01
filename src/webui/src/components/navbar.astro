@@ -80,17 +80,26 @@ const { active } = Astro.props;
 </nav>
 
 <script>
-  // Ensure navbar scroll is properly initialized on page load and after view transitions
+  // Ensure navbar scroll is properly initialized after Astro view transitions
+  // This fixes an issue where the scrollbar functionality only works after switching tabs
   function initNavbarScroll() {
     const scrollContainer = document.getElementById('navbar-scroll-container');
     if (scrollContainer) {
-      // Force a reflow to ensure scrollbar is calculated correctly
-      scrollContainer.style.display = 'none';
-      scrollContainer.offsetHeight; // Trigger reflow
-      scrollContainer.style.display = '';
+      // Reset scroll position to ensure scrollbar is visible and functional
+      scrollContainer.scrollLeft = 0;
       
-      // Ensure overflow is set correctly
-      scrollContainer.style.overflowX = 'auto';
+      // Check if scroll is needed and ensure scrollbar is visible
+      const isOverflowing = scrollContainer.scrollWidth > scrollContainer.clientWidth;
+      if (isOverflowing && window.innerWidth <= 640) { // Mobile breakpoint
+        // Ensure scrollbar is visible by forcing overflow state
+        scrollContainer.style.overflowX = 'scroll';
+        // Use double requestAnimationFrame to ensure browser renders the intermediate state
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            scrollContainer.style.overflowX = 'auto';
+          });
+        });
+      }
     }
   }
 
