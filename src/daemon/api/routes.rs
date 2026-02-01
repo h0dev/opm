@@ -763,13 +763,22 @@ pub async fn dump_handler(_t: Token) -> Vec<u8> {
         )
     )
 )]
-pub async fn save_handler(_t: Token) -> Json<ActionResponse> {
+pub async fn save_handler(
+    _t: Token,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+) -> Json<ActionResponse> {
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["save"])
         .start_timer();
     HTTP_COUNTER.inc();
 
+    // Save local processes
     Runner::new().save_permanent();
+
+    // Save all agent processes
+    let saved_agents = registry.save_all_agents().await;
+    
+    log::info!("[save_handler] Saved local processes and {} agent(s)", saved_agents.len());
 
     timer.observe_duration();
     Json(attempt(true, "save"))

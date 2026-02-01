@@ -153,6 +153,72 @@ impl AgentRegistry {
             let _ = sender.send(response);
         }
     }
+
+    /// Send save request to all connected agents
+    pub async fn save_all_agents(&self) -> Vec<String> {
+        let agent_ids: Vec<String> = {
+            let agents = self.agents.read().unwrap();
+            agents.keys().cloned().collect()
+        };
+
+        let mut successful_saves = Vec::new();
+
+        for agent_id in agent_ids {
+            let request_id = format!("save_{}", uuid::Uuid::new_v4());
+            
+            let save_request = super::messages::AgentMessage::SaveRequest {
+                request_id: request_id.clone(),
+            };
+
+            if let Ok(save_json) = serde_json::to_string(&save_request) {
+                if let Ok(rx) = self.send_action_with_response(&agent_id, request_id.clone(), save_json) {
+                    // Wait for response with timeout
+                    match tokio::time::timeout(
+                        tokio::time::Duration::from_secs(5),
+                        rx
+                    ).await {
+                        Ok(Ok(response)) if response.success => {
+                            log::info!("[Registry] Agent {} saved successfully", agent_id);
+                            successful_saves.push(agent_id);
+                        }
+                        Ok(Ok(response)) => {
+                            log::error!("[Registry] Agent {} save failed: {}", agent_id, response.message);
+                        }
+                        Ok(Err(_)) => {
+                            log::error!("[Registry] Agent {} save request canceled", agent_id);
+                        }
+                        Err(_) => {
+                            log::error!("[Registry] Agent {} save request timed out", agent_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        successful_saves
+    }
+
+    /// Send a request to an agent and get a response receiver
+    fn send_action_with_response(
+        &self,
+        agent_id: &str,
+        request_id: String,
+        message: String,
+    ) -> Result<oneshot::Receiver<ActionResponse>, String> {
+        // Create a channel for the response
+        let (tx, rx) = oneshot::channel();
+
+        // Store the sender in pending actions
+        {
+            let mut pending = self.pending_actions.write().unwrap();
+            pending.insert(request_id, tx);
+        }
+
+        // Send the request to the agent
+        self.send_to_agent(agent_id, message)?;
+
+        Ok(rx)
+    }
 }
 
 impl Default for AgentRegistry {

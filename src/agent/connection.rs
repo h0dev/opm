@@ -430,6 +430,29 @@ impl AgentConnection {
                                               }
                                           }
                                     }
+                                    AgentMessage::SaveRequest { request_id } => {
+                                        log::info!("[Agent] Received save request");
+
+                                        // Save all processes locally
+                                        use crate::process::Runner;
+                                        let runner = Runner::new();
+                                        runner.save_permanent();
+
+                                        let (success, message) = (true, "Processes saved successfully".to_string());
+
+                                        // Send response back to server
+                                        let response_msg = AgentMessage::ActionResponse {
+                                            request_id,
+                                            success,
+                                            message,
+                                        };
+
+                                        if let Ok(response_json) = serde_json::to_string(&response_msg) {
+                                            if let Err(e) = ws_sender.send(Message::Text(response_json)).await {
+                                                log::error!("[Agent] Failed to send save response: {}", e);
+                                            }
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
