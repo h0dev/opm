@@ -2274,7 +2274,7 @@ mod tests {
                 hash: String::new(),
             },
             children: vec![],
-            started: Utc::now(),
+            started: Utc::now() - chrono::Duration::seconds(20),
             max_memory: 0,
             agent_id: None,
         };
