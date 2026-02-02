@@ -262,6 +262,44 @@ fn restart_process() {
              // 1. There was a recent manual action and process was expected to be running, OR
              // 2. Process was just started (less than 2 seconds ago) - give it time to initialize
              if is_new_crash && !(recently_acted && item.running) && !just_started {
+                // Check if process exited successfully (exit code 0) by checking the child handle
+                // Use shell_pid if available, otherwise use regular pid
+                let handle_pid = item.shell_pid.unwrap_or(item.pid);
+                let mut exited_successfully = false;
+                
+                if let Some(handle_ref) = opm::process::PROCESS_HANDLES.get(&handle_pid) {
+                    if let Ok(mut child) = handle_ref.lock() {
+                        // Check if process has exited and get its exit status
+                        if let Ok(Some(status)) = child.try_wait() {
+                            exited_successfully = status.success();
+                            log!("[daemon] process exited", 
+                                 "name" => item.name, "id" => id, "pid" => handle_pid, 
+                                 "success" => exited_successfully, "status" => format!("{:?}", status));
+                        }
+                    }
+                }
+                
+                // If process exited successfully (exit code 0), don't mark as crashed
+                // Just set running=false and continue monitoring
+                if exited_successfully {
+                    // Reload runner to check if process was deleted concurrently by CLI
+                    runner = Runner::new();
+                    if !runner.exists(id) {
+                        log!("[daemon] process was deleted during exit detection, skipping", 
+                             "name" => item.name, "id" => id);
+                        continue;
+                    }
+                    
+                    let process = runner.process(id);
+                    process.running = false;
+                    process.pid = 0;
+                    // Don't increment crash counter or set crashed flag for successful exits
+                    log!("[daemon] process exited successfully", 
+                         "name" => item.name, "id" => id);
+                    runner.save();
+                    continue; // Skip crash handling
+                }
+                
                 // Reload runner to check if process was deleted concurrently by CLI
                 // This must be done BEFORE modifying state to avoid race conditions
                 runner = Runner::new();

@@ -34,7 +34,7 @@ use utoipa::ToSchema;
 // Global process handle storage to prevent child processes from being dropped and becoming zombies
 // Key: PID, Value: Child process handle wrapped in Arc<Mutex> for thread-safe access
 // This is the PM2-like daemon state that keeps processes alive
-static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> =
+pub static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> =
     Lazy::new(DashMap::new);
 
 // Constants for process termination waiting
