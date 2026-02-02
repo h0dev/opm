@@ -146,7 +146,8 @@ pub fn start(
             .create(&arg.to_string(), &worker_name, watch, &None, true);
         }
 
-        runner.save();
+        runner.save();          // Save to memory cache first
+        runner.save_permanent(); // Then commit to permanent storage
 
         println!(
             "{} All {} workers started successfully",
@@ -210,7 +211,8 @@ pub fn start(
                         kind,
                     }
                     .create(script, name, watch, max_memory, false);
-                    runner.save();
+                    runner.save();          // Save to memory cache first
+                    runner.save_permanent(); // Then commit to permanent storage
                 }
             },
         }
