@@ -266,9 +266,9 @@ fn restart_process() {
                     }
                 }
                 
-                // If process exited successfully OR if we couldn't find its handle (likely from a restore),
-                // treat it as a clean stop, not a crash.
-                if exited_successfully || !handle_found {
+                // Only treat as clean stop if we found the handle AND it exited successfully
+                // If no handle found, treat as a crash (don't skip crash handling)
+                if handle_found && exited_successfully {
                     // No longer reloading runner state here.
                     // The check below is sufficient to handle concurrently deleted processes.
                     if !runner.exists(id) {
@@ -280,8 +280,8 @@ fn restart_process() {
                     let process = runner.process(id);
                     process.running = false;
                     process.pid = 0;
-                    // Don't increment crash counter or set crashed flag for successful/unknown exits
-                    log!("[daemon] process stopped cleanly or was managed by old daemon", 
+                    // Don't increment crash counter or set crashed flag for successful exits
+                    log!("[daemon] process stopped cleanly", 
                          "name" => item.name, "id" => id);
                     runner.save();
                     continue; // Skip crash handling

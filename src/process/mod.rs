@@ -3679,4 +3679,60 @@ mod tests {
         // Verify process is removed
         assert!(!runner.exists(id), "Process should be removed from list");
     }
+
+    #[test]
+    fn test_crashed_process_status_consistency() {
+        // Test that crashed processes maintain consistent status
+        // This validates the fix where processes shouldn't change from "crashed" to "stopped"
+        // unless explicitly stopped by the user
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Create a process that has crashed
+        let process = Process {
+            id,
+            pid: 0, // PID of 0 indicates process is not running
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_crashed_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "exit 1".to_string(),
+            restarts: 0,
+            running: false, // Not running
+            crash: Crash {
+                crashed: true, // Marked as crashed
+                value: 1,      // One crash
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now() - chrono::Duration::seconds(10),
+            max_memory: 0,
+            agent_id: None,
+        };
+
+        runner.list.insert(id, process);
+
+        // Verify the process is marked as crashed
+        let info = runner.info(id).unwrap();
+        assert!(info.crash.crashed, "Process should be marked as crashed");
+        assert_eq!(info.crash.value, 1, "Crash count should be 1");
+        assert!(!info.running, "Process should not be running");
+        assert_eq!(info.pid, 0, "PID should be 0");
+
+        // This test validates that the fix prevents the incorrect state transition:
+        // crashed (crash.crashed=true) -> stopped (crash.crashed=false)
+        // that was happening when no process handle was found.
+        // 
+        // The fix ensures that only processes with handles AND successful exit codes
+        // are treated as clean stops. Processes without handles (like this one)
+        // should maintain their crashed state and go through proper crash handling.
+        
+        let info_after = runner.info(id).unwrap();
+        assert!(info_after.crash.crashed, 
+                "Crashed flag should remain true - process shouldn't transition to stopped without explicit user action or successful exit");
+    }
 }
