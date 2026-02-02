@@ -1743,6 +1743,48 @@ pub async fn logs_raw_handler(id: usize, kind: String, _t: Token) -> Result<Stri
     }
 }
 
+/// Stream/read a file from the local system
+#[utoipa::path(
+    get,
+    path = "/files",
+    params(
+        ("path" = String, Query, description = "File path to read")
+    ),
+    responses(
+        (status = 200, description = "File content", body = String),
+        (status = 404, description = "File not found"),
+        (status = 500, description = "Failed to read file")
+    ),
+    security(("api_key" = []))
+)]
+#[get("/files?<path>")]
+pub async fn file_stream_handler(
+    path: String,
+    _t: Token,
+) -> Result<String, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["file_stream"])
+        .start_timer();
+    HTTP_COUNTER.inc();
+
+    log::debug!("[file_stream] Reading file: {}", path);
+    
+    match fs::read_to_string(&path) {
+        Ok(content) => {
+            timer.observe_duration();
+            Ok(content)
+        }
+        Err(e) => {
+            log::warn!("[file_stream] Failed to read file {}: {}", path, e);
+            timer.observe_duration();
+            Err(generic_error(
+                Status::NotFound,
+                format!("File not found or cannot be read: {}", e),
+            ))
+        }
+    }
+}
+
 #[get("/process/<id>/info")]
 #[utoipa::path(get, tag = "Process", path = "/process/{id}/info", security((), ("api_key" = [])),
     params(("id" = usize, Path, description = "Process id to get information for", example = 0)),
@@ -2773,6 +2815,163 @@ pub async fn agent_process_logs_handler(
                     3. The API endpoint {} is accessible from this server\n\
                     4. No firewall is blocking the connection",
                     api_endpoint, e, api_endpoint
+                ),
+            ))
+        }
+    }
+}
+
+/// Stream a file from an agent
+#[utoipa::path(
+    get,
+    path = "/daemon/agents/{agent_id}/files",
+    params(
+        ("agent_id" = String, Path, description = "Agent ID"),
+        ("path" = String, Query, description = "File path on the agent")
+    ),
+    responses(
+        (status = 200, description = "File content streamed successfully", body = String),
+        (status = 404, description = "Agent or file not found"),
+        (status = 500, description = "Failed to stream file")
+    ),
+    security(("api_key" = []))
+)]
+#[get("/daemon/agents/<agent_id>/files?<path>")]
+pub async fn agent_file_stream_handler(
+    agent_id: String,
+    path: String,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> Result<String, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_file_stream"])
+        .start_timer();
+    HTTP_COUNTER.inc();
+
+    // Handle local agent specially - read file directly
+    if agent_id == "local" {
+        log::debug!(
+            "[agent_file_stream] Handling local agent, path: {}",
+            path
+        );
+        
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                timer.observe_duration();
+                return Ok(content);
+            }
+            Err(e) => {
+                log::warn!("[agent_file_stream] Failed to read local file {}: {}", path, e);
+                timer.observe_duration();
+                return Err(generic_error(
+                    Status::NotFound,
+                    format!("File not found or cannot be read: {}", e),
+                ));
+            }
+        }
+    }
+
+    // Get agent info from registry
+    let agent = match registry.get(&agent_id) {
+        Some(agent) => agent,
+        None => {
+            log::warn!("[agent_file_stream] Agent {} not found in registry", agent_id);
+            timer.observe_duration();
+            return Err(generic_error(
+                Status::NotFound,
+                format!("Agent {} not found", agent_id),
+            ));
+        }
+    };
+
+    // Get agent API endpoint
+    let api_endpoint = match &agent.api_endpoint {
+        Some(endpoint) => endpoint,
+        None => {
+            log::error!(
+                "[agent_file_stream] Agent {} does not have an API endpoint configured",
+                agent_id
+            );
+            timer.observe_duration();
+            return Err(generic_error(
+                Status::InternalServerError,
+                format!(
+                    "Agent {} does not have an API endpoint configured. \
+                    Make sure the agent's daemon was started with --api flag.",
+                    agent_id
+                ),
+            ));
+        }
+    };
+
+    // Forward request to agent API
+    let url = format!("{}/files?path={}", api_endpoint, path.replace(" ", "%20"));
+    log::debug!(
+        "Streaming file from agent API: {} for path {}",
+        url,
+        path
+    );
+
+    match reqwest::get(&url).await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.text().await {
+                    Ok(content) => {
+                        timer.observe_duration();
+                        Ok(content)
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to read file content from agent {} API: {}",
+                            agent_id,
+                            e
+                        );
+                        timer.observe_duration();
+                        Err(generic_error(
+                            Status::InternalServerError,
+                            format!("Failed to read file content from agent API: {}", e),
+                        ))
+                    }
+                }
+            } else {
+                let status_code = response.status();
+                let error_text = response.text().await.unwrap_or_else(|_| String::from("No error details"));
+                
+                log::error!(
+                    "Agent {} API returned error status {} for file {}: {}",
+                    agent_id,
+                    status_code,
+                    path,
+                    error_text
+                );
+                timer.observe_duration();
+                Err(generic_error(
+                    Status::from_code(status_code.as_u16()).unwrap_or(Status::InternalServerError),
+                    format!(
+                        "Agent API returned error: {}",
+                        if error_text.len() > 200 {
+                            &error_text[..200]
+                        } else {
+                            &error_text
+                        }
+                    ),
+                ))
+            }
+        }
+        Err(e) => {
+            log::error!(
+                "Failed to connect to agent {} API at {}: {}",
+                agent_id,
+                api_endpoint,
+                e
+            );
+            timer.observe_duration();
+            Err(generic_error(
+                Status::BadGateway,
+                format!(
+                    "Failed to connect to agent API at {}: {}. \
+                    Verify that the agent is running and accessible.",
+                    api_endpoint, e
                 ),
             ))
         }

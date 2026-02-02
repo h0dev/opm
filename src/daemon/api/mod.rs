@@ -290,6 +290,8 @@ pub async fn start(webui: bool) {
         // routes::agent_processes_handler,
         routes::agent_process_logs_handler,
         routes::agent_action_handler,
+        routes::file_stream_handler,
+        routes::agent_file_stream_handler,
         websocket::websocket_handler,
     ];
 

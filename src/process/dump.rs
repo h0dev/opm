@@ -444,6 +444,15 @@ pub fn init_on_startup() -> Runner {
         }
     }
 
+    // Populate memory cache with loaded state to keep processes in RAM
+    // This ensures the daemon has the process state immediately available in memory
+    // and prevents losing temporary state after startup
+    // Note: We clone permanent here to satisfy both cache storage and return value.
+    // This is a one-time startup operation, so the clone overhead is negligible.
+    let mut cache = MEMORY_CACHE.lock().unwrap();
+    *cache = Some(permanent.clone());
+    log!("[dump::init_on_startup] Populated memory cache with loaded state");
+
     permanent
 }
 
