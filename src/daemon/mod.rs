@@ -126,34 +126,16 @@ fn restart_process() {
     let daemon_config = config::read().daemon;
 
     // Use a single Runner instance to avoid state synchronization issues
-    let runner = Runner::new();
+    let mut runner = Runner::new();
     // Collect IDs first to avoid borrowing issues during iteration
     // Use process_ids() instead of items().keys() to avoid cloning all processes
     let process_ids: Vec<usize> = runner.process_ids().collect();
 
     for id in process_ids {
-        // Note: We reload runner at the start of each iteration to ensure we see
-        // changes made by previous iterations (e.g., when a previous process was
-        // restarted and the state was saved to disk). This is necessary because
-        // operations like restart() modify the state and save it, and we need
-        // the latest state for accurate crash detection and restart logic.
-        //
-        // Performance considerations:
-        // - Runner::new() loads from disk, which could be expensive
-        // - However, the daemon runs infrequently (default 1000ms interval)
-        // - There are typically few processes, so total overhead is low
-        // - Correctness is prioritized over performance here
-        //
-        // Alternative approaches considered:
-        // - Caching and selective reload: Complex to implement correctly,
-        //   and the performance gain would be minimal given typical usage
-        // - Using a refresh() method: Would need to be implemented in Runner,
-        //   and would still require reading from disk
-        //
-        // TODO: Consider implementing Runner::reload() method for future optimization
-        // that only updates changed state rather than full reconstruction from disk.
-        // This would be more efficient but adds complexity.
-        let mut runner = Runner::new();
+        // The runner is no longer reloaded inside the loop.
+        // This ensures that state changes from socket commands (like `opm start`)
+        // are not wiped out during the daemon's monitoring cycle.
+        // The entire cycle now operates on a single, consistent state.
 
         // Clone item to avoid borrowing issues when we mutate runner later.
         // This is required by Rust's borrow checker - we can't hold an immutable
