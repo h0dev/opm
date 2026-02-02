@@ -47,31 +47,20 @@ static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     // SAFETY: Signal handlers should be kept simple and avoid complex operations.
-    // However, we need to save crashed process state before daemon exits.
-    // This is a critical operation to ensure crashed processes can be restored.
+    // However, we need to save process state before daemon exits.
+    // This is a critical operation to ensure process state is preserved for restore.
     // We accept the small risk of issues during signal handling because:
-    // 1. The alternative (losing crashed process state) is worse
+    // 1. The alternative (losing process state) is worse
     // 2. This only runs on daemon shutdown, not during normal operation
     // 3. Worst case: state isn't saved, but daemon still exits cleanly
 
-    // Try to save crashed process state before exiting
+    // Try to save process state before exiting
     // Use catch_unwind to prevent panics from crashing the signal handler
     let save_result = std::panic::catch_unwind(|| {
-        let mut runner = Runner::new();
-        let process_ids: Vec<usize> = runner.process_ids().collect();
-        for id in process_ids {
-            // Get process info once and clone name if needed to avoid multiple lookups
-            if let Some(process) = runner.info(id) {
-                // Always set crashed processes to stopped, regardless of current running state
-                // This ensures crashed processes are properly marked as stopped for restore
-                if process.crash.crashed {
-                    let name = process.name.clone();
-                    runner.process(id).running = false;
-                    log!("[daemon] marking crashed process as stopped for restore", 
-                         "id" => id, "name" => name);
-                }
-            }
-        }
+        // Load current process state from memory cache
+        let runner = Runner::new();
+        // Save current state without any modifications
+        // This preserves running/crashed state as-is for restore
         runner.save(); // Save to memory cache on shutdown
         
         // Note: dump::commit_memory() removed - permanent storage commits only via manual 'opm save'
@@ -81,7 +70,7 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
     // If save failed, log a warning (but still proceed with cleanup)
     if save_result.is_err() {
         // Note: Can't use log! macro without key-value pairs, using eprintln instead
-        eprintln!("[daemon] warning: failed to save crashed process state during shutdown");
+        eprintln!("[daemon] warning: failed to save process state during shutdown");
     }
 
     pid::remove();

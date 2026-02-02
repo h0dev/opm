@@ -1103,40 +1103,29 @@ impl<'i> Internal<'i> {
 
         println!("{} Starting restore process...", *helpers::SUCCESS);
 
-        // Before starting daemon, read dump file and reset counters, mark crashed processes as stopped
-        // This ensures crashed processes are properly handled before loading into RAM
+        // Before starting daemon, read dump file and reset counters only
+        // This preserves the running/stopped/crashed state but resets counters for a fresh start
         let dump_path = global_placeholders::global!("opm.dump");
         if opm::file::Exists::check(&dump_path).file() {
             // Read the dump file directly
             let mut dump_runner = opm::process::dump::read();
             let mut modified = false;
             
-            // Process each entry: mark crashed processes as stopped and reset counters for non-crashed processes
-            // This gives each non-crashed process a fresh start after system restore/reboot
-            // Crashed processes remain stopped and crashed so they don't auto-restart
+            // Process each entry: reset counters while preserving running/crashed state
+            // This gives each process a fresh start after system restore/reboot
+            // but maintains their original state (running/stopped/crashed)
             for (_id, process) in dump_runner.list.iter_mut() {
-                if process.crash.crashed {
-                    // Crashed processes: keep them crashed and set running=false
-                    // This ensures they stay stopped and don't auto-restart on restore
-                    process.running = false;
-                    // Keep crash.crashed = true to preserve crashed state
-                    // Reset PID to prevent daemon from treating old PID as new crash
-                    process.pid = 0;
+                // Reset counters for processes that have non-zero values
+                // Also reset PID to 0 to prevent daemon from treating old PIDs as new crashes
+                if process.restarts != 0 || process.crash.value != 0 || process.pid != 0 {
+                    process.restarts = 0;
+                    process.crash.value = 0;
+                    process.pid = 0;  // Clear PID so daemon doesn't misidentify as newly crashed
                     modified = true;
-                } else {
-                    // Non-crashed processes: reset counters to give them a fresh start
-                    // Reset all restart and crash counters for processes that were not crashed
-                    // Also reset PID to 0 to prevent daemon from treating old PIDs as new crashes
-                    if process.restarts > 0 || process.crash.value > 0 || process.pid > 0 {
-                        process.restarts = 0;
-                        process.crash.value = 0;
-                        process.pid = 0;  // Clear PID so daemon doesn't misidentify as newly crashed
-                        modified = true;
-                    }
                 }
             }
             
-            // Save the modified dump file if any changes were made
+            // Save the modified dump file only if changes were made
             if modified {
                 opm::process::dump::write(&dump_runner);
             }
@@ -1233,16 +1222,23 @@ impl<'i> Internal<'i> {
         let mut failed_ids = Vec::new();
 
         // Restore processes that were running before daemon stopped
-        // Crashed processes have already been marked as stopped in the dump file
-        // so they won't be in this list - they remain stopped and need manual restart
-        // Do NOT restore processes that were manually stopped (running=false, crashed=false)
+        // Now we restore all processes that have running=true, regardless of crashed state
+        // This preserves the original state and only resets counters
+        // Do NOT restore processes that were manually stopped (running=false)
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
             .filter_map(|(id, p)| {
-                // Only restore processes that were running (not crashed or stopped)
-                if p.running && !p.crash.crashed {
+                // Only restore processes that have running=true
+                // This includes both:
+                // 1. Clean running processes (running=true, crashed=false)
+                // 2. Processes that crashed while running (running=true, crashed=true)
+                // We intentionally check ONLY p.running to include both cases.
+                // In both cases, restore will restart them. After successful restart,
+                // the daemon will clear the crashed flag if the process stays alive.
+                if p.running {
                     Some((*id, p.name.clone(), p.running, p.crash.crashed))
                 } else {
+                    // Skip processes with running=false (manually stopped processes)
                     None
                 }
             })
@@ -1255,8 +1251,8 @@ impl<'i> Internal<'i> {
         }
 
             for (id, name, _was_running, _was_crashed) in &processes_to_restore {
-            // All processes in this list are running processes that need to be restarted
-            // Crashed processes have already been filtered out and marked as stopped
+            // All processes in this list have running=true and need to be restarted
+            // This includes both clean processes and those that were previously crashed
             runner = Internal {
                 id: *id,
                 server_name,
