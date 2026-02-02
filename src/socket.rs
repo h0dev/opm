@@ -160,20 +160,34 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             
             let merged_runner = match current_memory {
                 Some(mut current) => {
-                    // Merge: Update existing processes and add new ones from provided runner
-                    // But also preserve any processes in current memory that aren't in the provided runner
-                    // This prevents the daemon from accidentally deleting processes created after it loaded state
+                    // Merge strategy: Update/add all processes from the provided runner
+                    // while preserving any processes in memory that aren't in the provided runner.
+                    // 
+                    // This prevents two issues:
+                    // 1. Daemon (or any caller) accidentally deleting processes created after it loaded state
+                    // 2. Race conditions where CLI creates a process while daemon is monitoring
+                    //
+                    // For processes that exist in both:
+                    // - The provided runner's version overwrites the existing one
+                    // - This is intentional: the daemon is the authoritative source for state updates
+                    //   (crash counters, PIDs, running status, etc.)
+                    // - The daemon loads state once per cycle and makes authoritative updates
+                    //
+                    // For processes only in current memory:
+                    // - They are preserved (not deleted)
+                    // - This fixes the reported bug where newly created processes disappeared
                     
-                    // First, update all processes that exist in the provided runner
+                    // Update all processes that exist in the provided runner
                     for (id, process) in runner.list {
                         current.list.insert(id, process);
                     }
                     
                     // Update the ID counter to the maximum of both
-                    let provided_counter = runner.id.counter.load(std::sync::atomic::Ordering::SeqCst);
-                    let current_counter = current.id.counter.load(std::sync::atomic::Ordering::SeqCst);
+                    // Use Relaxed ordering since socket handler is single-threaded and sequential
+                    let provided_counter = runner.id.counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let current_counter = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
                     if provided_counter > current_counter {
-                        current.id.counter.store(provided_counter, std::sync::atomic::Ordering::SeqCst);
+                        current.id.counter.store(provided_counter, std::sync::atomic::Ordering::Relaxed);
                     }
                     
                     current
