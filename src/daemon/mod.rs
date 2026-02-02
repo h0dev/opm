@@ -675,7 +675,14 @@ pub fn start(verbose: bool) {
             }
         }
 
+        // Initialize on daemon startup: load state from disk and clear any old temp files
+        // IMPORTANT: This must be done BEFORE starting the socket server to avoid race conditions
+        // where CLI commands arrive before the cache is initialized, causing state to be lost
+        use opm::process::dump;
+        let _startup_runner = dump::init_on_startup();
+
         // Start Unix socket server for CLI-daemon communication
+        // Socket server must be started AFTER init_on_startup() to ensure memory cache is ready
         let socket_path = global!("opm.socket").to_string();
         let socket_path_clone = socket_path.clone();
         match std::thread::Builder::new()
@@ -695,11 +702,6 @@ pub fn start(verbose: bool) {
                 eprintln!("[daemon] Warning: Socket server could not be started. CLI commands may not work correctly.");
             }
         }
-
-        // Initialize on daemon startup: load state from disk and clear any old temp files
-        // This must be done before the main loop starts
-        use opm::process::dump;
-        let _startup_runner = dump::init_on_startup();
 
         loop {
             if api_enabled {

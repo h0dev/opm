@@ -89,6 +89,23 @@ fn merge_runners(mut permanent: Runner, memory: Option<Runner>) -> Runner {
     // If memory cache exists, it represents the complete current state
     // Replace permanent's list with memory's list to reflect deletions
     if let Some(memory) = memory {
+        // IMPORTANT: Memory cache represents the complete authoritative state.
+        // When the daemon or CLI writes to memory cache via SetState, it sends
+        // the complete runner with all processes. The memory cache is the single
+        // source of truth for the current process list during runtime.
+        // 
+        // We do a complete replacement (not a merge) because:
+        // 1. Process deletions: If a process is in permanent but not in memory,
+        //    it means it was explicitly removed, so we must not keep it.
+        // 2. State authority: Memory cache is updated by daemon's monitoring loop
+        //    and reflects the current runtime state (PIDs, crash counters, etc.)
+        // 3. Consistency: A proper merge would require complex conflict resolution
+        //    and could lead to inconsistencies (e.g., keeping a deleted process).
+        //
+        // This replacement is safe because:
+        // - SetState handler (socket.rs) already merges incoming state with current memory
+        // - So memory cache always contains the complete merged state
+        // - GetState simply returns this authoritative state
         permanent.list = memory.list;
         // When memory has state, also update the counter to match memory's counter
         // This ensures deletions properly decrease the counter
