@@ -3735,4 +3735,86 @@ mod tests {
         assert!(info_after.crash.crashed, 
                 "Crashed flag should remain true - process shouldn't transition to stopped without explicit user action or successful exit");
     }
+
+    #[test]
+    fn test_crashed_process_remains_in_list() {
+        // Test that a crashed process remains in the list and is not automatically removed
+        // This validates the fix for issue: "fix lỗi tiến trình biến mất ngay sau khi start"
+        // (fix bug where process disappears immediately after start)
+        //
+        // Scenario: User starts a process that crashes immediately
+        // Expected: Process should remain in the list with crashed status
+        // Bug: Process was disappearing from the list on subsequent `opm ls` calls
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Create a process that has crashed immediately after start
+        let process = Process {
+            id,
+            pid: 0, // No valid PID (process died)
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "tets".to_string(), // Using same name as in the issue report
+            path: PathBuf::from("/tmp"),
+            script: "tets".to_string(), // Non-existent command
+            restarts: 0,
+            running: false, // Daemon marked as not running after max restarts
+            crash: Crash {
+                crashed: true, // Marked as crashed
+                value: 10,     // Reached max restarts (typical limit)
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+        };
+
+        runner.list.insert(id, process);
+
+        // Verify the process is in the list
+        assert!(
+            runner.exists(id),
+            "Crashed process should exist in the list"
+        );
+        assert_eq!(
+            runner.list.len(),
+            1,
+            "List should contain exactly one process"
+        );
+
+        // Simulate multiple list operations (as user would run `opm ls` multiple times)
+        let items1 = runner.items();
+        assert!(
+            items1.contains_key(&id),
+            "Process should be in items() after first call"
+        );
+
+        let items2 = runner.items();
+        assert!(
+            items2.contains_key(&id),
+            "Process should still be in items() after second call"
+        );
+
+        // Verify process details
+        let info = runner.info(id).unwrap();
+        assert!(info.crash.crashed, "Process should be marked as crashed");
+        assert!(!info.running, "Process should not be running");
+        assert_eq!(info.crash.value, 10, "Crash count should be 10");
+
+        // Verify the process remains in the list even after checking multiple times
+        assert!(
+            runner.exists(id),
+            "Crashed process should still exist after multiple queries"
+        );
+        assert_eq!(
+            runner.list.len(),
+            1,
+            "List size should remain unchanged"
+        );
+    }
 }
