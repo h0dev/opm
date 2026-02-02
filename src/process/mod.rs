@@ -1320,12 +1320,17 @@ impl Runner {
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
-            // Process is marked as running but PID is not alive
-            // Special case: If PID is 0, this is a restored/new process waiting to be started
-            // Show as "online" instead of "crashed" since daemon hasn't started it yet
-            if item.pid == 0 {
+            // Process is marked as running but PID is not alive.
+            // Check if it's within a grace period since it was started.
+            let grace_period = chrono::Duration::seconds(15); // 15-second grace period
+            if Utc::now().signed_duration_since(item.started) < grace_period && item.pid != 0 {
+                // It's still in the grace period, show it as "starting" instead of "crashed".
+                string!("starting")
+            } else if item.pid == 0 {
+                // This is a restored/new process waiting to be started by the daemon.
                 string!("online")
             } else {
+                // Grace period has passed, now it's officially crashed.
                 string!("crashed")
             }
         } else {
