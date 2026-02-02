@@ -264,18 +264,18 @@ fn restart_process() {
              if is_new_crash && !(recently_acted && item.running) && !just_started {
                 // Check if process exited successfully (exit code 0) by checking the child handle
                 // Use shell_pid if available, otherwise use regular pid
-                let handle_pid = item.shell_pid.unwrap_or(item.pid);
+                let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
                 let mut exited_successfully = false;
                 
                 // Remove and check the handle to get exit status
                 // This ensures we only check the exit status once (try_wait consumes it)
-                if let Some((_, handle_ref)) = opm::process::PROCESS_HANDLES.remove(&handle_pid) {
+                if let Some((_, handle_ref)) = opm::process::PROCESS_HANDLES.remove(&process_handle_pid) {
                     if let Ok(mut child) = handle_ref.lock() {
                         // Check if process has exited and get its exit status
                         if let Ok(Some(status)) = child.try_wait() {
                             exited_successfully = status.success();
                             log!("[daemon] process exited", 
-                                 "name" => item.name, "id" => id, "pid" => handle_pid, 
+                                 "name" => item.name, "id" => id, "pid" => process_handle_pid, 
                                  "success" => exited_successfully, "status" => format!("{:?}", status));
                         }
                     }
