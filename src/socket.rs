@@ -153,9 +153,39 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             SocketResponse::State(merged)
         }
         SocketRequest::SetState(runner) => {
-            // Write to memory cache only - don't commit to permanent storage
-            // Changes stay in RAM until explicit save command
-            dump::write_memory_direct(&runner);
+            // Merge the provided state with existing memory cache to prevent race conditions
+            // where the daemon's stale runner overwrites newly created processes
+            // Read current memory state
+            let current_memory = dump::read_memory_direct_option();
+            
+            let merged_runner = match current_memory {
+                Some(mut current) => {
+                    // Merge: Update existing processes and add new ones from provided runner
+                    // But also preserve any processes in current memory that aren't in the provided runner
+                    // This prevents the daemon from accidentally deleting processes created after it loaded state
+                    
+                    // First, update all processes that exist in the provided runner
+                    for (id, process) in runner.list {
+                        current.list.insert(id, process);
+                    }
+                    
+                    // Update the ID counter to the maximum of both
+                    let provided_counter = runner.id.counter.load(std::sync::atomic::Ordering::SeqCst);
+                    let current_counter = current.id.counter.load(std::sync::atomic::Ordering::SeqCst);
+                    if provided_counter > current_counter {
+                        current.id.counter.store(provided_counter, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    
+                    current
+                }
+                None => {
+                    // No existing state, use the provided runner as-is
+                    runner
+                }
+            };
+            
+            // Write merged state to memory cache
+            dump::write_memory_direct(&merged_runner);
             SocketResponse::Success
         }
         SocketRequest::SavePermanent => {
