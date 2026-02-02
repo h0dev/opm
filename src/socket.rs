@@ -154,41 +154,69 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         }
         SocketRequest::SetState(runner) => {
             // Merge the provided state with existing memory cache to prevent race conditions
-            // where the daemon's stale runner overwrites newly created processes
-            // Read current memory state
-            let current_memory = dump::read_memory_direct_option();
+            // where the daemon's stale runner overwrites newly created processes.
+            //
+            // CRITICAL: Hold the memory cache lock for the entire read-merge-write sequence
+            // to prevent concurrent SetState requests from overwriting each other's changes.
+            // Without this lock, when multiple CLI commands run simultaneously:
+            //   Thread A: read {p0} → merge {p0, p1} → write {p0, p1}
+            //   Thread B: read {p0} → merge {p0, p2} → write {p0, p2}  ← OVERWRITES A's p1!
+            // With the lock, operations are serialized:
+            //   Thread A: LOCK → read {p0} → merge {p0, p1} → write {p0, p1} → UNLOCK
+            //   Thread B: LOCK → read {p0, p1} → merge {p0, p1, p2} → write {p0, p1, p2} → UNLOCK
+            
+            // Acquire exclusive lock on memory cache for atomic read-merge-write
+            use crate::process::dump::MEMORY_CACHE;
+            let mut cache = MEMORY_CACHE.lock().unwrap();
+            
+            // Read current memory state while holding lock
+            let current_memory = cache.clone();
             
             let merged_runner = match current_memory {
                 Some(mut current) => {
                     // Merge strategy: Update/add all processes from the provided runner
                     // while preserving any processes in memory that aren't in the provided runner.
                     // 
-                    // This prevents two issues:
-                    // 1. Daemon (or any caller) accidentally deleting processes created after it loaded state
-                    // 2. Race conditions where CLI creates a process while daemon is monitoring
+                    // CRITICAL: Handle ID collisions when multiple CLIs create processes concurrently.
+                    // When concurrent CLIs all start with empty state (counter=0), they all assign ID 0
+                    // to their processes. We need to reassign IDs to prevent overwrites.
                     //
-                    // For processes that exist in both:
-                    // - The provided runner's version overwrites the existing one
-                    // - This is intentional: the daemon is the authoritative source for state updates
-                    //   (crash counters, PIDs, running status, etc.)
-                    // - The daemon loads state once per cycle and makes authoritative updates
-                    //
-                    // For processes only in current memory:
-                    // - They are preserved (not deleted)
-                    // - This fixes the reported bug where newly created processes disappeared
+                    // Strategy:
+                    // 1. For each process in the provided runner:
+                    //    - If the ID already exists in current memory AND it's a different process (different PID),
+                    //      assign a new unique ID
+                    //    - Otherwise, use the provided ID (update existing or add new)
+                    // 2. Update the ID counter to ensure future IDs don't collide
                     
-                    // Update all processes that exist in the provided runner
-                    for (id, process) in runner.list {
-                        current.list.insert(id, process);
+                    let mut max_id = current.list.keys().max().copied().unwrap_or(0);
+                    
+                    // Update/add all processes from the provided runner
+                    for (id, mut process) in runner.list {
+                        // Check if this ID already exists with a different process
+                        let needs_new_id = if let Some(existing) = current.list.get(&id) {
+                            // ID exists - check if it's the same process (same PID) or a collision
+                            existing.pid != process.pid
+                        } else {
+                            // ID doesn't exist - no collision
+                            false
+                        };
+                        
+                        let final_id = if needs_new_id {
+                            // ID collision detected - assign a new unique ID
+                            max_id += 1;
+                            process.id = max_id;  // Update the process's own ID field
+                            max_id
+                        } else {
+                            // No collision - use the provided ID
+                            id
+                        };
+                        
+                        current.list.insert(final_id, process);
                     }
                     
-                    // Update the ID counter to the maximum of both
-                    // Use Relaxed ordering since socket handler is single-threaded and sequential
-                    let provided_counter = runner.id.counter.load(std::sync::atomic::Ordering::Relaxed);
-                    let current_counter = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
-                    if provided_counter > current_counter {
-                        current.id.counter.store(provided_counter, std::sync::atomic::Ordering::Relaxed);
-                    }
+                    // Update the ID counter to max + 1 to prevent future collisions
+                    let new_counter = current.list.keys().max().map(|&k| k + 1).unwrap_or(0);
+                    current.id.counter.store(new_counter, std::sync::atomic::Ordering::Relaxed);
                     
                     current
                 }
@@ -198,8 +226,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                 }
             };
             
-            // Write merged state to memory cache
-            dump::write_memory_direct(&merged_runner);
+            // Write merged state to memory cache while still holding lock
+            *cache = Some(merged_runner);
+            // Lock is automatically released when `cache` goes out of scope
+            
             SocketResponse::Success
         }
         SocketRequest::SavePermanent => {

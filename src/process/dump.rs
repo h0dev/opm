@@ -49,7 +49,10 @@ use std::{collections::BTreeMap, fs, sync::Mutex};
 
 /// Global in-memory cache for process state (replaces temporary file)
 /// This stores the transient process state in RAM instead of writing to disk
-static MEMORY_CACHE: Lazy<Mutex<Option<Runner>>> = Lazy::new(|| Mutex::new(None));
+/// 
+/// IMPORTANT: This must be public (not just pub(crate)) to allow the socket handler
+/// to perform atomic read-merge-write operations when handling concurrent SetState requests.
+pub static MEMORY_CACHE: Lazy<Mutex<Option<Runner>>> = Lazy::new(|| Mutex::new(None));
 
 /// Helper function to create an empty Runner
 fn empty_runner() -> Runner {
