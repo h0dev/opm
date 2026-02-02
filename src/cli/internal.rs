@@ -1111,26 +1111,28 @@ impl<'i> Internal<'i> {
             let mut dump_runner = opm::process::dump::read();
             let mut modified = false;
             
-            // Process each entry: mark crashed processes as stopped and reset all counters
-            // This gives each process a fresh start after system restore/reboot
-            // Both running and stopped processes get their counters reset so they have
-            // full restart attempts available
+            // Process each entry: mark crashed processes as stopped and reset counters for non-crashed processes
+            // This gives each non-crashed process a fresh start after system restore/reboot
+            // Crashed processes remain stopped and crashed so they don't auto-restart
             for (_id, process) in dump_runner.list.iter_mut() {
-                // First, mark all crashed processes as stopped
-                // Always set running=false for crashed processes, regardless of current state
                 if process.crash.crashed {
+                    // Crashed processes: keep them crashed and set running=false
+                    // This ensures they stay stopped and don't auto-restart on restore
                     process.running = false;
+                    // Keep crash.crashed = true to preserve crashed state
+                    // Reset PID to prevent daemon from treating old PID as new crash
+                    process.pid = 0;
                     modified = true;
-                }
-                
-                // Reset all restart and crash counters for ALL processes
-                // Also reset PID to 0 to prevent daemon from treating old PIDs as new crashes
-                if process.restarts > 0 || process.crash.value > 0 || process.crash.crashed || process.pid > 0 {
-                    process.restarts = 0;
-                    process.crash.value = 0;
-                    process.crash.crashed = false;
-                    process.pid = 0;  // Clear PID so daemon doesn't misidentify as newly crashed
-                    modified = true;
+                } else {
+                    // Non-crashed processes: reset counters to give them a fresh start
+                    // Reset all restart and crash counters for processes that were not crashed
+                    // Also reset PID to 0 to prevent daemon from treating old PIDs as new crashes
+                    if process.restarts > 0 || process.crash.value > 0 || process.pid > 0 {
+                        process.restarts = 0;
+                        process.crash.value = 0;
+                        process.pid = 0;  // Clear PID so daemon doesn't misidentify as newly crashed
+                        modified = true;
+                    }
                 }
             }
             
@@ -1263,10 +1265,19 @@ impl<'i> Internal<'i> {
             }
             .restart(&None, &None, false, true, false);
 
-            // Wait a short period to allow processes to start up before checking PID
+            // Create timestamp file for this restore action to prevent daemon from
+            // immediately marking process as crashed during its startup grace period
+            // This gives the process time to initialize without daemon interference
+            if let Some(home_dir) = home::home_dir() {
+                let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+                let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+            }
+
+            // Wait for process to start up before checking PID
             // This prevents false crash detection for processes that take time to initialize
             // Shell scripts in particular need time for the shell to spawn the actual process
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            // Increased to 1000ms (1 second) to give processes more time to start
+            std::thread::sleep(std::time::Duration::from_millis(1000));
 
             // Check if the restart was successful
             if let Some(process) = runner.info(*id) {
