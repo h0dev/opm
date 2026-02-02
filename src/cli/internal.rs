@@ -1115,9 +1115,9 @@ impl<'i> Internal<'i> {
             // This gives each process a fresh start after system restore/reboot
             // but maintains their original state (running/stopped/crashed)
             for (_id, process) in dump_runner.list.iter_mut() {
-                // Reset counters for all processes to give them a fresh start
+                // Reset counters for processes that have non-zero values
                 // Also reset PID to 0 to prevent daemon from treating old PIDs as new crashes
-                if process.restarts > 0 || process.crash.value > 0 || process.pid > 0 {
+                if process.restarts != 0 || process.crash.value != 0 || process.pid != 0 {
                     process.restarts = 0;
                     process.crash.value = 0;
                     process.pid = 0;  // Clear PID so daemon doesn't misidentify as newly crashed
@@ -1125,7 +1125,7 @@ impl<'i> Internal<'i> {
                 }
             }
             
-            // Save the modified dump file if any changes were made
+            // Save the modified dump file only if changes were made
             if modified {
                 opm::process::dump::write(&dump_runner);
             }
@@ -1228,12 +1228,17 @@ impl<'i> Internal<'i> {
         let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
             .list()
             .filter_map(|(id, p)| {
-                // Only restore processes that were marked as running
-                // This includes both clean running processes and crashed processes
-                // that were running before the crash
+                // Only restore processes that have running=true
+                // This includes both:
+                // 1. Clean running processes (running=true, crashed=false)
+                // 2. Processes that crashed while running (running=true, crashed=true)
+                // We intentionally check ONLY p.running to include both cases.
+                // In both cases, restore will restart them. After successful restart,
+                // the daemon will clear the crashed flag if the process stays alive.
                 if p.running {
                     Some((*id, p.name.clone(), p.running, p.crash.crashed))
                 } else {
+                    // Skip processes with running=false (manually stopped processes)
                     None
                 }
             })

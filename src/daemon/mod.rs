@@ -57,9 +57,10 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
     // Try to save process state before exiting
     // Use catch_unwind to prevent panics from crashing the signal handler
     let save_result = std::panic::catch_unwind(|| {
+        // Load current process state from memory cache
         let runner = Runner::new();
-        // Just save current state without modifying crashed processes
-        // Preserve running/crashed state as-is for restore
+        // Save current state without any modifications
+        // This preserves running/crashed state as-is for restore
         runner.save(); // Save to memory cache on shutdown
         
         // Note: dump::commit_memory() removed - permanent storage commits only via manual 'opm save'

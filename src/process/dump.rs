@@ -428,8 +428,8 @@ pub fn init_on_startup() -> Runner {
     clear_memory();
     log!("[dump::init_on_startup] Cleared memory cache for fresh daemon start");
 
-    // Note: We preserve crash.crashed flag so restore command can identify crashed processes
-    // We also preserve the running state to maintain process status across daemon restarts
+    // Note: We preserve both the crash.crashed flag and running state
+    // so restore command can properly handle processes across daemon restarts.
     // Only reset the crash and restart counters to give processes a fresh start
 
     // On startup, reset crash and restart counters for all processes
