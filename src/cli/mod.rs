@@ -180,6 +180,7 @@ pub fn start(
                 }
                 .restart(name, watch, *reset_env, true, false); // start all - don't increment
             }
+            runner.save();
         }
     } else {
         match args {
@@ -274,6 +275,7 @@ pub fn stop(items: &Items, server_name: &String) {
                 }
                 .stop(true);
             }
+            runner.save();
         }
     } else {
         for item in &items.items {
@@ -528,6 +530,7 @@ pub fn restart(items: &Items, server_name: &String) {
                 }
                 .restart(&None, &None, false, true, true); // restart all - increment counter
             }
+            runner.save();
         }
     } else {
         for item in &items.items {
@@ -589,6 +592,7 @@ pub fn reload(items: &Items, server_name: &String) {
                 }
                 .reload(true);
             }
+            runner.save();
         }
     } else {
         for item in &items.items {
