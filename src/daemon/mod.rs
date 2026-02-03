@@ -274,7 +274,10 @@ fn restart_process() {
                     process.running = false;
                     process.pid = 0;
                     process.shell_pid = None;
-                    // Don't increment crash counter or set crashed flag for successful exits
+                    // Clear crashed flag for successful exits - this ensures processes
+                    // show as "stopped" instead of "crashed" after clean exit
+                    process.crash.crashed = false;
+                    // Don't increment crash counter for successful exits
                     log!("[daemon] process stopped cleanly", 
                          "name" => item.name, "id" => id);
                     runner.save();

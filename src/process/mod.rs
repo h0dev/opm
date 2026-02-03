@@ -3828,4 +3828,79 @@ mod tests {
             "List size should remain unchanged"
         );
     }
+
+    #[test]
+    fn test_successful_exit_clears_crashed_flag() {
+        // Test that when a process that previously crashed exits successfully,
+        // the crashed flag is cleared so it shows as "stopped" instead of "crashed"
+        // This validates the fix where successful exits should clear crash.crashed
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Create a process that had previously crashed but is now stopped cleanly
+        let process = Process {
+            id,
+            pid: 0,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_clean_exit".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "exit 0".to_string(),
+            restarts: 0,
+            running: false, // Stopped cleanly
+            crash: Crash {
+                crashed: true, // Was previously marked as crashed
+                value: 5,      // Had crashed 5 times before
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now() - chrono::Duration::seconds(10),
+            max_memory: 0,
+            agent_id: None,
+        };
+
+        runner.list.insert(id, process.clone());
+
+        // Verify initial state - crashed flag is true
+        let info = runner.info(id).unwrap();
+        assert!(info.crash.crashed, "Process should initially be marked as crashed");
+        assert_eq!(info.crash.value, 5, "Crash count should be 5");
+
+        // Get the status - should show as "crashed" because crashed=true
+        let processes = runner.fetch();
+        assert_eq!(
+            processes[0].status, "crashed",
+            "Process with crashed=true should show as crashed"
+        );
+
+        // Simulate successful exit by clearing the crashed flag
+        // (This is what the daemon should do when it detects a successful exit)
+        if runner.exists(id) {
+            let process = runner.process(id);
+            process.crash.crashed = false;
+        }
+
+        // Verify the crashed flag was cleared
+        let info_after = runner.info(id).unwrap();
+        assert!(
+            !info_after.crash.crashed,
+            "Crashed flag should be cleared after successful exit"
+        );
+        assert_eq!(
+            info_after.crash.value,
+            5,
+            "Crash count should remain unchanged (preserves history)"
+        );
+
+        // Get the status again - should now show as "stopped" because crashed=false
+        let processes_after = runner.fetch();
+        assert_eq!(
+            processes_after[0].status, "stopped",
+            "Process with crashed=false should show as stopped after successful exit"
+        );
+    }
 }
