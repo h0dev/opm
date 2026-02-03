@@ -171,6 +171,20 @@ pub fn commit_memory_direct() {
     log!("[dump::commit_memory_direct] Committed memory cache to permanent storage");
 }
 
+/// Read merged state directly without using socket (for use by daemon's own code)
+/// This is needed to avoid recursion when the daemon needs to read its own state
+/// during the monitoring loop. Unlike read_merged(), this never tries to use the socket.
+pub fn read_merged_direct() -> Runner {
+    // Read permanent dump directly
+    let permanent = read_permanent_dump();
+    
+    // Read memory cache if it exists
+    let memory = read_memory_direct_option();
+    
+    // Merge and return
+    merge_runners(permanent, memory)
+}
+
 pub fn from(address: &str, token: Option<&str>) -> Result<Runner, anyhow::Error> {
     let client = Client::new();
     let mut headers = HeaderMap::new();

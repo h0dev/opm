@@ -376,6 +376,12 @@ impl Runner {
         dump::read_merged()
     }
 
+    /// Read merged state directly from memory cache without using socket
+    /// This is for use by the daemon's own code to avoid recursion
+    pub fn new_direct() -> Self {
+        dump::read_merged_direct()
+    }
+
     pub fn refresh(&self) -> Self {
         Runner::new()
     }
