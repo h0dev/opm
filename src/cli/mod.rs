@@ -303,6 +303,7 @@ pub fn stop(items: &Items, server_name: &String) {
                 },
             }
         }
+        runner.save();
     }
 
     Internal::list(&string!("default"), &list_name);
@@ -558,6 +559,7 @@ pub fn restart(items: &Items, server_name: &String) {
                 },
             }
         }
+        runner.save();
     }
 
     // Allow CPU stats to accumulate before displaying the list
@@ -620,6 +622,7 @@ pub fn reload(items: &Items, server_name: &String) {
                 },
             }
         }
+        runner.save();
     }
 
     // Allow CPU stats to accumulate before displaying the list
