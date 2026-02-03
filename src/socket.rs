@@ -195,23 +195,33 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     
                     // Update all processes that exist in the provided runner
                     // Handle ID conflicts: if a process ID already exists and the incoming process
-                    // is different (race condition from concurrent creates with stale counter),
+                    // is fundamentally different (race condition from concurrent creates with stale counter),
                     // reassign a new ID to prevent overwriting existing processes
                     for (id, mut process) in runner.list {
                         if let Some(existing) = current.list.get(&id) {
-                            // Check if this is actually a different process (same ID but different content)
-                            // Compare by PID and creation time to detect race condition
-                            let is_same_process = existing.pid == process.pid 
-                                && existing.started == process.started
-                                && existing.name == process.name;
+                            // Check if this is actually a different process (same ID but different identity)
+                            // Compare by immutable process properties (name, script, path) rather than
+                            // runtime state (PID, started timestamp) which change during normal restarts.
+                            // This fixes the bug where process restarts were incorrectly detected as ID conflicts,
+                            // causing duplicate process entries to be created.
+                            let is_same_process = existing.name == process.name
+                                && existing.script == process.script
+                                && existing.path == process.path;
                             
                             if !is_same_process {
-                                // ID conflict detected! Allocate a new ID for the incoming process
-                                // Find the next available ID by checking current counter and incrementing
+                                // True ID conflict detected! Two genuinely different processes claim the same ID.
+                                // This happens in race conditions during concurrent process creation with stale counters.
+                                // Allocate a new ID for the incoming process to prevent overwriting.
                                 let mut new_id = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
                                 while current.list.contains_key(&new_id) {
                                     new_id += 1;
                                 }
+                                
+                                // Log before moving process (avoids unnecessary clones)
+                                log::warn!(
+                                    "[socket] True ID conflict detected for id={} (existing process '{}' vs incoming process '{}'). Reassigned incoming to id={}.",
+                                    id, existing.name, process.name, new_id
+                                );
                                 
                                 // Update process with new ID and insert
                                 process.id = new_id;
@@ -221,10 +231,6 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                                 let next_counter = new_id + 1;
                                 current.id.counter.store(next_counter, std::sync::atomic::Ordering::Relaxed);
                                 
-                                log::warn!(
-                                    "[socket] ID conflict detected for id={}, reassigned to id={}. This indicates concurrent process creation with stale ID counter.",
-                                    id, new_id
-                                );
                                 continue;
                             }
                         }
