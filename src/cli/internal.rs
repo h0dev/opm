@@ -424,6 +424,10 @@ impl<'i> Internal<'i> {
         // Get process info before removal for event emission
         let process_name = self.runner.info(self.id).map(|p| p.name.clone());
 
+        // Freeze process before removal to prevent auto-restart during deletion
+        // Give it 10 seconds freeze window - more than enough for removal to complete
+        self.runner.freeze(self.id, 10);
+        
         self.runner.remove(self.id);
         println!("{} Removed {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
         log!("process removed (id={})", self.id);
@@ -1050,6 +1054,10 @@ impl<'i> Internal<'i> {
             );
         }
 
+        // Freeze process during editing to prevent auto-restart conflicts
+        // Give it 5 seconds freeze window - enough for edit to complete
+        self.runner.freeze(self.id, 5);
+        
         let process = self.runner.process(self.id);
 
         // Update command if provided
@@ -1074,7 +1082,9 @@ impl<'i> Internal<'i> {
             process.name = new_name.clone();
         }
 
+        // Save changes and unfreeze immediately after
         self.runner.save();
+        self.runner.unfreeze(self.id);
 
         println!(
             "{} Adjusted {}({}) ✓",

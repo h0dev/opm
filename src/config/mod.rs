@@ -55,7 +55,7 @@ pub fn read() -> Config {
                     },
                     daemon: Daemon {
                         restarts: 10,
-                        interval: 1000,
+                        interval: 500,
                         kind: string!("default"),
                         web: structs::Web {
                             ui: false,

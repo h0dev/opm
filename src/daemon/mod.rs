@@ -358,6 +358,13 @@ fn restart_process() {
                  } else if !recently_acted && !just_started {
                      // Still within limit, no recent action, and not just started - attempt restart now
                      if runner.exists(id) {
+                         // Check if process is frozen (being edited/deleted)
+                         if runner.is_frozen(id) {
+                             log!("[daemon] skipping restart - process is frozen (being edited/deleted)", 
+                                  "name" => item.name, "id" => id);
+                             continue;
+                         }
+                         
                          // Check if process is still marked as running after reload
                          // This prevents restarting processes that were stopped/removed during reload
                          if let Some(proc) = runner.info(id) {

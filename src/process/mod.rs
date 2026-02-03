@@ -191,6 +191,10 @@ pub struct Process {
     /// Agent ID that owns this process (None for local processes)
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Timestamp until which the process is frozen (auto-restart paused)
+    /// None means not frozen, Some means frozen until the specified time
+    #[serde(default)]
+    pub frozen_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -490,6 +494,7 @@ impl Runner {
                     env: stored_env,
                     max_memory,
                     agent_id: None, // Local processes don't have an agent
+                    frozen_until: None, // Not frozen by default
                 },
             );
 
@@ -1027,6 +1032,33 @@ impl Runner {
         if self.remote.is_none() {
             dump::write_memory(&self);
         }
+    }
+
+    /// Freeze a process to prevent auto-restart for a specified duration
+    /// This is used during edit/delete operations to avoid conflicts with daemon
+    pub fn freeze(&mut self, id: usize, duration_secs: i64) {
+        if let Some(process) = self.list.get_mut(&id) {
+            process.frozen_until = Some(Utc::now() + chrono::Duration::seconds(duration_secs));
+            self.save();
+        }
+    }
+
+    /// Unfreeze a process to allow auto-restart again
+    pub fn unfreeze(&mut self, id: usize) {
+        if let Some(process) = self.list.get_mut(&id) {
+            process.frozen_until = None;
+            self.save();
+        }
+    }
+
+    /// Check if a process is currently frozen (auto-restart paused)
+    pub fn is_frozen(&self, id: usize) -> bool {
+        if let Some(process) = self.list.get(&id) {
+            if let Some(frozen_until) = process.frozen_until {
+                return Utc::now() < frozen_until;
+            }
+        }
+        false
     }
 
     /// Save runner state to permanent dump file (used only by explicit 'opm save' command)
