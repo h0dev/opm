@@ -1975,7 +1975,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2027,7 +2027,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2114,7 +2114,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2277,7 +2277,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2326,7 +2326,7 @@ mod tests {
             started: Utc::now() - chrono::Duration::seconds(20),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2375,7 +2375,7 @@ mod tests {
             started: past_time, // Started 5 minutes ago
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2429,7 +2429,7 @@ mod tests {
             started: past_time, // Started 10 minutes ago
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2482,7 +2482,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2541,7 +2541,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -2609,7 +2609,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -2652,7 +2652,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2703,7 +2703,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2757,7 +2757,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2819,7 +2819,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2875,7 +2875,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -2933,7 +2933,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3070,7 +3070,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3175,7 +3175,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3272,7 +3272,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3444,7 +3444,7 @@ mod tests {
                 started: Utc::now(),
                 max_memory: 0,
                 agent_id: None,
-                    frozen_until: None,
+                frozen_until: None,
             };
             runner.list.insert(id, process);
         }
@@ -3547,7 +3547,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -3643,7 +3643,7 @@ mod tests {
                 started: Utc::now(),
                 max_memory: 0,
                 agent_id: None,
-                    frozen_until: None,
+                frozen_until: None,
             };
             runner.list.insert(id, process);
         }
@@ -3722,7 +3722,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3780,7 +3780,7 @@ mod tests {
             started: Utc::now() - chrono::Duration::seconds(10),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3841,7 +3841,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);
@@ -3920,7 +3920,7 @@ mod tests {
             started: Utc::now() - chrono::Duration::seconds(10),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -3997,7 +3997,7 @@ mod tests {
             started: Utc::now(),
             max_memory: 0,
             agent_id: None,
-                    frozen_until: None,
+            frozen_until: None,
         };
 
         runner.list.insert(id, process);

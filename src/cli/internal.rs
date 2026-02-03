@@ -1054,6 +1054,11 @@ impl<'i> Internal<'i> {
             );
         }
 
+        // Verify process exists before attempting to freeze
+        if !self.runner.exists(self.id) {
+            crashln!("{} Process ({}) not found", *helpers::FAIL, self.id);
+        }
+
         // Freeze process during editing to prevent auto-restart conflicts
         // Give it 5 seconds freeze window - enough for edit to complete
         self.runner.freeze(self.id, 5);
@@ -1082,7 +1087,7 @@ impl<'i> Internal<'i> {
             process.name = new_name.clone();
         }
 
-        // Save changes and unfreeze immediately after
+        // Save changes and unfreeze
         self.runner.save();
         self.runner.unfreeze(self.id);
 
