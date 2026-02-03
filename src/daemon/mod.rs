@@ -186,15 +186,17 @@ fn restart_process() {
         // is_pid_alive() handles all PID validation (including PID <= 0)
         // For processes with children, also check if any children are alive
         // This prevents false positives when shell scripts exit but leave background processes running
-        let main_process_alive = opm::process::is_pid_alive(item.pid);
-        let has_living_children = !item.children.is_empty() && 
-            item.children.iter().any(|&child_pid| opm::process::is_pid_alive(child_pid));
-        let process_alive = main_process_alive || has_living_children;
-        
-        // Log when process state is determined by children instead of main PID
-        if !main_process_alive && has_living_children {
-            log!("[daemon] main process dead but children alive", 
-                 "name" => item.name, "id" => id, "pid" => item.pid, 
+        // The PID to monitor is the shell PID if it exists, otherwise the main process PID.
+        // This is the process that `opm` directly started. As long as this handle is alive,
+        // we consider the entire process group to be alive. This is more robust than
+        // trying to track children, which can be racy.
+        let pid_to_monitor = item.shell_pid.unwrap_or(item.pid);
+        let process_alive = opm::process::is_pid_alive(pid_to_monitor);
+
+        // Still useful to log if the handle is dead but children are somehow alive (reparented)
+        if !process_alive && !item.children.is_empty() && item.children.iter().any(|&child_pid| opm::process::is_pid_alive(child_pid)) {
+             log!("[daemon] warning: handle process is dead but child processes were found alive (reparented)", 
+                 "name" => item.name, "id" => id, "handle_pid" => pid_to_monitor, 
                  "children" => format!("{:?}", item.children));
         }
 
