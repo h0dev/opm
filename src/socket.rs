@@ -194,7 +194,42 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     // - This fixes the reported bug where newly created processes disappeared
                     
                     // Update all processes that exist in the provided runner
-                    for (id, process) in runner.list {
+                    // Handle ID conflicts: if a process ID already exists and the incoming process
+                    // is different (race condition from concurrent creates with stale counter),
+                    // reassign a new ID to prevent overwriting existing processes
+                    for (id, mut process) in runner.list {
+                        if let Some(existing) = current.list.get(&id) {
+                            // Check if this is actually a different process (same ID but different content)
+                            // Compare by PID and creation time to detect race condition
+                            let is_same_process = existing.pid == process.pid 
+                                && existing.started == process.started
+                                && existing.name == process.name;
+                            
+                            if !is_same_process {
+                                // ID conflict detected! Allocate a new ID for the incoming process
+                                // Find the next available ID by checking current counter and incrementing
+                                let mut new_id = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
+                                while current.list.contains_key(&new_id) {
+                                    new_id += 1;
+                                }
+                                
+                                // Update process with new ID and insert
+                                process.id = new_id;
+                                current.list.insert(new_id, process);
+                                
+                                // Update counter to be at least new_id + 1
+                                let next_counter = new_id + 1;
+                                current.id.counter.store(next_counter, std::sync::atomic::Ordering::Relaxed);
+                                
+                                log::warn!(
+                                    "[socket] ID conflict detected for id={}, reassigned to id={}. This indicates concurrent process creation with stale ID counter.",
+                                    id, new_id
+                                );
+                                continue;
+                            }
+                        }
+                        
+                        // No conflict, or this is an update to existing process - insert normally
                         current.list.insert(id, process);
                     }
                     
