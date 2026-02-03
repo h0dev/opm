@@ -211,15 +211,17 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             if !is_same_process {
                                 // True ID conflict detected! Two genuinely different processes claim the same ID.
                                 // This happens in race conditions during concurrent process creation with stale counters.
-                                // Clone process name for logging before moving process
-                                let process_name = process.name.clone();
-                                let existing_name = existing.name.clone();
-                                
                                 // Allocate a new ID for the incoming process to prevent overwriting.
                                 let mut new_id = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
                                 while current.list.contains_key(&new_id) {
                                     new_id += 1;
                                 }
+                                
+                                // Log before moving process (avoids unnecessary clones)
+                                log::warn!(
+                                    "[socket] True ID conflict detected for id={} (existing process '{}' vs incoming process '{}'). Reassigned incoming to id={}.",
+                                    id, existing.name, process.name, new_id
+                                );
                                 
                                 // Update process with new ID and insert
                                 process.id = new_id;
@@ -229,10 +231,6 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                                 let next_counter = new_id + 1;
                                 current.id.counter.store(next_counter, std::sync::atomic::Ordering::Relaxed);
                                 
-                                log::warn!(
-                                    "[socket] True ID conflict detected for id={} (existing process '{}' vs incoming process '{}'). Reassigned incoming to id={}.",
-                                    id, existing_name, process_name, new_id
-                                );
                                 continue;
                             }
                         }
