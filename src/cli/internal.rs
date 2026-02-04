@@ -1567,4 +1567,185 @@ impl<'i> Internal<'i> {
             render_list(&mut Runner::new(), true);
         }
     }
+    
+    /// List processes with optional runner parameter to avoid reloading state from disk
+    /// This prevents race conditions with the daemon when displaying state immediately after modifications
+    pub fn list_with_runner(format: &String, server_name: &String, runner_opt: Option<&Runner>) {
+        // If a runner is provided for local/internal servers, use it directly
+        // Otherwise fall back to the standard list behavior
+        if matches!(&**server_name, "internal" | "local" | "default") && runner_opt.is_some() {
+            // Check permissions for remote operations
+            super::check_remote_permission(server_name);
+            
+            let mut runner_clone = runner_opt.unwrap().clone();
+            
+            let render_list = |runner: &mut Runner, internal: bool| {
+                let mut processes: Vec<ProcessItem> = Vec::new();
+
+                #[derive(Tabled, Debug)]
+                struct ProcessItem {
+                    id: ColoredString,
+                    name: String,
+                    pid: String,
+                    uptime: String,
+                    #[tabled(rename = "↺")]
+                    restarts: String,
+                    status: ColoredString,
+                    cpu: String,
+                    mem: String,
+                    #[tabled(rename = "watching")]
+                    watch: String,
+                }
+
+                impl serde::Serialize for ProcessItem {
+                    fn serialize<S: serde::Serializer>(
+                        &self,
+                        serializer: S,
+                    ) -> Result<S::Ok, S::Error> {
+                        let trimmed_json = json!({
+                            "cpu": &self.cpu.trim(),
+                            "mem": &self.mem.trim(),
+                            "id": &self.id.0.trim(),
+                            "pid": &self.pid.trim(),
+                            "name": &self.name.trim(),
+                            "watch": &self.watch.trim(),
+                            "uptime": &self.uptime.trim(),
+                            "status": &self.status.0.trim(),
+                            "restarts": &self.restarts.trim(),
+                        });
+                        trimmed_json.serialize(serializer)
+                    }
+                }
+
+                if runner.is_empty() {
+                    println!("{} Process table empty", *helpers::SUCCESS);
+                } else {
+                    for (id, item) in runner.items() {
+                        // Check if process actually exists before reporting as online
+                        // A process marked as running but with a non-existent PID should be shown as crashed
+                        let process_actually_running = item.running && is_pid_alive(item.pid);
+
+                        let mut cpu_percent: String = string!("0.00%");
+                        let mut memory_usage: String = string!("0b");
+
+                        // Only fetch CPU and memory stats if process is actually running
+                        // Stopped or crashed processes should always show 0% CPU and 0b memory
+                        if process_actually_running {
+                            if internal {
+                                let mut usage_internals: (Option<f64>, Option<MemoryInfo>) =
+                                    (None, None);
+
+                                // For shell scripts, use shell_pid to capture the entire process tree
+                                let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+
+                                if let Ok(process) = Process::new(pid_for_monitoring as u32) {
+                                    usage_internals = (
+                                        Some(get_process_cpu_usage_with_children_from_process(
+                                            &process,
+                                            pid_for_monitoring,
+                                        )),
+                                        get_process_memory_with_children(pid_for_monitoring),
+                                    );
+                                }
+
+                                cpu_percent = match usage_internals.0 {
+                                    Some(percent) => format!("{:.2}%", percent),
+                                    None => string!("0.00%"),
+                                };
+
+                                memory_usage = match usage_internals.1 {
+                                    Some(usage) => helpers::format_memory(usage.rss),
+                                    None => string!("0b"),
+                                };
+                            } else {
+                                let info = http::info(&runner.remote.as_ref().unwrap(), id);
+
+                                if let Ok(info) = info {
+                                    let stats = info.json::<ItemSingle>().unwrap().stats;
+
+                                    cpu_percent = match stats.cpu_percent {
+                                        Some(percent) => format!("{:.2}%", percent),
+                                        None => string!("0.00%"),
+                                    };
+
+                                    memory_usage = match stats.memory_usage {
+                                        Some(usage) => helpers::format_memory(usage.rss),
+                                        None => string!("0b"),
+                                    };
+                                }
+                            }
+                        }
+
+                        let status = if process_actually_running {
+                            "online   ".green().bold()
+                        } else if item.running {
+                            // Process is marked as running but PID doesn't exist - it crashed
+                            "crashed   ".red().bold()
+                        } else {
+                            match item.crash.crashed {
+                                true => "crashed   ",
+                                false => "stopped   ",
+                            }
+                            .red()
+                            .bold()
+                        };
+
+                        // Only count uptime when the process is actually running
+                        // Crashed or stopped processes should show "none" uptime
+                        let uptime = if process_actually_running {
+                            format!("{}  ", helpers::format_duration(item.started))
+                        } else {
+                            string!("none  ")
+                        };
+
+                        processes.push(ProcessItem {
+                            status: status.into(),
+                            cpu: format!("{cpu_percent}   "),
+                            mem: format!("{memory_usage}   "),
+                            id: id.to_string().cyan().bold().into(),
+                            restarts: format!("{}  ", item.crash.value),
+                            name: format!("{}   ", item.name.clone()),
+                            pid: ternary!(
+                                process_actually_running,
+                                format!("{}  ", item.pid),
+                                string!("n/a  ")
+                            ),
+                            watch: ternary!(
+                                item.watch.enabled,
+                                format!("{}  ", item.watch.path),
+                                string!("disabled  ")
+                            ),
+                            uptime,
+                        });
+                    }
+
+                    let table = Table::new(&processes)
+                        .with(Style::rounded().remove_verticals())
+                        .with(
+                            Modify::new(Segment::all()).with(BorderColor::filled(Color::new(
+                                "\x1b[38;2;45;55;72m",
+                                "\x1b[39m",
+                            ))),
+                        )
+                        .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
+                        .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
+                        .to_string();
+
+                    if let Ok(json) = serde_json::to_string(&processes) {
+                        match format.as_str() {
+                            "raw" => println!("{:?}", processes),
+                            "json" => println!("{json}"),
+                            "default" => println!("{table}"),
+                            _ => {}
+                        };
+                    };
+                }
+            };
+            
+            render_list(&mut runner_clone, true);
+        } else {
+            // For remote servers or when no runner provided, use standard list
+            Self::list(format, server_name);
+        }
+    }
 }

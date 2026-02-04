@@ -156,7 +156,7 @@ pub fn start(
 
         // Allow CPU stats to accumulate before displaying the list
         thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
-        Internal::list(&string!("default"), &list_name);
+        Internal::list_with_runner(&string!("default"), &list_name, Some(&runner));
         return;
     }
 
@@ -182,10 +182,15 @@ pub fn start(
             }
             runner.save();
         }
+        
+        // Allow CPU stats to accumulate before displaying the list
+        thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
+        Internal::list_with_runner(&string!("default"), &list_name, Some(&runner));
+        return;
     } else {
         match args {
             Args::Id(id) => {
-                Internal {
+                runner = Internal {
                     id: *id,
                     runner,
                     server_name,
@@ -195,7 +200,7 @@ pub fn start(
             }
             Args::Script(script) => match runner.find(&script, server_name) {
                 Some(id) => {
-                    Internal {
+                    runner = Internal {
                         id,
                         runner,
                         server_name,
@@ -219,7 +224,7 @@ pub fn start(
 
     // Allow CPU stats to accumulate before displaying the list
     thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
-    Internal::list(&string!("default"), &list_name);
+    Internal::list_with_runner(&string!("default"), &list_name, Some(&runner));
 }
 
 fn parse_port_range(port_str: &str) -> Vec<u16> {
