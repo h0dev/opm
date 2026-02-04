@@ -51,6 +51,10 @@ pub struct Daemon {
     pub notifications: Option<Notifications>,
     #[serde(default)]
     pub restore_cleanup: Option<RestoreCleanup>,
+    /// Grace period in seconds before checking if a process has crashed after start/restart/reload
+    /// This prevents false crash detection for processes that take time to initialize
+    #[serde(default = "default_crash_grace_period")]
+    pub crash_grace_period: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -104,6 +108,10 @@ fn default_address() -> String {
 
 fn default_port() -> u64 {
     9876
+}
+
+fn default_crash_grace_period() -> u64 {
+    2
 }
 
 #[derive(Debug, Deserialize, Serialize)]
