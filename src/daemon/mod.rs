@@ -700,6 +700,10 @@ pub fn start(verbose: bool) {
         use opm::process::dump;
         let _startup_runner = dump::init_on_startup();
 
+        // Clean up all stale timestamp files from previous daemon sessions
+        // This prevents old timestamps from interfering with crash detection
+        cleanup_all_timestamp_files();
+
         // Start Unix socket server for CLI-daemon communication
         // Socket server must be started AFTER init_on_startup() to ensure memory cache is ready
         let socket_path = global!("opm.socket").to_string();
@@ -1009,6 +1013,32 @@ WantedBy={}
 }
 
 pub mod pid;
+
+// Helper function to clean up all stale timestamp files
+// This should be called on daemon startup and during restore to prevent
+// stale timestamps from previous sessions from interfering with crash detection
+pub fn cleanup_all_timestamp_files() {
+    if let Some(home_dir) = home::home_dir() {
+        let opm_dir = home_dir.join(".opm");
+        if let Ok(entries) = std::fs::read_dir(&opm_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name() {
+                    if let Some(name_str) = file_name.to_str() {
+                        // Remove all files matching pattern "last_action_*.timestamp"
+                        if name_str.starts_with("last_action_") && name_str.ends_with(".timestamp") {
+                            if let Err(e) = std::fs::remove_file(&path) {
+                                ::log::warn!("Failed to remove stale timestamp file {:?}: {}", path, e);
+                            } else {
+                                ::log::debug!("Cleaned up stale timestamp file: {:?}", path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 // Helper function to check if there was a recent action timestamp file
 fn has_recent_action_timestamp(id: usize) -> bool {
