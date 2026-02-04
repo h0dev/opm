@@ -197,6 +197,7 @@ pub fn start(
                     kind,
                 }
                 .restart(name, watch, *reset_env, false, false); // start by id - don't increment
+                runner.save();
             }
             Args::Script(script) => match runner.find(&script, server_name) {
                 Some(id) => {
@@ -207,6 +208,7 @@ pub fn start(
                         kind,
                     }
                     .restart(name, watch, *reset_env, false, false); // start existing - don't increment
+                    runner.save();
                 }
                 None => {
                     runner = Internal {
