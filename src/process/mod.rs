@@ -4285,4 +4285,63 @@ mod tests {
         assert!(!is_pid_alive(0), "PID 0 should be considered invalid");
         assert!(!is_pid_alive(-1), "Negative PID should be considered invalid");
     }
+
+    #[test]
+    fn test_started_process_shows_correct_status() {
+        // Test that a process started with a valid PID shows as "online" not "stopped"
+        // This validates the fix for the issue where processes would show as "stopped" 
+        // immediately after being started because the state wasn't persisted properly.
+        
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Create a process that was just started (simulating what happens after opm start)
+        // Use the current process PID to simulate a running process
+        let current_pid = std::process::id() as i64;
+        
+        let process = Process {
+            id,
+            pid: current_pid,  // Use a valid, alive PID
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_started_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello'".to_string(),
+            restarts: 0,
+            running: true,  // Process was just started, so running=true
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+        };
+
+        runner.list.insert(id, process);
+
+        // Fetch the process list to check status (this is what happens with opm ls)
+        let processes = runner.fetch();
+        assert_eq!(processes.len(), 1, "Should have one process");
+
+        // The process should show as "online" not "stopped" because:
+        // 1. running=true (was just started)
+        // 2. pid is alive (we're using current process PID)
+        // 3. crashed=false (no crash yet)
+        assert_eq!(
+            processes[0].status, "online",
+            "Started process with valid PID should show as online, not stopped"
+        );
+        
+        // Verify it's the correct process
+        assert_eq!(processes[0].name, "test_started_process");
+        assert_eq!(processes[0].pid, current_pid);
+    }
 }
