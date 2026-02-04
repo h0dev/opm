@@ -1175,6 +1175,10 @@ impl<'i> Internal<'i> {
             println!("{} OPM daemon started", *helpers::SUCCESS);
         }
         
+        // Clean up all stale timestamp files before restore to ensure fresh start
+        // This prevents old timestamp files from interfering with crash detection
+        crate::daemon::cleanup_all_timestamp_files();
+        
         // Now load runner from the updated dump file (with crashed processes marked as stopped)
         let mut runner = Runner::new();
 

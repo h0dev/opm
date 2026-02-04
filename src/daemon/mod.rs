@@ -700,6 +700,10 @@ pub fn start(verbose: bool) {
         use opm::process::dump;
         let _startup_runner = dump::init_on_startup();
 
+        // Clean up all stale timestamp files from previous daemon sessions
+        // This prevents old timestamps from interfering with crash detection
+        cleanup_all_timestamp_files();
+
         // Start Unix socket server for CLI-daemon communication
         // Socket server must be started AFTER init_on_startup() to ensure memory cache is ready
         let socket_path = global!("opm.socket").to_string();
@@ -1010,11 +1014,81 @@ WantedBy={}
 
 pub mod pid;
 
+// Constants for timestamp file handling
+const TIMESTAMP_FILE_PREFIX: &str = "last_action_";
+const TIMESTAMP_FILE_SUFFIX: &str = ".timestamp";
+
+/// Helper function to check if a filename matches the timestamp file pattern
+#[inline]
+fn is_timestamp_file(filename: &str) -> bool {
+    filename.starts_with(TIMESTAMP_FILE_PREFIX) && filename.ends_with(TIMESTAMP_FILE_SUFFIX)
+}
+
+/// Cleans up all stale timestamp files from the .opm directory.
+///
+/// Timestamp files (`last_action_*.timestamp`) are created when CLI actions are performed
+/// to prevent the daemon from immediately marking processes as crashed during the grace period.
+/// However, these files can become stale when the daemon is stopped/restarted, causing
+/// false crash detection on subsequent operations.
+///
+/// This function:
+/// - Scans the `~/.opm/` directory for files matching `last_action_*.timestamp`
+/// - Removes all matching files to ensure a clean state
+/// - Logs warnings for any errors encountered during cleanup
+///
+/// # When to call
+/// This should be called:
+/// - On daemon startup (after `dump::init_on_startup()`)
+/// - During restore operations (before restoring processes)
+///
+/// # Errors
+/// This function does not return errors. Instead, it logs warnings for any issues
+/// encountered and continues with cleanup to ensure best-effort removal of stale files.
+pub fn cleanup_all_timestamp_files() {
+    let Some(home_dir) = home::home_dir() else {
+        ::log::warn!("Cannot cleanup timestamp files: home directory not available. Stale timestamp files may cause false crash detection.");
+        return;
+    };
+
+    let opm_dir = home_dir.join(".opm");
+    let Ok(entries) = std::fs::read_dir(&opm_dir) else {
+        // Directory might not exist yet on first run - this is normal and not a concern
+        // If it fails for other reasons (permission denied, etc.), we'll discover it
+        // when the daemon tries to create files there during normal operation
+        return;
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                ::log::warn!("Failed to read directory entry during timestamp cleanup: {}", e);
+                continue;
+            }
+        };
+
+        let path = entry.path();
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+
+        // Remove all files matching pattern "last_action_*.timestamp"
+        if is_timestamp_file(file_name) {
+            if let Err(e) = std::fs::remove_file(&path) {
+                ::log::warn!("Failed to remove stale timestamp file {:?}: {}", path, e);
+            } else {
+                ::log::debug!("Cleaned up stale timestamp file: {:?}", path);
+            }
+        }
+    }
+}
+
 // Helper function to check if there was a recent action timestamp file
 fn has_recent_action_timestamp(id: usize) -> bool {
     match home::home_dir() {
         Some(home_dir) => {
-            let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+            let action_file = format!("{}/.opm/{}{}{}", home_dir.display(), TIMESTAMP_FILE_PREFIX, id, TIMESTAMP_FILE_SUFFIX);
             let path = std::path::Path::new(&action_file);
             if !path.exists() {
                 return false;
