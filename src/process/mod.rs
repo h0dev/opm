@@ -593,6 +593,10 @@ impl Runner {
                     process.running = false;
                 }
                 process.children = vec![];
+                // Reset PID to 0 to indicate process never successfully started
+                // This prevents handle_restart_failure from marking it as crashed
+                process.pid = 0;
+                process.shell_pid = None;
 
                 // Increment crash counter for restart failures to count against restart limit
                 // When dead=true (daemon restart): don't increment (daemon already incremented)
@@ -657,6 +661,10 @@ impl Runner {
                         process.running = false;
                     }
                     process.children = vec![];
+                    // Reset PID to 0 to indicate process never successfully started
+                    // This prevents handle_restart_failure from marking it as crashed
+                    process.pid = 0;
+                    process.shell_pid = None;
 
                     // Increment crash counter for restart failures to count against restart limit
                     // When dead=true (daemon restart): don't increment (daemon already incremented)
@@ -757,6 +765,10 @@ impl Runner {
                     process.running = false;
                 }
                 process.children = vec![];
+                // Reset PID to 0 to indicate process never successfully started
+                // This prevents handle_restart_failure from marking it as crashed
+                process.pid = 0;
+                process.shell_pid = None;
 
                 // Increment crash counter for reload failures to count against restart limit
                 // When dead=true (daemon reload): don't increment (daemon already incremented)
@@ -821,6 +833,10 @@ impl Runner {
                         process.running = false;
                     }
                     process.children = vec![];
+                    // Reset PID to 0 to indicate process never successfully started
+                    // This prevents handle_restart_failure from marking it as crashed
+                    process.pid = 0;
+                    process.shell_pid = None;
 
                     // Increment crash counter for reload failures to count against restart limit
                     // When dead=true (daemon reload): don't increment (daemon already incremented)

@@ -186,17 +186,17 @@ fn restart_process() {
         // is_pid_alive() handles all PID validation (including PID <= 0)
         // For processes with children, also check if any children are alive
         // This prevents false positives when shell scripts exit but leave background processes running
-        // The PID to monitor is the shell PID if it exists, otherwise the main process PID.
-        // This is the process that `opm` directly started. As long as this handle is alive,
-        // we consider the entire process group to be alive. This is more robust than
-        // trying to track children, which can be racy.
-        let pid_to_monitor = item.shell_pid.unwrap_or(item.pid);
-        let process_alive = opm::process::is_pid_alive(pid_to_monitor);
+        // 
+        // IMPORTANT: Always use item.pid for liveness checks, NOT shell_pid.
+        // The shell_pid (if set) points to the parent shell which may exit quickly after spawning
+        // the actual command. We only want to check if the actual command (item.pid) is alive.
+        // shell_pid is used for CPU monitoring purposes only.
+        let process_alive = opm::process::is_pid_alive(item.pid);
 
-        // Still useful to log if the handle is dead but children are somehow alive (reparented)
+        // Still useful to log if the main process is dead but children are somehow alive (reparented)
         if !process_alive && !item.children.is_empty() && item.children.iter().any(|&child_pid| opm::process::is_pid_alive(child_pid)) {
-             log!("[daemon] warning: handle process is dead but child processes were found alive (reparented)", 
-                 "name" => item.name, "id" => id, "handle_pid" => pid_to_monitor, 
+             log!("[daemon] warning: main process is dead but child processes were found alive (reparented)", 
+                 "name" => item.name, "id" => id, "main_pid" => item.pid, 
                  "children" => format!("{:?}", item.children));
         }
 
@@ -231,17 +231,17 @@ fn restart_process() {
              let recently_acted = has_recent_action_timestamp(id);
              
              // Check if this is a newly detected crash by looking at PID
-             // We need to check the PID that we're actually monitoring (shell_pid if available, otherwise pid)
-             // If the monitored PID is > 0, it means we thought the process was alive, so this is a new crash event
-             let monitored_pid = item.shell_pid.unwrap_or(item.pid);
-             let is_new_crash = monitored_pid > 0;
+             // If the PID is > 0, it means we thought the process was alive, so this is a new crash event
+             // Note: We check item.pid (the actual process), not shell_pid
+             let is_new_crash = item.pid > 0;
 
              // Don't mark as crashed if:
              // 1. There was a recent manual action and process was expected to be running, OR
              // 2. Process was just started (less than 2 seconds ago) - give it time to initialize
              if is_new_crash && !(recently_acted && item.running) && !just_started {
                 // Check if process exited successfully (exit code 0) by checking the child handle
-                // Use shell_pid if available, otherwise use regular pid
+                // Use shell_pid if available (since we store handles by shell_pid), otherwise use regular pid
+                // The handle is stored by shell_pid because that's the direct child of our spawn call
                 let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
                 let mut exited_successfully = false;
                 let mut handle_found = false;
@@ -255,7 +255,7 @@ fn restart_process() {
                         if let Ok(Some(status)) = child.try_wait() {
                             exited_successfully = status.success();
                             log!("[daemon] process exited", 
-                                 "name" => item.name, "id" => id, "pid" => process_handle_pid, 
+                                 "name" => item.name, "id" => id, "shell_pid" => process_handle_pid, 
                                  "success" => exited_successfully, "status" => format!("{:?}", status));
                         }
                     }
