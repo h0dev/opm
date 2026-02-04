@@ -1290,9 +1290,9 @@ impl<'i> Internal<'i> {
             // Create timestamp file for this restore action to prevent daemon from
             // immediately marking process as crashed during its startup grace period
             // This gives the process time to initialize without daemon interference
-            if let Some(home_dir) = home::home_dir() {
-                let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
-                let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+            // Write with fsync to ensure timestamp is durably written before daemon checks
+            if let Err(e) = opm::process::write_action_timestamp(*id) {
+                ::log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
             }
 
             // Wait for process to start up before checking PID

@@ -15,7 +15,6 @@
 //! The socket is created at `~/.opm/opm.sock`
 
 use anyhow::{anyhow, Result};
-use home::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -33,10 +32,11 @@ const ACTION_IGNORE_DURATION_SECS: u64 = 3;
 
 /// Helper function to create action timestamp file for a process
 /// This tells the daemon to ignore the process for ACTION_IGNORE_DURATION_SECS seconds
+/// Uses fsync to ensure timestamp is durably written before returning
 fn create_action_timestamp(id: usize) {
-    if let Some(home_dir) = home_dir() {
-        let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
-        let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+    use crate::process::write_action_timestamp;
+    if let Err(e) = write_action_timestamp(id) {
+        log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
     }
 }
 

@@ -8,6 +8,7 @@ use tokio::time::sleep;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
 use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message, Connector};
+use crate::process;
 
 pub struct AgentConnection {
     config: AgentConfig,
@@ -312,9 +313,9 @@ impl AgentConnection {
                                                       item.restart(false);
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
-                                                      if let Some(home_dir) = home::home_dir() {
-                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
-                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
+                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} started", process_id))
                                                   }
@@ -323,9 +324,9 @@ impl AgentConnection {
                                                       item.restart(true);
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
-                                                      if let Some(home_dir) = home::home_dir() {
-                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
-                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
+                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} restarted", process_id))
                                                   }
@@ -334,9 +335,9 @@ impl AgentConnection {
                                                       item.reload(true);
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
-                                                      if let Some(home_dir) = home::home_dir() {
-                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
-                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
+                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} reloaded", process_id))
                                                   }
@@ -345,9 +346,9 @@ impl AgentConnection {
                                                       item.stop();
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
-                                                      if let Some(home_dir) = home::home_dir() {
-                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
-                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
+                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} stopped", process_id))
                                                   }
@@ -356,9 +357,9 @@ impl AgentConnection {
                                                       item.clear_env();
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
-                                                      if let Some(home_dir) = home::home_dir() {
-                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
-                                                          let _ = std::fs::write(&action_file, chrono::Utc::now().to_rfc3339());
+                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
+                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} environment cleared", process_id))
                                                   }
