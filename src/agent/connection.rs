@@ -8,6 +8,7 @@ use tokio::time::sleep;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
 use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message, Connector};
+use crate::process;
 
 pub struct AgentConnection {
     config: AgentConfig,
@@ -313,7 +314,7 @@ impl AgentConnection {
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
                                                       // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = opm::process::write_action_timestamp(process_id) {
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
                                                           ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} started", process_id))
@@ -324,7 +325,7 @@ impl AgentConnection {
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
                                                       // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = opm::process::write_action_timestamp(process_id) {
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
                                                           ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} restarted", process_id))
@@ -335,7 +336,7 @@ impl AgentConnection {
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
                                                       // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = opm::process::write_action_timestamp(process_id) {
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
                                                           ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} reloaded", process_id))
@@ -346,7 +347,7 @@ impl AgentConnection {
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
                                                       // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = opm::process::write_action_timestamp(process_id) {
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
                                                           ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} stopped", process_id))
@@ -357,7 +358,7 @@ impl AgentConnection {
                                                       item.get_runner().save();
                                                       // Create timestamp file for this action to prevent daemon from overriding state
                                                       // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = opm::process::write_action_timestamp(process_id) {
+                                                      if let Err(e) = process::write_action_timestamp(process_id) {
                                                           ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
                                                       }
                                                       (true, format!("Process {} environment cleared", process_id))

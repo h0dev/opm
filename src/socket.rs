@@ -15,7 +15,6 @@
 //! The socket is created at `~/.opm/opm.sock`
 
 use anyhow::{anyhow, Result};
-use home::home_dir;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
