@@ -37,10 +37,8 @@ use tabled::{
     Table, Tabled,
 };
 
-// Grace period in seconds to wait after process start before checking for crashes
-// This prevents false crash detection when shell processes haven't spawned children yet
-// Reduced to 1 second to allow faster detection of immediately-crashing processes
-const STARTUP_GRACE_PERIOD_SECS: i64 = 1;
+// Grace period for crash detection is now configurable via daemon.crash_grace_period in config.toml
+// Default is 2 seconds to prevent false crash detection when processes are initializing
 
 static ENABLE_API: AtomicBool = AtomicBool::new(false);
 static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
@@ -202,13 +200,14 @@ fn restart_process() {
                  "children" => format!("{:?}", item.children));
         }
 
-        // If process is alive and has been running successfully, keep monitoring
+        // Check if process is alive and has been running successfully, keep monitoring
         // Note: We no longer auto-reset crash counter here - it persists to show
         // crash history over time. Only explicit reset (via reset_counters()) will clear it.
         if process_alive && item.running && item.crash.value > 0 {
             // Check if process has been running for at least the grace period
             let uptime_secs = (Utc::now() - item.started).num_seconds();
-            if uptime_secs >= STARTUP_GRACE_PERIOD_SECS {
+            let grace_period = daemon_config.crash_grace_period as i64;
+            if uptime_secs >= grace_period {
                 // Process has been stable - clear crashed flag but keep crash count
                 if runner.exists(id) {
                     let process = runner.process(id);
@@ -222,10 +221,11 @@ fn restart_process() {
 
          // If process is dead, handle crash/restart logic
          if !process_alive {
-             // Check if process was very recently started (within 2 seconds)
+             // Check if process was very recently started (within grace period)
              // This prevents the daemon from immediately restarting a process that just started
              // and gives the process time to initialize
-             let just_started = (Utc::now() - item.started).num_seconds() < 2;
+             let grace_period = daemon_config.crash_grace_period as i64;
+             let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
              
              // Check if there was a recent manual action (to prevent daemon from marking as crashed immediately after manual start/restart)
              let recently_acted = has_recent_action_timestamp(id);
@@ -339,9 +339,10 @@ fn restart_process() {
                 // Save state after crash detection to persist crash counter and PID updates
                 runner.save();
              } else if item.running {
-                 // Check if process was very recently started (within 2 seconds)
+                 // Check if process was very recently started (within grace period)
                  // This prevents the daemon from immediately restarting a process that just started
-                 let just_started = (Utc::now() - item.started).num_seconds() < 2;
+                 let grace_period = daemon_config.crash_grace_period as i64;
+                 let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
                  
                  // Check if there was a recent manual action (to prevent daemon from setting running=false immediately after manual start/restart)
                  let recently_acted = has_recent_action_timestamp(id);

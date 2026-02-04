@@ -1206,7 +1206,17 @@ impl Runner {
         if increment_counter {
             process.crash.value += 1;
         }
-        process.crash.crashed = true;
+        
+        // Only mark as crashed if the process was actually running before (had a valid PID)
+        // Processes that never successfully started (pid <= 0) should remain in stopped state
+        // 
+        // The PID indicates whether a process ran in this session:
+        // - pid > 0: Process was running (or restored and successfully restarted), failure is a crash
+        // - pid = 0: Process never started in this session (restored but not started, or explicitly stopped)
+        //            Failure to start is not a crash, process remains in stopped state
+        if process.pid > 0 {
+            process.crash.crashed = true;
+        }
 
         // Check if we've reached or exceeded max restart limit
         if process.crash.value >= max_restarts {
