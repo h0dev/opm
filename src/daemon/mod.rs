@@ -1035,21 +1035,15 @@ pub mod pid;
 /// This function does not return errors. Instead, it logs warnings for any issues
 /// encountered and continues with cleanup to ensure best-effort removal of stale files.
 pub fn cleanup_all_timestamp_files() {
-    let home_dir = match home::home_dir() {
-        Some(dir) => dir,
-        None => {
-            ::log::warn!("Cannot cleanup timestamp files: home directory not available");
-            return;
-        }
+    let Some(home_dir) = home::home_dir() else {
+        ::log::warn!("Cannot cleanup timestamp files: home directory not available");
+        return;
     };
 
     let opm_dir = home_dir.join(".opm");
-    let entries = match std::fs::read_dir(&opm_dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            ::log::warn!("Failed to read .opm directory for timestamp cleanup: {}", e);
-            return;
-        }
+    let Ok(entries) = std::fs::read_dir(&opm_dir) else {
+        ::log::warn!("Failed to read .opm directory for timestamp cleanup");
+        return;
     };
 
     for entry in entries {
