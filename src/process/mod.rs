@@ -710,6 +710,17 @@ impl Runner {
                 }
             }
 
+            // Create timestamp file for manual restarts (not daemon restarts) to prevent 
+            // daemon from immediately marking the process as crashed during startup
+            // This gives the process time to initialize before daemon monitoring kicks in
+            if !dead {
+                if let Some(home_dir) = home::home_dir() {
+                    let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+                    let _ = std::fs::write(&action_file, Utc::now().to_rfc3339());
+                    log::debug!("Created timestamp file for process {} after manual restart", id);
+                }
+            }
+
             // Save state after successful restart to persist changes
             self.save();
         }
@@ -898,6 +909,17 @@ impl Runner {
             if let Some(dir) = original_dir {
                 if let Err(err) = std::env::set_current_dir(&dir) {
                     log::warn!("Failed to restore working directory after reload: {}", err);
+                }
+            }
+
+            // Create timestamp file for manual reloads (not daemon reloads) to prevent 
+            // daemon from immediately marking the process as crashed during startup
+            // This gives the process time to initialize before daemon monitoring kicks in
+            if !dead {
+                if let Some(home_dir) = home::home_dir() {
+                    let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+                    let _ = std::fs::write(&action_file, Utc::now().to_rfc3339());
+                    log::debug!("Created timestamp file for process {} after manual reload", id);
                 }
             }
 

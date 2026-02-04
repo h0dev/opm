@@ -15,7 +15,7 @@ pub use process_info::{
 };
 pub use process_list::native_processes;
 
-pub const PROCESS_OPERATION_DELAY_MS: u64 = 100;
+pub const PROCESS_OPERATION_DELAY_MS: u64 = 500;
 
 #[derive(Debug, Clone)]
 pub struct NativeProcess {
