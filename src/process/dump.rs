@@ -181,14 +181,8 @@ pub fn commit_memory_direct() {
 /// - Merges and returns combined state
 /// - All operations use fallback defaults (empty runner) on error to ensure daemon stability
 pub fn read_merged_direct() -> Runner {
-    // Read permanent dump directly
-    let permanent = read_permanent_dump();
-    
-    // Read memory cache if it exists
-    let memory = read_memory_direct_option();
-    
-    // Merge and return
-    merge_runners(permanent, memory)
+    // Prefer memory cache; fallback to empty runner if no cache is present
+    read_memory_direct_option().unwrap_or_else(empty_runner)
 }
 
 pub fn from(address: &str, token: Option<&str>) -> Result<Runner, anyhow::Error> {
@@ -412,14 +406,8 @@ pub fn read_merged() -> Runner {
         }
     }
 
-    // Fallback: Read permanent dump directly without triggering recursive operations
-    let permanent = read_permanent_dump();
-
-    // Read memory cache if it exists
-    let memory = read_memory_direct_option();
-
-    // Merge and return
-    merge_runners(permanent, memory)
+    // Fallback: Return memory cache (or empty runner) without touching disk
+    read_memory_direct_option().unwrap_or_else(empty_runner)
 }
 
 /// Initialize on daemon startup: merge any old temp file into permanent, clean temp, clear memory
