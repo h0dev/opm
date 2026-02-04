@@ -176,13 +176,19 @@ pub fn commit_memory_direct() {
 /// during the monitoring loop. Unlike read_merged(), this never tries to use the socket.
 ///
 /// ## Behavior
-/// - Reads permanent dump from disk (creates empty if missing or corrupted)
-/// - Reads memory cache if it exists
-/// - Merges and returns combined state
+/// - If memory cache exists, returns it (most up-to-date state)
+/// - Otherwise, reads permanent dump from disk (for daemon startup or after memory clear)
+/// - Creates empty runner if permanent dump is missing or corrupted
 /// - All operations use fallback defaults (empty runner) on error to ensure daemon stability
 pub fn read_merged_direct() -> Runner {
-    // Prefer memory cache; fallback to empty runner if no cache is present
-    read_memory_direct_option().unwrap_or_else(empty_runner)
+    // Prefer memory cache if it exists (contains most recent state)
+    if let Some(memory) = read_memory_direct_option() {
+        return memory;
+    }
+    
+    // Fallback to permanent dump if memory cache is empty
+    // This is critical for daemon startup and restore operations
+    read_permanent_dump()
 }
 
 pub fn from(address: &str, token: Option<&str>) -> Result<Runner, anyhow::Error> {

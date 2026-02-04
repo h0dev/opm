@@ -42,6 +42,37 @@ pub static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> 
 const MAX_TERMINATION_WAIT_ATTEMPTS: u32 = 50;
 const TERMINATION_CHECK_INTERVAL_MS: u64 = 100;
 
+/// Write timestamp file durably to disk with fsync
+/// This ensures the timestamp is persisted before the function returns,
+/// preventing race conditions where the daemon might check for the file
+/// before it's fully written to disk.
+pub fn write_action_timestamp(id: usize) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    
+    if let Some(home_dir) = home::home_dir() {
+        let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+        let timestamp = Utc::now().to_rfc3339();
+        
+        // Open file with O_SYNC flag to ensure data is written synchronously
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o644)
+            .open(&action_file)?;
+        
+        // Write the timestamp
+        file.write_all(timestamp.as_bytes())?;
+        
+        // Explicitly sync to ensure data is flushed to disk
+        file.sync_all()?;
+        
+        log::debug!("Created and synced timestamp file for process {}", id);
+    }
+    Ok(())
+}
+
 /// Wait for a process to terminate gracefully
 /// Uses libc::kill(pid, 0) to check if process exists, which is the same approach
 /// as pid::running() but implemented here to avoid circular dependencies.
@@ -536,11 +567,9 @@ impl Runner {
 
             // Create timestamp file for this new process to prevent daemon from
             // immediately marking it as crashed if it exits quickly during startup
-            if let Some(home_dir) = home::home_dir() {
-                let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
-                if let Err(e) = std::fs::write(&action_file, Utc::now().to_rfc3339()) {
-                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
-                }
+            // Write with fsync to ensure timestamp is durably written before daemon checks
+            if let Err(e) = write_action_timestamp(id) {
+                log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
             }
         }
 
@@ -730,11 +759,10 @@ impl Runner {
             // Create timestamp file for manual restarts (not daemon restarts) to prevent 
             // daemon from immediately marking the process as crashed during startup
             // This gives the process time to initialize before daemon monitoring kicks in
+            // Write with fsync to ensure timestamp is durably written before daemon checks
             if !dead {
-                if let Some(home_dir) = home::home_dir() {
-                    let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
-                    let _ = std::fs::write(&action_file, Utc::now().to_rfc3339());
-                    log::debug!("Created timestamp file for process {} after manual restart", id);
+                if let Err(e) = write_action_timestamp(id) {
+                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
                 }
             }
 
@@ -932,11 +960,10 @@ impl Runner {
             // Create timestamp file for manual reloads (not daemon reloads) to prevent 
             // daemon from immediately marking the process as crashed during startup
             // This gives the process time to initialize before daemon monitoring kicks in
+            // Write with fsync to ensure timestamp is durably written before daemon checks
             if !dead {
-                if let Some(home_dir) = home::home_dir() {
-                    let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
-                    let _ = std::fs::write(&action_file, Utc::now().to_rfc3339());
-                    log::debug!("Created timestamp file for process {} after manual reload", id);
+                if let Err(e) = write_action_timestamp(id) {
+                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
                 }
             }
 

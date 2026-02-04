@@ -57,12 +57,13 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
     let save_result = std::panic::catch_unwind(|| {
         // Load current process state from memory cache
         let runner = Runner::new();
-        // Save current state without any modifications
+        // Save current state to both memory cache AND permanent storage
         // This preserves running/crashed state as-is for restore
-        runner.save(); // Save to memory cache on shutdown
+        // CRITICAL FIX: Must call save_permanent() to persist to disk,
+        // otherwise state is lost when daemon restarts (memory cache is cleared)
+        runner.save_permanent();
         
-        // Note: dump::commit_memory() removed - permanent storage commits only via manual 'opm save'
-        log!("[daemon] shutdown complete", "action" => "shutdown");
+        log!("[daemon] shutdown complete - state saved to permanent storage", "action" => "shutdown");
     });
 
     // If save failed, log a warning (but still proceed with cleanup)
