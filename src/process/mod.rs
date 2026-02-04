@@ -1433,7 +1433,10 @@ impl Runner {
             None => string!("0b"),
         };
 
-        let process_actually_running = item.running && is_pid_alive(item.pid);
+        // Check if process is alive by checking both the actual PID and shell PID (if present)
+        // For shell-wrapped processes, either PID being alive means the process is running
+        let process_actually_running = item.running && 
+            (is_pid_alive(item.pid) || item.shell_pid.map_or(false, |pid| is_pid_alive(pid)));
 
         let status = if process_actually_running {
             string!("online")
@@ -1607,7 +1610,9 @@ impl ProcessWrapper {
 
         // Check if process actually exists before reporting as online
         // A process marked as running but with a non-existent PID should be shown as crashed
-        let process_actually_running = item.running && is_pid_alive(item.pid);
+        // For shell-wrapped processes, either PID being alive means the process is running
+        let process_actually_running = item.running && 
+            (is_pid_alive(item.pid) || item.shell_pid.map_or(false, |pid| is_pid_alive(pid)));
 
         let mut memory_usage: Option<MemoryInfo> = None;
         let mut cpu_percent: Option<f64> = None;
@@ -4159,6 +4164,56 @@ mod tests {
         assert_eq!(
             processes[0].status, "stopped",
             "Stopped process should show as 'stopped' not 'crashed'"
+        );
+    }
+
+    #[test]
+    fn test_shell_wrapped_process_not_crashed_when_shell_alive() {
+        // Test that shell-wrapped processes show as online when shell_pid is alive
+        // even if the actual child PID check fails
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Get the current process PID (this test process itself) - we know it's alive
+        let alive_pid = std::process::id() as i64;
+
+        let process = Process {
+            id,
+            pid: UNLIKELY_PID, // Dead PID (actual child)
+            shell_pid: Some(alive_pid), // Alive shell PID (our test process)
+            env: BTreeMap::new(),
+            name: "test_shell_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "node server.js".to_string(),
+            restarts: 0,
+            running: true, // Marked as running
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+        };
+
+        runner.list.insert(id, process);
+
+        // Fetch the process list and check status
+        let processes = runner.fetch();
+        assert_eq!(processes.len(), 1, "Should have one process");
+
+        // The shell_pid is alive (our test process), so status should be "online"
+        // even though the actual child pid (UNLIKELY_PID) is dead
+        assert_eq!(
+            processes[0].status, "online",
+            "Process with alive shell_pid should show as online even if child pid is dead"
         );
     }
 }
