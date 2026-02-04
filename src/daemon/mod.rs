@@ -1014,6 +1014,16 @@ WantedBy={}
 
 pub mod pid;
 
+// Constants for timestamp file handling
+const TIMESTAMP_FILE_PREFIX: &str = "last_action_";
+const TIMESTAMP_FILE_SUFFIX: &str = ".timestamp";
+
+/// Helper function to check if a filename matches the timestamp file pattern
+#[inline]
+fn is_timestamp_file(filename: &str) -> bool {
+    filename.starts_with(TIMESTAMP_FILE_PREFIX) && filename.ends_with(TIMESTAMP_FILE_SUFFIX)
+}
+
 /// Cleans up all stale timestamp files from the .opm directory.
 ///
 /// Timestamp files (`last_action_*.timestamp`) are created when CLI actions are performed
@@ -1042,7 +1052,9 @@ pub fn cleanup_all_timestamp_files() {
 
     let opm_dir = home_dir.join(".opm");
     let Ok(entries) = std::fs::read_dir(&opm_dir) else {
-        ::log::warn!("Failed to read .opm directory for timestamp cleanup");
+        // Directory might not exist yet on first run - this is normal
+        // Only log if it's an unexpected error (will show as "Permission denied" etc.)
+        ::log::debug!("Could not read .opm directory for timestamp cleanup (directory may not exist yet)");
         return;
     };
 
@@ -1062,7 +1074,7 @@ pub fn cleanup_all_timestamp_files() {
         };
 
         // Remove all files matching pattern "last_action_*.timestamp"
-        if file_name.starts_with("last_action_") && file_name.ends_with(".timestamp") {
+        if is_timestamp_file(file_name) {
             if let Err(e) = std::fs::remove_file(&path) {
                 ::log::warn!("Failed to remove stale timestamp file {:?}: {}", path, e);
             } else {
@@ -1076,7 +1088,7 @@ pub fn cleanup_all_timestamp_files() {
 fn has_recent_action_timestamp(id: usize) -> bool {
     match home::home_dir() {
         Some(home_dir) => {
-            let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
+            let action_file = format!("{}/.opm/{}{}{}", home_dir.display(), TIMESTAMP_FILE_PREFIX, id, TIMESTAMP_FILE_SUFFIX);
             let path = std::path::Path::new(&action_file);
             if !path.exists() {
                 return false;
