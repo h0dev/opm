@@ -526,8 +526,14 @@ mod tests {
     /// Root cause: The `read_merged()` function's fallback logic (when daemon is not running)
     /// incorrectly returned memory cache (empty) instead of reading permanent dump file.
     /// 
-    /// Fix: Changed fallback from `read_memory_direct_option().unwrap_or_else(empty_runner)`
-    /// to `read_permanent_dump()` to read from disk when daemon is not running.
+    /// Fix: Changed fallback in `read_merged()` from:
+    ///   `read_memory_direct_option().unwrap_or_else(empty_runner)`
+    /// to:
+    ///   `read_permanent_dump()`
+    /// 
+    /// This test verifies that the file reading infrastructure works correctly.
+    /// Full integration testing of `read_merged()` would require mocking socket connections
+    /// and global paths, so manual verification was used to confirm the fix.
     #[test]
     fn test_read_permanent_dump_fallback() {
         // Test that read_permanent_dump() works correctly by creating a temporary dump
