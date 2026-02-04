@@ -1439,14 +1439,13 @@ impl Runner {
             string!("online")
         } else if item.running {
             // Process is marked as running but PID is not alive.
-            // Check if it's within a grace period since it was started.
             let grace_period = chrono::Duration::seconds(15); // 15-second grace period
-            if Utc::now().signed_duration_since(item.started) < grace_period && item.pid != 0 {
-                // It's still in the grace period, show it as "starting" instead of "crashed".
-                string!("starting")
-            } else if item.pid == 0 {
+            if item.pid == 0 {
                 // This is a restored/new process waiting to be started by the daemon.
                 string!("online")
+            } else if Utc::now().signed_duration_since(item.started) < grace_period {
+                // Avoid false crash reports during startup.
+                string!("starting")
             } else {
                 // Grace period has passed, now it's officially crashed.
                 string!("crashed")
@@ -2396,7 +2395,7 @@ mod tests {
                 hash: String::new(),
             },
             children: vec![],
-            started: Utc::now() - chrono::Duration::seconds(20),
+            started: Utc::now(),
             max_memory: 0,
             agent_id: None,
             frozen_until: None,
@@ -2408,11 +2407,11 @@ mod tests {
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
 
-        // The process is marked as running but the PID doesn't exist
-        // So status should be "crashed", not "online"
+        // The process is marked as running but the PID doesn't exist.
+        // It should show as "starting" during the grace period instead of "crashed".
         assert_eq!(
-            processes[0].status, "crashed",
-            "Process with dead PID should show as crashed, not online"
+            processes[0].status, "starting",
+            "Process with dead PID should show as starting during grace period"
         );
     }
 
@@ -2457,16 +2456,58 @@ mod tests {
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
 
-        // The process is marked as running but the PID doesn't exist - it's crashed
+        // The process is marked as running but the PID doesn't exist - it's crashed after grace period
         assert_eq!(
             processes[0].status, "crashed",
-            "Process with dead PID should show as crashed"
+            "Process with dead PID should show as crashed after grace period"
         );
 
         // Uptime should be "0s", not "5m" or similar
         assert_eq!(
             processes[0].uptime, "0s",
             "Crashed process should show 0s uptime, not accumulated time"
+        );
+    }
+
+    #[test]
+    fn test_dead_pid_after_grace_period_shows_crashed() {
+        // Test that processes marked as running but with dead PIDs show as crashed after grace period
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        let process = Process {
+            id,
+            pid: UNLIKELY_PID,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello'".to_string(),
+            restarts: 0,
+            running: true,
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now() - chrono::Duration::seconds(20),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+        };
+
+        runner.list.insert(id, process);
+
+        let processes = runner.fetch();
+        assert_eq!(processes.len(), 1, "Should have one process");
+        assert_eq!(
+            processes[0].status, "crashed",
+            "Process with dead PID should show as crashed after grace period"
         );
     }
 
