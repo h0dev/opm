@@ -1014,13 +1014,33 @@ WantedBy={}
 
 pub mod pid;
 
-// Helper function to clean up all stale timestamp files
-// This should be called on daemon startup and during restore to prevent
-// stale timestamps from previous sessions from interfering with crash detection
+/// Cleans up all stale timestamp files from the .opm directory.
+///
+/// Timestamp files (`last_action_*.timestamp`) are created when CLI actions are performed
+/// to prevent the daemon from immediately marking processes as crashed during the grace period.
+/// However, these files can become stale when the daemon is stopped/restarted, causing
+/// false crash detection on subsequent operations.
+///
+/// This function:
+/// - Scans the `~/.opm/` directory for files matching `last_action_*.timestamp`
+/// - Removes all matching files to ensure a clean state
+/// - Logs warnings for any errors encountered during cleanup
+///
+/// # When to call
+/// This should be called:
+/// - On daemon startup (after `dump::init_on_startup()`)
+/// - During restore operations (before restoring processes)
+///
+/// # Errors
+/// This function does not return errors. Instead, it logs warnings for any issues
+/// encountered and continues with cleanup to ensure best-effort removal of stale files.
 pub fn cleanup_all_timestamp_files() {
     let home_dir = match home::home_dir() {
         Some(dir) => dir,
-        None => return,
+        None => {
+            ::log::warn!("Cannot cleanup timestamp files: home directory not available");
+            return;
+        }
     };
 
     let opm_dir = home_dir.join(".opm");
