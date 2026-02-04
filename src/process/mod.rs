@@ -351,9 +351,26 @@ pub fn is_pid_alive(pid: i64) -> bool {
     }
 
     // First check if the PID exists using libc::kill
-    let pid_exists = unsafe { libc::kill(pid as i32, 0) == 0 };
-
-    if !pid_exists {
+    // IMPORTANT: kill(pid, 0) returns 0 on success, -1 on error
+    // We need to check errno to distinguish between:
+    // - ESRCH (3): No such process - the process doesn't exist
+    // - EPERM (1): Permission denied - the process exists but we can't signal it
+    // If errno is EPERM, the process exists, so we should return true
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    
+    if result != 0 {
+        // kill failed, check why
+        let err = std::io::Error::last_os_error();
+        let errno = err.raw_os_error().unwrap_or(0);
+        
+        // EPERM (1) means process exists but we don't have permission
+        // This should be treated as "process is alive"
+        if errno == libc::EPERM {
+            // Process exists but permission denied - treat as alive
+            return true;
+        }
+        
+        // Any other error (especially ESRCH) means process doesn't exist
         return false;
     }
 
@@ -4215,5 +4232,30 @@ mod tests {
             processes[0].status, "online",
             "Process with alive shell_pid should show as online even if child pid is dead"
         );
+    }
+
+    #[test]
+    fn test_is_pid_alive_with_eperm() {
+        // Test that is_pid_alive correctly handles EPERM (permission denied)
+        // When kill(pid, 0) returns EPERM, it means the process exists but we don't have permission
+        // This should be treated as "process is alive"
+        
+        // Test with PID 1 (init/systemd) which always exists
+        // We may not have permission to signal it, but it should still be considered alive
+        let init_alive = is_pid_alive(1);
+        assert!(init_alive, "PID 1 (init) should always be considered alive");
+        
+        // Test with our own process (we definitely have permission)
+        let own_pid = std::process::id() as i64;
+        let own_alive = is_pid_alive(own_pid);
+        assert!(own_alive, "Our own process should be considered alive");
+        
+        // Test with non-existent PID (should return false)
+        let dead_pid = is_pid_alive(UNLIKELY_PID);
+        assert!(!dead_pid, "Non-existent process should be considered dead");
+        
+        // Test with invalid PIDs (should return false)
+        assert!(!is_pid_alive(0), "PID 0 should be considered invalid");
+        assert!(!is_pid_alive(-1), "Negative PID should be considered invalid");
     }
 }
