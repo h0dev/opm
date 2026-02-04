@@ -4251,8 +4251,8 @@ mod tests {
         assert!(own_alive, "Our own process should be considered alive");
         
         // Test with non-existent PID (should return false)
-        let dead_pid = is_pid_alive(UNLIKELY_PID);
-        assert!(!dead_pid, "Non-existent process should be considered dead");
+        let unlikely_pid_alive = is_pid_alive(UNLIKELY_PID);
+        assert!(!unlikely_pid_alive, "Non-existent process should be considered dead");
         
         // Test with invalid PIDs (should return false)
         assert!(!is_pid_alive(0), "PID 0 should be considered invalid");
