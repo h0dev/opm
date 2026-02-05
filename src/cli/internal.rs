@@ -593,10 +593,13 @@ impl<'i> Internal<'i> {
                 let item = runner.process(self.id);
 
                 // Check if process actually exists before reporting as online
-                // Use PID-based health check only (ignore log-based signals).
-                // A process is considered running only if PID is valid and alive.
+                // Check both the actual PID and shell PID (if present) to determine if process is alive.
+                // For shell-wrapped processes, either PID being alive means the process is running.
+                // This is consistent with the daemon monitoring logic and prevents false crash detection.
                 let pid_valid = item.pid > 0;
-                let pid_alive = pid_valid && is_pid_alive(item.pid as i64);
+                let main_pid_alive = pid_valid && is_pid_alive(item.pid);
+                let shell_pid_alive = item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
+                let pid_alive = main_pid_alive || shell_pid_alive;
                 let process_actually_running = item.running && pid_alive;
                 let crashed_due_to_pid = item.running && pid_valid && !pid_alive;
 
@@ -1657,8 +1660,12 @@ impl<'i> Internal<'i> {
                 } else {
                     for (id, item) in runner.items() {
                         // Check if process actually exists before reporting as online
-                        // A process marked as running but with a non-existent PID should be shown as crashed
-                        let process_actually_running = item.running && is_pid_alive(item.pid);
+                        // Check both the actual PID and shell PID (if present) to determine if process is alive.
+                        // For shell-wrapped processes, either PID being alive means the process is running.
+                        // This is consistent with the daemon monitoring logic and prevents false crash detection.
+                        let pid_alive = is_pid_alive(item.pid) || 
+                            item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
+                        let process_actually_running = item.running && pid_alive;
 
                         let mut cpu_percent: String = string!("0.00%");
                         let mut memory_usage: String = string!("0b");
