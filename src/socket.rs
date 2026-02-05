@@ -173,8 +173,8 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         // Limit input size to 50MB to allow for larger state objects while preventing memory exhaustion
         // Increased from 10MB to accommodate larger process lists
         const MAX_REQUEST_SIZE: usize = 50 * 1024 * 1024;
-        let mut reader = BufReader::new(&mut stream);
-        let mut limited_reader = reader.by_ref().take(MAX_REQUEST_SIZE as u64);
+        let reader = BufReader::new(&mut stream);
+        let mut limited_reader = reader.take(MAX_REQUEST_SIZE as u64);
         
         // Read the request line
         match limited_reader.read_line(&mut line) {
@@ -530,7 +530,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     // Shutdown write side to signal completion
     // This ensures the client knows the response is complete
     if let Err(e) = stream.shutdown(std::net::Shutdown::Write) {
-        // Log warning but don't fail - connection might already be closing
+        // Log debug message but don't fail - connection might already be closing
         log::debug!("[socket] Error during write shutdown (may be expected): {}", e);
     }
 
