@@ -1150,7 +1150,9 @@ impl<'i> Internal<'i> {
             // Use socket readiness check instead of fixed sleep
             use global_placeholders::global;
             let socket_path = global!("opm.socket");
-            let max_retries = 10; // Same as SOCKET_RETRY_MAX in main.rs
+            // Increased max retries to allow more time for daemon initialization
+            // This is particularly important on slower systems or during high load
+            let max_retries = 20; // Increased from 10 to give daemon more time to start
             let mut retry_count = 0;
             let mut socket_ready = false;
             
@@ -1171,10 +1173,29 @@ impl<'i> Internal<'i> {
                 retry_count += 1;
             }
             
+            if !socket_ready {
+                // Socket not ready after initial retries, but daemon may still be starting
+                // Try a few more times with longer waits before giving up
+                eprintln!("{} Warning: Daemon socket not ready after initial attempts, retrying...", *helpers::WARN);
+                
+                // Additional retry loop with longer waits (1 second each)
+                let additional_retries = 5;
+                for i in 0..additional_retries {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    if opm::socket::is_daemon_running(&socket_path) {
+                        socket_ready = true;
+                        break;
+                    }
+                    
+                    if i == additional_retries - 1 {
+                        eprintln!("{} Warning: Daemon socket may not be ready after extended wait", *helpers::WARN);
+                    }
+                }
+            }
+            
+            // Print success message only once, after all retries are complete
             if socket_ready {
                 println!("{} OPM daemon started", *helpers::SUCCESS);
-            } else {
-                eprintln!("{} Warning: Daemon socket may not be ready", *helpers::WARN);
             }
         }
         
@@ -1183,6 +1204,8 @@ impl<'i> Internal<'i> {
         crate::daemon::cleanup_all_timestamp_files();
         
         // Read state from daemon only (no disk fallback) since daemon is guaranteed to be running
+        // If daemon connection fails here, it may be due to daemon still initializing
+        // The socket readiness checks above should have given the daemon enough time to start
         let mut runner = match Runner::new_from_daemon() {
             Ok(runner) => runner,
             Err(e) => {
