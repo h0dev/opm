@@ -971,7 +971,29 @@ fn main() {
             // Wait for daemon socket to be ready if we just started the daemon
             // This prevents "Connection refused" errors when restore tries to read from daemon
             if daemon_was_started {
-                std::thread::sleep(std::time::Duration::from_secs(DAEMON_INIT_WAIT_SECS));
+                use global_placeholders::global;
+                let socket_path = global!("opm.socket");
+                let max_retries = 10;
+                let mut retry_count = 0;
+                let mut socket_ready = false;
+                
+                while retry_count < max_retries {
+                    // Start with 200ms and increase by 100ms each retry
+                    let wait_ms = 200 + (retry_count * 100);
+                    std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+                    
+                    if opm::socket::is_daemon_running(&socket_path) {
+                        socket_ready = true;
+                        break;
+                    }
+                    
+                    retry_count += 1;
+                }
+                
+                if !socket_ready {
+                    eprintln!("{} Warning: Daemon socket may not be ready yet. Restore may fail.", 
+                              *opm::helpers::WARN);
+                }
             }
 
             // Auto-start agent if config exists
