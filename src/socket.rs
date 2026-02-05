@@ -167,6 +167,8 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     // Read request from stream
     // IMPORTANT: We create the BufReader in a limited scope so that it gets dropped
     // before we write to the stream. This prevents buffering synchronization issues.
+    // The BufReader borrows the stream mutably, but when the scope ends (line 200),
+    // the BufReader is dropped and the borrow ends, allowing us to use stream for writing.
     let request = {
         let mut line = String::new();
         
@@ -529,9 +531,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     
     // Shutdown write side to signal completion
     // This ensures the client knows the response is complete
+    // Expected errors: ENOTCONN (client closed connection early), EPIPE (broken pipe)
+    // These are normal when a client disconnects or crashes, so we only log at debug level
     if let Err(e) = stream.shutdown(std::net::Shutdown::Write) {
-        // Log debug message but don't fail - connection might already be closing
-        log::debug!("[socket] Error during write shutdown (may be expected): {}", e);
+        log::debug!("[socket] Error during write shutdown (client may have disconnected): {}", e);
     }
 
     log::debug!("[socket] Successfully sent response");
@@ -607,8 +610,10 @@ pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> R
     
     // Shutdown the write side to signal we're done sending
     // This ensures the server knows no more data is coming
+    // Note: In normal operation this should succeed. If it fails, it indicates
+    // a connection problem and we should report it to the caller.
     stream.shutdown(std::net::Shutdown::Write).map_err(|e| {
-        log::error!("[socket client] Failed to shutdown write: {}", e);
+        log::debug!("[socket client] Failed to shutdown write (connection issue): {}", e);
         anyhow!("Failed to shutdown write: {}", e)
     })?;
 
