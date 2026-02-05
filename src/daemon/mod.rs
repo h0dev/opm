@@ -192,13 +192,33 @@ fn restart_process() {
         // The shell_pid (if set) points to the parent shell which may exit quickly after spawning
         // the actual command. We only want to check if the actual command (item.pid) is alive.
         // shell_pid is used for CPU monitoring purposes only.
-        let process_alive = opm::process::is_pid_alive(item.pid);
+        let mut process_alive = opm::process::is_pid_alive(item.pid);
 
-        // Still useful to log if the main process is dead but children are somehow alive (reparented)
-        if !process_alive && !item.children.is_empty() && item.children.iter().any(|&child_pid| opm::process::is_pid_alive(child_pid)) {
-             log!("[daemon] warning: main process is dead but child processes were found alive (reparented)", 
-                 "name" => item.name, "id" => id, "main_pid" => item.pid, 
-                 "children" => format!("{:?}", item.children));
+        // Handle case where main process died but children are still alive
+        // This commonly occurs when shell scripts exit after spawning background processes
+        if !process_alive && !item.children.is_empty() {
+            // Check if any children are still alive
+            if let Some(&alive_child_pid) = item.children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid)) {
+                log!("[daemon] main process died but child process still alive, adopting child", 
+                    "name" => item.name, "id" => id, "old_pid" => item.pid, 
+                    "new_pid" => alive_child_pid, "children" => format!("{:?}", item.children));
+                
+                // Adopt the alive child as the new monitored PID
+                // This prevents false crash detection when shell scripts exit after spawning services
+                if runner.exists(id) {
+                    let process = runner.process(id);
+                    process.pid = alive_child_pid;
+                    // Remove the adopted child from the children list
+                    process.children.retain(|&pid| pid != alive_child_pid);
+                    // Save the updated state
+                    runner.save();
+                    
+                    // Mark process as alive since we adopted a child
+                    process_alive = true;
+                    log!("[daemon] successfully adopted child process", 
+                        "name" => item.name, "id" => id, "new_pid" => alive_child_pid);
+                }
+            }
         }
 
         // Check if process is alive and has been running successfully, keep monitoring
