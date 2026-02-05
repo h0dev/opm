@@ -430,6 +430,12 @@ impl Runner {
         dump::read_merged_direct()
     }
 
+    /// Read state from daemon only (no disk fallback)
+    /// Should only be used when daemon is guaranteed to be running (e.g., during restore)
+    pub fn new_from_daemon() -> Result<Self, String> {
+        dump::read_from_daemon_only()
+    }
+
     /// Refresh the runner state
     /// Note: This uses Runner::new() which queries via socket.
     /// Do not call from daemon context - use new_direct() instead.

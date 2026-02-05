@@ -417,6 +417,31 @@ pub fn read_merged() -> Runner {
     read_memory_direct_option().unwrap_or_else(|| read_permanent_dump())
 }
 
+/// Read state from daemon only (no disk fallback)
+/// This should only be used when daemon is guaranteed to be running (e.g., during restore)
+/// Returns error if daemon is not accessible
+pub fn read_from_daemon_only() -> Result<Runner, String> {
+    use global_placeholders::global;
+
+    let socket_path = global!("opm.socket");
+    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::GetState) {
+        Ok(crate::socket::SocketResponse::State(runner)) => {
+            log!("[dump::read_from_daemon_only] Retrieved state from daemon via socket");
+            Ok(runner)
+        }
+        Ok(_) => {
+            let err = "Unexpected response from daemon socket";
+            log!("[dump::read_from_daemon_only] {}", err);
+            Err(err.to_string())
+        }
+        Err(e) => {
+            let err = format!("Failed to read from daemon: {}", e);
+            log!("[dump::read_from_daemon_only] {}", err);
+            Err(err)
+        }
+    }
+}
+
 /// Initialize on daemon startup: merge any old temp file into permanent, clean temp, clear memory
 pub fn init_on_startup() -> Runner {
     // Read permanent dump

@@ -1155,8 +1155,18 @@ impl<'i> Internal<'i> {
         // This prevents old timestamp files from interfering with crash detection
         crate::daemon::cleanup_all_timestamp_files();
         
-        // Now load runner from the updated dump file (with crashed processes marked as stopped)
-        let mut runner = Runner::new();
+        // Read state from daemon only (no disk fallback) since daemon is guaranteed to be running
+        let mut runner = match Runner::new_from_daemon() {
+            Ok(runner) => runner,
+            Err(e) => {
+                crashln!(
+                    "{} Failed to read process state from daemon: {}\n{}",
+                    *helpers::FAIL,
+                    e,
+                    "Make sure the daemon is running properly.".white()
+                );
+            }
+        };
 
         // Get restore cleanup configuration
         let config = config::read();
@@ -1227,7 +1237,7 @@ impl<'i> Internal<'i> {
         // Now we restore all processes that have running=true, regardless of crashed state
         // This preserves the original state and only resets counters
         // Do NOT restore processes that were manually stopped (running=false)
-        let processes_to_restore: Vec<(usize, String, bool, bool)> = Runner::new()
+        let processes_to_restore: Vec<(usize, String, bool, bool)> = runner
             .list()
             .filter_map(|(id, p)| {
                 // Only restore processes that have running=true
