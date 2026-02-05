@@ -1495,15 +1495,24 @@ impl Runner {
             string!("online")
         } else if item.running {
             // Process is marked as running but PID is not alive.
-            let grace_period = chrono::Duration::seconds(15); // 15-second grace period
+            // Use longer grace period (15 seconds) to account for slow-starting processes
+            // and to avoid false crash reports during daemon restart cycles
+            let grace_period = chrono::Duration::seconds(15);
+            let time_since_start = Utc::now().signed_duration_since(item.started);
+            
             if item.pid == 0 {
-                // This is a restored/new process waiting to be started by the daemon.
-                string!("online")
-            } else if Utc::now().signed_duration_since(item.started) < grace_period {
-                // Avoid false crash reports during startup.
+                // PID is 0, which means either:
+                // 1. New/restored process waiting for daemon to start it, OR
+                // 2. Process just crashed and daemon is about to restart it
+                // In both cases, show "starting" since daemon will handle it within the monitoring interval
+                string!("starting")
+            } else if time_since_start < grace_period {
+                // PID is non-zero but process is dead, and we're still within grace period.
+                // This could be a very quick crash or the process is still initializing.
+                // Show "starting" to avoid false crash reports.
                 string!("starting")
             } else {
-                // Grace period has passed, now it's officially crashed.
+                // Grace period has passed and process is still dead - it's officially crashed.
                 string!("crashed")
             }
         } else {
@@ -1698,8 +1707,21 @@ impl ProcessWrapper {
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
-            // Process is marked as running but PID doesn't exist - it crashed
-            string!("crashed")
+            // Process is marked as running but PID is not alive.
+            // Use grace period to account for slow-starting processes and restart windows
+            let grace_period = chrono::Duration::seconds(15);
+            let time_since_start = Utc::now().signed_duration_since(item.started);
+            
+            if item.pid == 0 {
+                // PID is 0 - process is waiting to be started or restarted by daemon
+                string!("starting")
+            } else if time_since_start < grace_period {
+                // Within grace period - still initializing
+                string!("starting")
+            } else {
+                // Grace period expired - process has crashed
+                string!("crashed")
+            }
         } else {
             match item.crash.crashed {
                 true => string!("crashed"),
