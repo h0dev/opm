@@ -416,23 +416,16 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::StartProcess(id) => {
-            // Create action timestamp FIRST to prevent daemon from interfering during start
-            // This must be done before any state changes to ensure daemon sees it
-            create_action_timestamp(id);
-            
-            // Start a stopped process
+            // Start a stopped process by using restart with dead=false, increment_counter=false
+            // This properly spawns the process instead of just marking it as running
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
-                // This is a simplified start - full implementation would need process spawning logic
-                // For now, just mark as running and let the daemon handle actual process start
-                runner.process(id).running = true;
-                runner.process(id).crash.crashed = false;
-                
-                // Write to memory cache only
-                dump::write_memory_direct(&runner);
+                // Use restart() with dead=false (manual operation) and increment_counter=false (not a restart, just start)
+                // restart() will handle action timestamp creation, process spawning, and state management
+                runner.restart(id, false, false);
                 
                 SocketResponse::Success
             } else {
@@ -440,44 +433,16 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::RestartProcess(id) => {
-            // Create action timestamp FIRST to prevent daemon from interfering during restart
-            // This must be done before any state changes to ensure daemon sees it
-            create_action_timestamp(id);
-            
-            // Restart a process by stopping and starting it
+            // Restart a process by using restart with dead=false, increment_counter=true
+            // This properly stops the old process and spawns a new one
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
-                let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
-                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
-                
-                // Kill existing process
-                if pid > 0 {
-                    use crate::process::process_stop;
-                    
-                    // Kill children
-                    for child_pid in children {
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(child_pid as i32),
-                            nix::sys::signal::Signal::SIGTERM,
-                        );
-                    }
-                    
-                    // Kill main process
-                    let _ = process_stop(pid);
-                    
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                }
-                
-                // Mark for restart - daemon will handle actual spawning
-                runner.process(id).running = true;
-                runner.process(id).crash.crashed = false;
-                runner.process(id).restarts += 1;
-                
-                // Write to memory cache only
-                dump::write_memory_direct(&runner);
+                // Use restart() with dead=false (manual operation) and increment_counter=true (manual restart)
+                // restart() will handle action timestamp creation, process stopping, spawning, and state management
+                runner.restart(id, false, true);
                 
                 SocketResponse::Success
             } else {
