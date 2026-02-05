@@ -198,6 +198,10 @@ fn restart_process() {
         // This commonly occurs when shell scripts exit after spawning background processes
         if !process_alive && !item.children.is_empty() {
             // Check if any children are still alive
+            // Note: We select the first alive child arbitrarily. In practice, for shell scripts
+            // that spawn a single background service (the common use case), there will typically
+            // be only one child. For multiple children, adopting any alive child allows continued
+            // monitoring rather than falsely marking the entire process group as crashed.
             if let Some(&alive_child_pid) = item.children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid)) {
                 log!("[daemon] main process died but child process still alive, adopting child", 
                     "name" => item.name, "id" => id, "old_pid" => item.pid, 
@@ -207,10 +211,11 @@ fn restart_process() {
                 // This prevents false crash detection when shell scripts exit after spawning services
                 if runner.exists(id) {
                     let process = runner.process(id);
+                    // Perform both mutations before saving to ensure atomicity
                     process.pid = alive_child_pid;
                     // Remove the adopted child from the children list
                     process.children.retain(|&pid| pid != alive_child_pid);
-                    // Save the updated state
+                    // Save the updated state atomically
                     runner.save();
                     
                     // Mark process as alive since we adopted a child
