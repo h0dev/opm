@@ -3099,8 +3099,9 @@ mod tests {
 
     #[test]
     fn test_restored_process_shows_as_online_not_crashed() {
-        // Test that restored processes (PID=0, running=true) show as "online" not "crashed"
+        // Test that restored processes (PID=0, running=true) show as "starting" not "crashed"
         // This prevents false "crashed" status after system restore/reboot
+        // and accurately reflects that the process is waiting to be started by the daemon
         let mut runner = setup_test_runner();
         let id = runner.id.next();
 
@@ -3136,11 +3137,12 @@ mod tests {
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
 
-        // Restored process should show as "online" not "crashed"
-        // This prevents confusion when processes are waiting to be started by daemon
+        // Restored process should show as "starting" not "crashed"
+        // This accurately reflects that the process is waiting to be started by daemon
+        // Previously this showed as "online" which was misleading since PID=0 means not running
         assert_eq!(
-            processes[0].status, "online",
-            "Restored process with PID=0 should show as online, not crashed"
+            processes[0].status, "starting",
+            "Restored process with PID=0 should show as starting, not crashed or online"
         );
     }
 
