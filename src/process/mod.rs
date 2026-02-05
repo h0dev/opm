@@ -592,6 +592,16 @@ impl Runner {
                 );
             };
         } else {
+            // Create timestamp file FIRST (before spawning process or modifying state)
+            // to prevent daemon from interfering during the entire restart operation.
+            // This must be done before any state changes to ensure daemon sees it.
+            // Skip for daemon-initiated restarts (dead=true) since daemon will handle those.
+            if !dead {
+                if let Err(e) = write_action_timestamp(id) {
+                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
+                }
+            }
+            
             let process = self.process(id);
             let full_config = config::read();
             let config = full_config.runner;
@@ -762,16 +772,9 @@ impl Runner {
                 }
             }
 
-            // Create timestamp file for manual restarts (not daemon restarts) to prevent 
-            // daemon from immediately marking the process as crashed during startup
-            // This gives the process time to initialize before daemon monitoring kicks in
-            // Write with fsync to ensure timestamp is durably written before daemon checks
-            if !dead {
-                if let Err(e) = write_action_timestamp(id) {
-                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
-                }
-            }
-
+            // Timestamp file was already created at the beginning of this method
+            // to prevent race conditions with the daemon during the entire restart operation.
+            
             // Save state after successful restart to persist changes
             self.save();
         }

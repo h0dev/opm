@@ -263,7 +263,7 @@ fn restart_process() {
              let is_new_crash = item.pid > 0;
 
              // Don't mark as crashed if:
-             // 1. There was a recent manual action (within 3 seconds), OR
+             // 1. There was a recent manual action (within 5 seconds), OR
              // 2. Process was just started (within grace period) - give it time to initialize
              if is_new_crash && !recently_acted && !just_started {
                 // Check if process exited successfully (exit code 0) by checking the child handle
@@ -1121,12 +1121,14 @@ fn has_recent_action_timestamp(id: usize) -> bool {
                 return false;
             }
             
-            // Check if file is less than 3 seconds old
+            // Check if file is less than 5 seconds old
+            // Increased from 3 to 5 seconds to give more time for process startup
+            // and prevent daemon from interfering during manual start/restart operations
             if let Ok(metadata) = std::fs::metadata(&action_file) {
                 if let Ok(modified_time) = metadata.modified() {
                     let now = std::time::SystemTime::now();
                     if let Ok(elapsed) = now.duration_since(modified_time) {
-                        return elapsed.as_secs() < 3; // Less than 3 seconds old
+                        return elapsed.as_secs() < 5; // Less than 5 seconds old
                     }
                 }
             }

@@ -28,7 +28,7 @@ use crate::process::{dump, Runner};
 /// This constant documents the timeout used by daemon/mod.rs::has_recent_action_timestamp().
 /// Keep this in sync with the actual timeout value in the daemon code.
 #[allow(dead_code)]
-const ACTION_IGNORE_DURATION_SECS: u64 = 3;
+const ACTION_IGNORE_DURATION_SECS: u64 = 5;
 
 /// Helper function to create action timestamp file for a process
 /// This tells the daemon to ignore the process for ACTION_IGNORE_DURATION_SECS seconds
@@ -416,6 +416,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::StartProcess(id) => {
+            // Create action timestamp FIRST to prevent daemon from interfering during start
+            // This must be done before any state changes to ensure daemon sees it
+            create_action_timestamp(id);
+            
             // Start a stopped process
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
@@ -436,6 +440,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::RestartProcess(id) => {
+            // Create action timestamp FIRST to prevent daemon from interfering during restart
+            // This must be done before any state changes to ensure daemon sees it
+            create_action_timestamp(id);
+            
             // Restart a process by stopping and starting it
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
