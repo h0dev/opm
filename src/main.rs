@@ -944,8 +944,9 @@ fn main() {
             // Ensure daemon is running before restore (silent mode)
             // Read config to check if API/WebUI should be enabled
             let config = opm::config::read();
-            if !daemon::pid::exists() {
+            let daemon_was_started = if !daemon::pid::exists() {
                 daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+                true
             } else {
                 // Check if daemon is actually running (not just a stale PID file)
                 match daemon::pid::read() {
@@ -953,14 +954,24 @@ fn main() {
                         if !daemon::pid::running(pid.get()) {
                             daemon::pid::remove();
                             daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+                            true
+                        } else {
+                            false
                         }
                     }
                     Err(_) => {
                         // PID file exists but can't be read, remove and start daemon
                         daemon::pid::remove();
                         daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+                        true
                     }
                 }
+            };
+
+            // Wait for daemon socket to be ready if we just started the daemon
+            // This prevents "Connection refused" errors when restore tries to read from daemon
+            if daemon_was_started {
+                std::thread::sleep(std::time::Duration::from_secs(DAEMON_INIT_WAIT_SECS));
             }
 
             // Auto-start agent if config exists
