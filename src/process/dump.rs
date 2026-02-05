@@ -422,24 +422,65 @@ pub fn read_merged() -> Runner {
 /// Returns error if daemon is not accessible
 pub fn read_from_daemon_only() -> Result<Runner, String> {
     use global_placeholders::global;
+    use std::thread;
+    use std::time::Duration;
 
     let socket_path = global!("opm.socket");
-    match crate::socket::send_request(&socket_path, crate::socket::SocketRequest::GetState) {
-        Ok(crate::socket::SocketResponse::State(runner)) => {
-            log!("[dump::read_from_daemon_only] Retrieved state from daemon via socket");
-            Ok(runner)
-        }
-        Ok(_) => {
-            let err = "Unexpected response from daemon socket";
-            log!("[dump::read_from_daemon_only] {}", err);
-            Err(err.to_string())
-        }
-        Err(e) => {
-            let err = format!("Failed to read from daemon: {}", e);
-            log!("[dump::read_from_daemon_only] {}", err);
-            Err(err)
+    
+    // Use more aggressive retry strategy for restore operations
+    // The daemon might be busy processing existing processes, so we give it more time
+    // We use send_request_once directly to avoid nested retries
+    const MAX_RETRIES: u32 = 10;
+    const INITIAL_BACKOFF_MS: u64 = 100;
+    
+    let mut last_error = None;
+    
+    for attempt in 0..MAX_RETRIES {
+        match crate::socket::send_request_once(&socket_path, &crate::socket::SocketRequest::GetState) {
+            Ok(crate::socket::SocketResponse::State(runner)) => {
+                if attempt > 0 {
+                    log!(
+                        "[dump::read_from_daemon_only] Retrieved state from daemon after {} retries",
+                        attempt
+                    );
+                } else {
+                    log!("[dump::read_from_daemon_only] Retrieved state from daemon via socket");
+                }
+                return Ok(runner);
+            }
+            Ok(_) => {
+                let err = "Unexpected response from daemon socket";
+                log!("[dump::read_from_daemon_only] {}", err);
+                return Err(err.to_string());
+            }
+            Err(e) => {
+                last_error = Some(e);
+                
+                // Don't retry on the last attempt
+                if attempt < MAX_RETRIES - 1 {
+                    // Exponential backoff with cap: 100ms, 200ms, 400ms, 800ms, then capped at 1000ms
+                    let backoff_ms = (INITIAL_BACKOFF_MS * 2u64.pow(attempt)).min(1000);
+                    thread::sleep(Duration::from_millis(backoff_ms));
+                    log!(
+                        "[dump::read_from_daemon_only] Retry {}/{} after {}ms: {}",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        backoff_ms,
+                        last_error.as_ref().unwrap()
+                    );
+                }
+            }
         }
     }
+    
+    // All retries exhausted
+    let err = format!(
+        "Failed to read from daemon after {} retries: {}",
+        MAX_RETRIES,
+        last_error.unwrap()
+    );
+    log!("[dump::read_from_daemon_only] {}", err);
+    Err(err)
 }
 
 /// Initialize on daemon startup: merge any old temp file into permanent, clean temp, clear memory

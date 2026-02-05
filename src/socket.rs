@@ -520,7 +520,7 @@ pub fn send_request(socket_path: &str, request: SocketRequest) -> Result<SocketR
 }
 
 /// Internal function to attempt a single socket request without retry
-fn send_request_once(socket_path: &str, request: &SocketRequest) -> Result<SocketResponse> {
+pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> Result<SocketResponse> {
     let mut stream = UnixStream::connect(socket_path).map_err(|e| {
         anyhow!(
             "Failed to connect to daemon socket: {}. Is the daemon running?",
