@@ -972,9 +972,11 @@ fn main() {
                 }
             };
 
-            // Wait for daemon socket to be ready if we just started the daemon
+            // Wait for daemon socket to be ready before proceeding with restore
             // This prevents "Connection refused" errors when restore tries to read from daemon
-            if daemon_was_started {
+            // We check socket readiness regardless of whether we just started the daemon,
+            // because in container restart scenarios the daemon might exist but socket isn't ready yet
+            {
                 use global_placeholders::global;
                 let socket_path = global!("opm.socket");
                 let mut retry_count = 0;
@@ -987,13 +989,21 @@ fn main() {
                 let total_wait_secs = total_wait_ms as f64 / 1000.0;
                 
                 // Try immediately first, then retry with increasing delays
+                // Use shorter retry parameters if daemon was already running
+                let max_retries = if daemon_was_started {
+                    SOCKET_RETRY_MAX
+                } else {
+                    // If daemon was already running, reduce retries since socket should be ready quickly
+                    3
+                };
+                
                 loop {
                     if opm::socket::is_daemon_running(&socket_path) {
                         socket_ready = true;
                         break;
                     }
                     
-                    if retry_count >= SOCKET_RETRY_MAX {
+                    if retry_count >= max_retries {
                         break;
                     }
                     
