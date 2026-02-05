@@ -948,7 +948,7 @@ fn main() {
             // Ensure daemon is running before restore (silent mode)
             // Read config to check if API/WebUI should be enabled
             let config = opm::config::read();
-            let daemon_was_started = if !daemon::pid::exists() {
+            let _daemon_was_started = if !daemon::pid::exists() {
                 daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
                 true
             } else {
@@ -988,14 +988,10 @@ fn main() {
                     .sum();
                 let total_wait_secs = total_wait_ms as f64 / 1000.0;
                 
-                // Try immediately first, then retry with increasing delays
-                // Use reduced retry count if daemon was already running (socket should be ready quickly)
-                // Use full retry count if we just started the daemon (socket needs time to initialize)
-                let max_retries = if daemon_was_started {
-                    SOCKET_RETRY_MAX // Full retries when we just started the daemon
-                } else {
-                    3 // Reduced retries when daemon was already running
-                };
+                // Always use full retry count for socket readiness checks
+                // Even if daemon was already running, socket might be reinitializing
+                // (e.g., during container restarts or daemon recovery)
+                let max_retries = SOCKET_RETRY_MAX;
                 
                 loop {
                     if opm::socket::is_daemon_running(&socket_path) {

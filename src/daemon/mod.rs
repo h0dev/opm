@@ -745,19 +745,36 @@ pub fn start(verbose: bool) {
 
         // Start Unix socket server for CLI-daemon communication
         // Socket server must be started AFTER init_on_startup() to ensure memory cache is ready
+        // Use a channel to synchronize socket server readiness
         let socket_path = global!("opm.socket").to_string();
         let socket_path_clone = socket_path.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        
         match std::thread::Builder::new()
             .name("socket-server".to_string())
             .spawn(move || {
-                if let Err(e) = opm::socket::start_socket_server(&socket_path) {
+                // Use start_socket_server_with_callback to signal when ready
+                if let Err(e) = opm::socket::start_socket_server_with_callback(&socket_path, Some(move || {
+                    // Signal that socket server is ready to accept connections
+                    let _ = ready_tx.send(());
+                })) {
                     log!("[daemon] Unix socket server error", "error" => format!("{}", e));
                     eprintln!("[daemon] Critical: Unix socket server failed to start: {}", e);
                 }
             })
         {
             Ok(_) => {
-                log!("[daemon] Unix socket server started", "path" => socket_path_clone);
+                // Wait for socket server to be ready with a timeout
+                // This ensures the socket is fully initialized before the daemon continues
+                match ready_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                    Ok(_) => {
+                        log!("[daemon] Unix socket server ready", "path" => socket_path_clone);
+                    }
+                    Err(_) => {
+                        log!("[daemon] Warning: Socket server readiness timeout", "path" => socket_path_clone);
+                        eprintln!("[daemon] Warning: Socket server may not be ready. Continuing anyway.");
+                    }
+                }
             }
             Err(e) => {
                 log!("[daemon] Failed to spawn socket server thread", "error" => format!("{}", e));
