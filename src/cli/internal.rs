@@ -1146,9 +1146,36 @@ impl<'i> Internal<'i> {
             // Start the daemon with appropriate flags
             crate::daemon::restart(&api_enabled, &webui_enabled, false);
             
-            // Give daemon a moment to initialize
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            println!("{} OPM daemon started", *helpers::SUCCESS);
+            // Wait for daemon socket to be ready before proceeding
+            // Use socket readiness check instead of fixed sleep
+            use global_placeholders::global;
+            let socket_path = global!("opm.socket");
+            let max_retries = 10; // Same as SOCKET_RETRY_MAX in main.rs
+            let mut retry_count = 0;
+            let mut socket_ready = false;
+            
+            loop {
+                if opm::socket::is_daemon_running(&socket_path) {
+                    socket_ready = true;
+                    break;
+                }
+                
+                if retry_count >= max_retries {
+                    break;
+                }
+                
+                // Start with 200ms and increase by 100ms each retry
+                // (matches SOCKET_RETRY_INITIAL_MS and SOCKET_RETRY_INCREMENT_MS in main.rs)
+                let wait_ms = 200 + (retry_count * 100);
+                std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+                retry_count += 1;
+            }
+            
+            if socket_ready {
+                println!("{} OPM daemon started", *helpers::SUCCESS);
+            } else {
+                eprintln!("{} Warning: Daemon socket may not be ready", *helpers::WARN);
+            }
         }
         
         // Clean up all stale timestamp files before restore to ensure fresh start

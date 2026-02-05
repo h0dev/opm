@@ -795,6 +795,10 @@ fn remove_agent_config() -> Result<(), std::io::Error> {
 
 // Time to wait for daemon to initialize after starting (in seconds)
 const DAEMON_INIT_WAIT_SECS: u64 = 2;
+// Socket readiness retry parameters
+const SOCKET_RETRY_MAX: u32 = 10;
+const SOCKET_RETRY_INITIAL_MS: u64 = 200;
+const SOCKET_RETRY_INCREMENT_MS: u64 = 100;
 
 fn start_agent_daemon() {
     use nix::unistd::{fork, setsid, ForkResult};
@@ -944,8 +948,9 @@ fn main() {
             // Ensure daemon is running before restore (silent mode)
             // Read config to check if API/WebUI should be enabled
             let config = opm::config::read();
-            if !daemon::pid::exists() {
+            let daemon_was_started = if !daemon::pid::exists() {
                 daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+                true
             } else {
                 // Check if daemon is actually running (not just a stale PID file)
                 match daemon::pid::read() {
@@ -953,13 +958,69 @@ fn main() {
                         if !daemon::pid::running(pid.get()) {
                             daemon::pid::remove();
                             daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+                            true
+                        } else {
+                            false
                         }
                     }
                     Err(_) => {
                         // PID file exists but can't be read, remove and start daemon
                         daemon::pid::remove();
                         daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
+                        true
                     }
+                }
+            };
+
+            // Wait for daemon socket to be ready before proceeding with restore
+            // This prevents "Connection refused" errors when restore tries to read from daemon
+            // We check socket readiness regardless of whether we just started the daemon,
+            // because in container restart scenarios the daemon might exist but socket isn't ready yet
+            {
+                use global_placeholders::global;
+                let socket_path = global!("opm.socket");
+                let mut retry_count = 0;
+                let mut socket_ready = false;
+                
+                // Calculate total max wait time for warning message
+                let total_wait_ms: u64 = (0..SOCKET_RETRY_MAX)
+                    .map(|i| SOCKET_RETRY_INITIAL_MS + (i as u64 * SOCKET_RETRY_INCREMENT_MS))
+                    .sum();
+                let total_wait_secs = total_wait_ms as f64 / 1000.0;
+                
+                // Try immediately first, then retry with increasing delays
+                // Use reduced retry count if daemon was already running (socket should be ready quickly)
+                // Use full retry count if we just started the daemon (socket needs time to initialize)
+                let max_retries = if daemon_was_started {
+                    SOCKET_RETRY_MAX // Full retries when we just started the daemon
+                } else {
+                    3 // Reduced retries when daemon was already running
+                };
+                
+                loop {
+                    if opm::socket::is_daemon_running(&socket_path) {
+                        socket_ready = true;
+                        break;
+                    }
+                    
+                    if retry_count >= max_retries {
+                        break;
+                    }
+                    
+                    // Exponential backoff: start with SOCKET_RETRY_INITIAL_MS and increase by SOCKET_RETRY_INCREMENT_MS each retry
+                    let wait_ms = SOCKET_RETRY_INITIAL_MS + (retry_count as u64 * SOCKET_RETRY_INCREMENT_MS);
+                    std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+                    retry_count += 1;
+                }
+                
+                if !socket_ready {
+                    eprintln!(
+                        "{} Warning: Daemon socket is not ready after ~{:.1} seconds. Restore may fail.\n\
+                         {} Consider waiting a moment and retrying the restore command.", 
+                        *opm::helpers::WARN,
+                        total_wait_secs,
+                        " ".repeat(4) // Indent the second line
+                    );
                 }
             }
 
