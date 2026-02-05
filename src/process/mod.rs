@@ -42,6 +42,11 @@ pub static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> 
 const MAX_TERMINATION_WAIT_ATTEMPTS: u32 = 50;
 const TERMINATION_CHECK_INTERVAL_MS: u64 = 100;
 
+// Grace period for process status determination
+// Processes within this period after start show as "starting" instead of "crashed"
+// This prevents false crash reports during slow process initialization and restart cycles
+const STATUS_GRACE_PERIOD_SECS: i64 = 15;
+
 /// Write timestamp file durably to disk with fsync
 /// This ensures the timestamp is persisted before the function returns,
 /// preventing race conditions where the daemon might check for the file
@@ -1495,16 +1500,29 @@ impl Runner {
             string!("online")
         } else if item.running {
             // Process is marked as running but PID is not alive.
-            let grace_period = chrono::Duration::seconds(15); // 15-second grace period
+            // Use longer grace period to account for slow-starting processes
+            // and to avoid false crash reports during daemon restart cycles
+            let grace_period = chrono::Duration::seconds(STATUS_GRACE_PERIOD_SECS);
+            
             if item.pid == 0 {
-                // This is a restored/new process waiting to be started by the daemon.
-                string!("online")
-            } else if Utc::now().signed_duration_since(item.started) < grace_period {
-                // Avoid false crash reports during startup.
+                // PID is 0, which means either:
+                // 1. New/restored process waiting for daemon to start it, OR
+                // 2. Process just crashed and daemon is about to restart it
+                // In both cases, show "starting" since daemon will handle it within the monitoring interval
                 string!("starting")
             } else {
-                // Grace period has passed, now it's officially crashed.
-                string!("crashed")
+                // Calculate time since start only when needed (not for pid=0 case)
+                let time_since_start = Utc::now().signed_duration_since(item.started);
+                
+                if time_since_start < grace_period {
+                    // PID is non-zero but process is dead, and we're still within grace period.
+                    // This could be a very quick crash or the process is still initializing.
+                    // Show "starting" to avoid false crash reports.
+                    string!("starting")
+                } else {
+                    // Grace period has passed and process is still dead - it's officially crashed.
+                    string!("crashed")
+                }
             }
         } else {
             match item.crash.crashed {
@@ -1698,8 +1716,25 @@ impl ProcessWrapper {
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
-            // Process is marked as running but PID doesn't exist - it crashed
-            string!("crashed")
+            // Process is marked as running but PID is not alive.
+            // Use grace period to account for slow-starting processes and restart windows
+            let grace_period = chrono::Duration::seconds(STATUS_GRACE_PERIOD_SECS);
+            
+            if item.pid == 0 {
+                // PID is 0 - process is waiting to be started or restarted by daemon
+                string!("starting")
+            } else {
+                // Calculate time since start only when needed (not for pid=0 case)
+                let time_since_start = Utc::now().signed_duration_since(item.started);
+                
+                if time_since_start < grace_period {
+                    // Within grace period - still initializing
+                    string!("starting")
+                } else {
+                    // Grace period expired - process has crashed
+                    string!("crashed")
+                }
+            }
         } else {
             match item.crash.crashed {
                 true => string!("crashed"),
@@ -3077,8 +3112,9 @@ mod tests {
 
     #[test]
     fn test_restored_process_shows_as_online_not_crashed() {
-        // Test that restored processes (PID=0, running=true) show as "online" not "crashed"
+        // Test that restored processes (PID=0, running=true) show as "starting" not "crashed"
         // This prevents false "crashed" status after system restore/reboot
+        // and accurately reflects that the process is waiting to be started by the daemon
         let mut runner = setup_test_runner();
         let id = runner.id.next();
 
@@ -3114,11 +3150,12 @@ mod tests {
         let processes = runner.fetch();
         assert_eq!(processes.len(), 1, "Should have one process");
 
-        // Restored process should show as "online" not "crashed"
-        // This prevents confusion when processes are waiting to be started by daemon
+        // Restored process should show as "starting" not "crashed"
+        // This accurately reflects that the process is waiting to be started by daemon
+        // Previously this showed as "online" which was misleading since PID=0 means not running
         assert_eq!(
-            processes[0].status, "online",
-            "Restored process with PID=0 should show as online, not crashed"
+            processes[0].status, "starting",
+            "Restored process with PID=0 should show as starting, not crashed or online"
         );
     }
 

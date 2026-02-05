@@ -1199,6 +1199,15 @@ impl<'i> Internal<'i> {
             // Print success message only once, after all retries are complete
             if socket_ready {
                 println!("{} OPM daemon started", *helpers::SUCCESS);
+            } else {
+                // Socket still not ready after all retries - fail with clear error message
+                crashln!(
+                    "{} Failed to connect to OPM daemon socket after {} total retries\n{}\n{}",
+                    *helpers::FAIL,
+                    max_retries + 5,
+                    "The daemon may have failed to start or the socket is not accessible.".white(),
+                    "Try running 'opm daemon --no-daemonize' to see error messages.".white()
+                );
             }
         }
         
