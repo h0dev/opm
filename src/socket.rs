@@ -23,6 +23,7 @@ use std::path::Path;
 use std::thread;
 
 use crate::process::{dump, Runner};
+use crate::process;
 
 /// Duration (in seconds) that daemon will ignore a process after a manual action.
 /// This constant documents the timeout used by daemon/mod.rs::has_recent_action_timestamp().
@@ -416,16 +417,21 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::StartProcess(id) => {
-            // Start a stopped process by using restart with dead=false, increment_counter=false
-            // This properly spawns the process instead of just marking it as running
+            // Start a stopped process
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
-                // Use restart() with dead=false (manual operation) and increment_counter=false (not a restart, just start)
-                // restart() will handle action timestamp creation, process spawning, and state management
-                runner.restart(id, false, false);
+                // Mark as running - daemon will spawn the process
+                runner.process(id).running = true;
+                runner.process(id).crash.crashed = false;
+                runner.process(id).pid = 0; // Reset PID so daemon knows to spawn
+                runner.process(id).shell_pid = None;
+                runner.process(id).started = chrono::Utc::now();
+                
+                // Write to memory cache only
+                dump::write_memory_direct(&runner);
                 
                 SocketResponse::Success
             } else {
@@ -433,16 +439,53 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::RestartProcess(id) => {
-            // Restart a process by using restart with dead=false, increment_counter=true
-            // This properly stops the old process and spawns a new one
+            // Restart a process by stopping the old one and marking for daemon to start new one
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
             
             if runner.exists(id) {
-                // Use restart() with dead=false (manual operation) and increment_counter=true (manual restart)
-                // restart() will handle action timestamp creation, process stopping, spawning, and state management
-                runner.restart(id, false, true);
+                let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
+                let shell_pid = runner.info(id).and_then(|p| p.shell_pid);
+                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
+                
+                // Kill existing process
+                if pid > 0 {
+                    use crate::process::process_stop;
+                    
+                    // Kill children
+                    for child_pid in children {
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(child_pid as i32),
+                            nix::sys::signal::Signal::SIGTERM,
+                        );
+                    }
+                    
+                    // Kill main process
+                    let _ = process_stop(pid);
+                    
+                    // Remove process handle if it exists
+                    let handle_pid = shell_pid.unwrap_or(pid);
+                    if let Some((_, handle)) = process::PROCESS_HANDLES.remove(&handle_pid) {
+                        if let Ok(mut child) = handle.lock() {
+                            let _ = child.wait();
+                        }
+                    }
+                    
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                
+                // Mark for restart - daemon will spawn the process
+                runner.process(id).running = true;
+                runner.process(id).crash.crashed = false;
+                runner.process(id).restarts += 1;
+                runner.process(id).pid = 0; // Reset PID so daemon knows to spawn
+                runner.process(id).shell_pid = None;
+                runner.process(id).children = vec![];
+                runner.process(id).started = chrono::Utc::now();
+                
+                // Write to memory cache only
+                dump::write_memory_direct(&runner);
                 
                 SocketResponse::Success
             } else {
