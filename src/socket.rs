@@ -164,17 +164,41 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     // Set write timeout to prevent hanging on socket writes
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
     
-    let reader = BufReader::new(stream.try_clone()?);
-    let mut line = String::new();
-    
-    // Limit input size to 50MB to allow for larger state objects while preventing memory exhaustion
-    // Increased from 10MB to accommodate larger process lists
-    const MAX_REQUEST_SIZE: usize = 50 * 1024 * 1024;
-    let mut limited_reader = reader.take(MAX_REQUEST_SIZE as u64);
-    limited_reader.read_line(&mut line)?;
-
-    // Parse request
-    let request: SocketRequest = serde_json::from_str(&line)?;
+    // Read request from stream
+    // IMPORTANT: We create the BufReader in a limited scope so that it gets dropped
+    // before we write to the stream. This prevents buffering synchronization issues.
+    // The BufReader borrows the stream mutably, but when the scope ends (line 200),
+    // the BufReader is dropped and the borrow ends, allowing us to use stream for writing.
+    let request = {
+        let mut line = String::new();
+        
+        // Limit input size to 50MB to allow for larger state objects while preventing memory exhaustion
+        // Increased from 10MB to accommodate larger process lists
+        const MAX_REQUEST_SIZE: usize = 50 * 1024 * 1024;
+        let reader = BufReader::new(&mut stream);
+        let mut limited_reader = reader.take(MAX_REQUEST_SIZE as u64);
+        
+        // Read the request line
+        match limited_reader.read_line(&mut line) {
+            Ok(0) => {
+                // Connection closed before receiving data
+                return Err(anyhow!("Client closed connection before sending request"));
+            }
+            Ok(bytes_read) => {
+                log::debug!("[socket] Read {} bytes from client", bytes_read);
+            }
+            Err(e) => {
+                log::error!("[socket] Failed to read from client: {}", e);
+                return Err(anyhow!("Failed to read request: {}", e));
+            }
+        }
+        
+        // Parse request before reader is dropped
+        serde_json::from_str::<SocketRequest>(&line).map_err(|e| {
+            log::error!("[socket] Failed to parse request (len={}): {}", line.len(), e);
+            anyhow!("Invalid request format: {}", e)
+        })?
+    }; // BufReader is dropped here, releasing the mutable borrow on stream
 
     // Process request
     let response = match request {
@@ -481,11 +505,39 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     };
 
     // Send response
-    let response_json = serde_json::to_string(&response)?;
-    stream.write_all(response_json.as_bytes())?;
-    stream.write_all(b"\n")?;
-    stream.flush()?;
+    let response_json = serde_json::to_string(&response).map_err(|e| {
+        log::error!("[socket] Failed to serialize response: {}", e);
+        anyhow!("Failed to serialize response: {}", e)
+    })?;
+    
+    let response_len = response_json.len();
+    log::debug!("[socket] Sending response ({} bytes)", response_len);
+    
+    // Write response with error handling
+    if let Err(e) = stream.write_all(response_json.as_bytes()) {
+        log::error!("[socket] Failed to write response body: {}", e);
+        return Err(anyhow!("Failed to write response: {}", e));
+    }
+    
+    if let Err(e) = stream.write_all(b"\n") {
+        log::error!("[socket] Failed to write response newline: {}", e);
+        return Err(anyhow!("Failed to write newline: {}", e));
+    }
+    
+    if let Err(e) = stream.flush() {
+        log::error!("[socket] Failed to flush response: {}", e);
+        return Err(anyhow!("Failed to flush: {}", e));
+    }
+    
+    // Shutdown write side to signal completion
+    // This ensures the client knows the response is complete
+    // Expected errors: ENOTCONN (client closed connection early), EPIPE (broken pipe)
+    // These are normal when a client disconnects or crashes, so we only log at debug level
+    if let Err(e) = stream.shutdown(std::net::Shutdown::Write) {
+        log::debug!("[socket] Error during write shutdown (client may have disconnected): {}", e);
+    }
 
+    log::debug!("[socket] Successfully sent response");
     Ok(())
 }
 
@@ -522,6 +574,7 @@ pub fn send_request(socket_path: &str, request: SocketRequest) -> Result<SocketR
 /// Internal function to attempt a single socket request without retry
 pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> Result<SocketResponse> {
     let mut stream = UnixStream::connect(socket_path).map_err(|e| {
+        log::debug!("[socket client] Failed to connect to {}: {}", socket_path, e);
         anyhow!(
             "Failed to connect to daemon socket: {}. Is the daemon running?",
             e
@@ -533,18 +586,54 @@ pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> R
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
 
     // Send request
-    let request_json = serde_json::to_string(&request)?;
-    stream.write_all(request_json.as_bytes())?;
-    stream.write_all(b"\n")?;
-    stream.flush()?;
+    let request_json = serde_json::to_string(&request).map_err(|e| {
+        log::error!("[socket client] Failed to serialize request: {}", e);
+        anyhow!("Failed to serialize request: {}", e)
+    })?;
+    
+    log::debug!("[socket client] Sending request ({} bytes)", request_json.len());
+    
+    stream.write_all(request_json.as_bytes()).map_err(|e| {
+        log::error!("[socket client] Failed to write request: {}", e);
+        anyhow!("Failed to write request: {}", e)
+    })?;
+    
+    stream.write_all(b"\n").map_err(|e| {
+        log::error!("[socket client] Failed to write newline: {}", e);
+        anyhow!("Failed to write newline: {}", e)
+    })?;
+    
+    stream.flush().map_err(|e| {
+        log::error!("[socket client] Failed to flush request: {}", e);
+        anyhow!("Failed to flush: {}", e)
+    })?;
+    
+    // Shutdown the write side to signal we're done sending
+    // This ensures the server knows no more data is coming
+    // Note: In normal operation this should succeed. If it fails, it indicates
+    // a connection problem and we should report it to the caller.
+    stream.shutdown(std::net::Shutdown::Write).map_err(|e| {
+        log::debug!("[socket client] Failed to shutdown write (connection issue): {}", e);
+        anyhow!("Failed to shutdown write: {}", e)
+    })?;
+
+    log::debug!("[socket client] Request sent, waiting for response");
 
     // Read response
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    reader.read_line(&mut line).map_err(|e| {
+        log::error!("[socket client] Failed to read response: {}", e);
+        anyhow!("Failed to read response: {}", e)
+    })?;
+    
+    log::debug!("[socket client] Received response ({} bytes)", line.len());
 
     // Parse response
-    let response: SocketResponse = serde_json::from_str(&line)?;
+    let response: SocketResponse = serde_json::from_str(&line).map_err(|e| {
+        log::error!("[socket client] Failed to parse response (len={}): {}", line.len(), e);
+        anyhow!("Invalid response format: {}", e)
+    })?;
 
     Ok(response)
 }
