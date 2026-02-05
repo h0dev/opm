@@ -28,7 +28,7 @@ use crate::process::{dump, Runner};
 /// This constant documents the timeout used by daemon/mod.rs::has_recent_action_timestamp().
 /// Keep this in sync with the actual timeout value in the daemon code.
 #[allow(dead_code)]
-const ACTION_IGNORE_DURATION_SECS: u64 = 3;
+const ACTION_IGNORE_DURATION_SECS: u64 = 5;
 
 /// Helper function to create action timestamp file for a process
 /// This tells the daemon to ignore the process for ACTION_IGNORE_DURATION_SECS seconds
