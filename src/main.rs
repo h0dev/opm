@@ -1005,7 +1005,7 @@ fn main() {
                         break;
                     }
                     
-                    // Exponential backoff: start with SOCKET_RETRY_INITIAL_MS and increase by SOCKET_RETRY_INCREMENT_MS each retry
+                    // Linear backoff: start with SOCKET_RETRY_INITIAL_MS and increase by SOCKET_RETRY_INCREMENT_MS each retry
                     let wait_ms = SOCKET_RETRY_INITIAL_MS + (retry_count as u64 * SOCKET_RETRY_INCREMENT_MS);
                     std::thread::sleep(std::time::Duration::from_millis(wait_ms));
                     retry_count += 1;

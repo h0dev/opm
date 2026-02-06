@@ -1171,7 +1171,7 @@ impl<'i> Internal<'i> {
                     break;
                 }
                 
-                // Exponential backoff: start with initial_ms and increase by increment_ms each retry
+                // Linear backoff: start with initial_ms and increase by increment_ms each retry
                 let wait_ms = initial_ms + (retry_count * increment_ms);
                 std::thread::sleep(std::time::Duration::from_millis(wait_ms));
                 retry_count += 1;
