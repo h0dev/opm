@@ -945,37 +945,13 @@ fn main() {
         Commands::Stop { items, server } => cli::stop(items, &defaults(server)),
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => {
-            // Ensure daemon is running before restore (silent mode)
-            // Read config to check if API/WebUI should be enabled
+            // Unconditionally reset and restart the daemon silently before restore
             let config = opm::config::read();
-            let _daemon_was_started = if !daemon::pid::exists() {
-                daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
-                true
-            } else {
-                // Check if daemon is actually running (not just a stale PID file)
-                match daemon::pid::read() {
-                    Ok(pid) => {
-                        if !daemon::pid::running(pid.get()) {
-                            daemon::pid::remove();
-                            daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    Err(_) => {
-                        // PID file exists but can't be read, remove and start daemon
-                        daemon::pid::remove();
-                        daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
-                        true
-                    }
-                }
-            };
+            opm::daemon::reset();
+            opm::daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
 
             // Wait for daemon socket to be ready before proceeding with restore
             // This prevents "Connection refused" errors when restore tries to read from daemon
-            // We check socket readiness regardless of whether we just started the daemon,
-            // because in container restart scenarios the daemon might exist but socket isn't ready yet
             {
                 use global_placeholders::global;
                 let socket_path = global!("opm.socket");

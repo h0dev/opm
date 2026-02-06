@@ -1929,6 +1929,27 @@ pub fn process_stop(pid: i64) -> Result<(), String> {
     }
 }
 
+/// Find children of a potentially dead parent by scanning all processes
+/// This is more reliable for adoption scenarios than process_find_children,
+/// as it works even after the parent process has exited.
+pub fn find_children_of_dead_parent(parent_pid: i64) -> Vec<i64> {
+    let mut children = Vec::new();
+    if parent_pid <= 0 {
+        return children;
+    }
+
+    if let Ok(processes) = unix::native_processes() {
+        for process in processes {
+            if let Ok(Some(ppid)) = process.ppid() {
+                if ppid as i64 == parent_pid {
+                    children.push(process.pid() as i64);
+                }
+            }
+        }
+    }
+    children
+}
+
 /// Find the children of the process
 pub fn process_find_children(parent_pid: i64) -> Vec<i64> {
     let mut children = Vec::new();

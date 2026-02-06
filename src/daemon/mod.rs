@@ -123,322 +123,154 @@ fn restart_process() {
     let process_ids: Vec<usize> = runner.process_ids().collect();
 
     for id in process_ids {
-        // The runner is no longer reloaded inside the loop.
-        // This ensures that state changes from socket commands (like `opm start`)
-        // are not wiped out during the daemon's monitoring cycle.
-        // The entire cycle now operates on a single, consistent state.
-
-        // Clone item to avoid borrowing issues when we mutate runner later.
-        // This is required by Rust's borrow checker - we can't hold an immutable
-        // reference to runner (via runner.info()) while also calling mutable
-        // methods on runner (e.g., runner.stop(), runner.restart()).
-        // The clone overhead is acceptable given that:
-        // - Process struct is relatively small
-        // - This runs infrequently (daemon interval)
-        // - Correctness is more important than micro-optimizations
         let item = match runner.info(id) {
             Some(item) => item.clone(),
             None => continue, // Process was removed, skip it
         };
 
-        let children = opm::process::process_find_children(item.pid);
+        let main_pid_alive = opm::process::is_pid_alive(item.pid) || 
+            item.shell_pid.map_or(false, |pid| opm::process::is_pid_alive(pid));
 
-        if !children.is_empty() && children != item.children {
-            log!("[daemon] added", "children" => format!("{children:?}"));
-            runner.set_children(id, children.clone()).save();
-        }
+        if main_pid_alive {
+            // --- PROCESS IS ALIVE ---
+            // Update children list for the next cycle.
+            let current_children = opm::process::process_find_children(item.pid);
+            if !current_children.is_empty() && current_children != item.children {
+                log!("[daemon] updating children list", "name" => &item.name, "id" => id, "children" => format!("{:?}", current_children));
+                runner.set_children(id, current_children).save();
+            }
 
-        // Check memory limit if configured
-        if item.running && item.max_memory > 0 {
-            let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-            if let Some(memory_info) =
-                opm::process::get_process_memory_with_children(pid_for_monitoring)
-            {
-                if memory_info.rss > item.max_memory {
-                    log!("[daemon] memory limit exceeded", "name" => item.name, "id" => id, 
-                         "memory" => memory_info.rss, "limit" => item.max_memory);
-                    println!(
-                        "{} Process ({}) exceeded memory limit: {} > {} - stopping process",
-                        *helpers::FAIL,
-                        item.name,
-                        helpers::format_memory(memory_info.rss),
-                        helpers::format_memory(item.max_memory)
-                    );
-                    runner.stop(id);
-                    // Don't mark as crashed since this is intentional enforcement
+            // Perform other checks for living processes (memory, watch).
+            if item.running && item.max_memory > 0 {
+                let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+                if let Some(memory_info) = opm::process::get_process_memory_with_children(pid_for_monitoring) {
+                    if memory_info.rss > item.max_memory {
+                        log!("[daemon] memory limit exceeded", "name" => &item.name, "id" => id, "memory" => memory_info.rss, "limit" => item.max_memory);
+                        runner.stop(id);
+                        continue;
+                    }
+                }
+            }
+
+            if item.running && item.watch.enabled {
+                let path = item.path.join(item.watch.path.clone());
+                if hash::create(path) != item.watch.hash {
+                    log!("[daemon] watch triggered reload", "name" => &item.name, "id" => id);
+                    runner.restart(id, false, true);
                     continue;
                 }
             }
-        }
 
-        if item.running && item.watch.enabled {
-            let path = item.path.join(item.watch.path.clone());
-            let hash = hash::create(path);
+            // If process is stable, clear the crashed flag.
+            if item.running && item.crash.crashed {
+                let uptime_secs = (Utc::now() - item.started).num_seconds();
+                if uptime_secs >= daemon_config.crash_grace_period as i64 {
+                    if runner.exists(id) {
+                        runner.process(id).crash.crashed = false;
+                        runner.save();
+                        log!("[daemon] process stabilized, cleared crashed flag", "name" => &item.name, "id" => id);
+                    }
+                }
+            }
+        } else {
+            // --- PROCESS IS DEAD ---
+            // The main PID is gone. Check for surviving children to adopt.
+            let surviving_children = opm::process::find_children_of_dead_parent(item.pid);
+            let adoptable_child = surviving_children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid));
 
-            if hash != item.watch.hash {
-                log!("[daemon] watch triggered reload", "name" => item.name, "id" => id);
-                runner.restart(id, false, true); // Watch reload should increment counter
-                log!("[daemon] watch reload complete", "name" => item.name, "id" => id);
+            if let Some(&alive_child_pid) = adoptable_child {
+                // --- ADOPTION LOGIC ---
+                log!("[daemon] main process died, adopting living child", "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
+                if runner.exists(id) {
+                    let process = runner.process(id);
+                    process.pid = alive_child_pid;
+                    process.shell_pid = None; // The adopted child is now the main process, not a shell
+                    process.children = surviving_children.into_iter().filter(|&p| p != alive_child_pid).collect();
+                    runner.save();
+                }
+                // Skip crash handling for this cycle because we successfully adopted a child.
                 continue;
             }
-        }
 
-        // Check if process is alive based on PID
-        // is_pid_alive() handles all PID validation (including PID <= 0)
-        // For processes with children, also check if any children are alive
-        // This prevents false positives when shell scripts exit but leave background processes running
-        // 
-        // Check both the actual PID and shell PID (if present) to determine if process is alive.
-        // For shell-wrapped processes, either PID being alive means the process is running.
-        // This is consistent with the display logic in build_process_item() and prevents
-        // false crash detection when one PID exits but the other is still alive.
-        let mut process_alive = opm::process::is_pid_alive(item.pid) || 
-            item.shell_pid.map_or(false, |pid| opm::process::is_pid_alive(pid));
-
-        // Handle case where main process died but children are still alive
-        // This commonly occurs when shell scripts exit after spawning background processes
-        if !process_alive && !item.children.is_empty() {
-            // Check if any children are still alive
-            // Note: We select the first alive child arbitrarily. In practice, for shell scripts
-            // that spawn a single background service (the common use case), there will typically
-            // be only one child. For multiple children, adopting any alive child allows continued
-            // monitoring rather than falsely marking the entire process group as crashed.
-            if let Some(&alive_child_pid) = item.children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid)) {
-                log!("[daemon] main process died but child process still alive, adopting child", 
-                    "name" => item.name, "id" => id, "old_pid" => item.pid, 
-                    "new_pid" => alive_child_pid, "children" => format!("{:?}", item.children));
-                
-                // Adopt the alive child as the new monitored PID
-                // This prevents false crash detection when shell scripts exit after spawning services
-                if runner.exists(id) {
-                    let process = runner.process(id);
-                    // Perform both mutations before saving to ensure atomicity
-                    process.pid = alive_child_pid;
-                    // Remove the adopted child from the children list
-                    process.children.retain(|&pid| pid != alive_child_pid);
-                    // Save the updated state atomically
-                    runner.save();
-                    
-                    // Mark process as alive since we adopted a child
-                    process_alive = true;
-                    log!("[daemon] successfully adopted child process", 
-                        "name" => item.name, "id" => id, "new_pid" => alive_child_pid);
-                }
-            }
-        }
-
-        // Check if process is alive and has been running successfully, keep monitoring
-        // Note: We no longer auto-reset crash counter here - it persists to show
-        // crash history over time. Only explicit reset (via reset_counters()) will clear it.
-        if process_alive && item.running && item.crash.value > 0 {
-            // Check if process has been running for at least the grace period
-            let uptime_secs = (Utc::now() - item.started).num_seconds();
+            // --- CRASH HANDLING LOGIC ---
+            // No living parent and no living children to adopt. This is a real crash or clean exit.
             let grace_period = daemon_config.crash_grace_period as i64;
-            if uptime_secs >= grace_period {
-                // Process has been stable - clear crashed flag but keep crash count
-                if runner.exists(id) {
-                    let process = runner.process(id);
-                    // Clear crashed flag but keep crash.value to preserve history
-                    process.crash.crashed = false;
-                    // Save state after clearing crashed flag
-                    runner.save();
-                }
-            }
-        }
+            let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
+            let recently_acted = has_recent_action_timestamp(id);
+            let is_new_crash = item.pid > 0;
 
-         // Handle processes that need to be started
-         // If running=true but pid=0, the process needs to be spawned
-         // This happens after manual start/restart commands via socket
-         if item.running && item.pid == 0 && !item.crash.crashed {
-             log!("[daemon] starting process with no PID", "name" => item.name, "id" => id);
-             let is_daemon_operation = true;  // This is a daemon-initiated operation
-             let should_increment_counter = false;  // Don't increment counter for initial start
-             runner.restart(id, is_daemon_operation, should_increment_counter);
-             log!("[daemon] process started", "name" => item.name, "id" => id, "new_pid" => runner.info(id).map(|p| p.pid).unwrap_or(0));
-             continue;
-         }
-
-         // If process is dead, handle crash/restart logic
-         if !process_alive {
-             // Check if process was very recently started (within grace period)
-             // This prevents the daemon from immediately restarting a process that just started
-             // and gives the process time to initialize
-             let grace_period = daemon_config.crash_grace_period as i64;
-             let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
-             
-             // Check if there was a recent manual action (to prevent daemon from marking as crashed immediately after manual start/restart)
-             let recently_acted = has_recent_action_timestamp(id);
-             
-             // Check if this is a newly detected crash by looking at PID
-             // If the PID is > 0, it means we thought the process was alive, so this is a new crash event
-             // Note: We check item.pid (the actual process), not shell_pid
-             let is_new_crash = item.pid > 0;
-
-             // Don't mark as crashed if:
-             // 1. There was a recent manual action (within 5 seconds), OR
-             // 2. Process was just started (within grace period) - give it time to initialize
-             if is_new_crash && !recently_acted && !just_started {
-                // Check if process exited successfully (exit code 0) by checking the child handle
-                // Use shell_pid if available (since we store handles by shell_pid), otherwise use regular pid
-                // The handle is stored by shell_pid because that's the direct child of our spawn call
+            if is_new_crash && !recently_acted && !just_started {
                 let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
                 let mut exited_successfully = false;
                 let mut handle_found = false;
-                
-                // Remove and check the handle to get exit status
-                // This ensures we only check the exit status once (try_wait consumes it)
+
                 if let Some((_, handle_ref)) = opm::process::PROCESS_HANDLES.remove(&process_handle_pid) {
                     handle_found = true;
                     if let Ok(mut child) = handle_ref.lock() {
-                        // Check if process has exited and get its exit status
                         if let Ok(Some(status)) = child.try_wait() {
                             exited_successfully = status.success();
-                            log!("[daemon] process exited", 
-                                 "name" => item.name, "id" => id, "shell_pid" => process_handle_pid, 
-                                 "success" => exited_successfully, "status" => format!("{:?}", status));
+                            log!("[daemon] reaped exited process", "name" => &item.name, "id" => id, "success" => exited_successfully);
                         }
                     }
                 }
-                
-                // Only treat as clean stop if we found the handle AND it exited successfully
-                // If no handle found, treat as a crash (don't skip crash handling)
+
                 if handle_found && exited_successfully {
-                    // No longer reloading runner state here.
-                    // The check below is sufficient to handle concurrently deleted processes.
-                    if !runner.exists(id) {
-                        log!("[daemon] process was deleted during exit detection, skipping", 
-                             "name" => item.name, "id" => id);
-                        continue;
+                    if runner.exists(id) {
+                        let process = runner.process(id);
+                        process.running = false;
+                        process.pid = 0;
+                        process.shell_pid = None;
+                        process.crash.crashed = false;
+                        runner.save();
+                        log!("[daemon] process stopped cleanly", "name" => &item.name, "id" => id);
                     }
-                    
-                    let process = runner.process(id);
-                    process.running = false;
-                    process.pid = 0;
-                    process.shell_pid = None;
-                    // Clear crashed flag for successful exits - this ensures processes
-                    // show as "stopped" instead of "crashed" after clean exit
-                    process.crash.crashed = false;
-                    // Don't increment crash counter for successful exits
-                    log!("[daemon] process stopped cleanly", 
-                         "name" => item.name, "id" => id);
-                    runner.save();
-                    continue; // Skip crash handling
-                }
-                
-                // No longer reloading runner state here.
-                if !runner.exists(id) {
-                    log!("[daemon] process was deleted during crash detection, skipping", 
-                         "name" => item.name, "id" => id);
                     continue;
                 }
-                
-                // Reset PID and shell_pid to 0 to indicate no valid PID
-                let process = runner.process(id);
-                process.pid = 0;
-                process.shell_pid = None;
-                
-                // Increment crash counter - allow it to exceed limit to show total crash history
-                process.crash.value += 1;
-                process.crash.crashed = true;
-                let crash_count = process.crash.value;
 
-                // Only handle restart logic if process was supposed to be running
-                if item.running {
-                    // Emit crash event and notification for newly detected crashes
-                    let process_name = item.name.clone();
-                    if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
-                        handle.spawn(emit_crash_event_and_notification(id, process_name));
-                    } else {
-                        log!("[daemon] warning: crash event not emitted (no tokio runtime)", 
-                             "name" => item.name, "id" => id);
-                    }
+                // If handle not found, or it exited with an error, it's a crash.
+                if runner.exists(id) {
+                    let process = runner.process(id);
+                    process.pid = 0;
+                    process.shell_pid = None;
+                    process.crash.value += 1;
+                    process.crash.crashed = true;
+                    let crash_count = process.crash.value;
 
-                    // Check if we've reached or exceeded the maximum crash limit
-                    // Using >= to stop when counter reaches the limit:
-                    // - crash_count < 10 with max_restarts=10: allow restart (crash counter 1-9)
-                    // - crash_count >= 10 with max_restarts=10: stop (counter reaches 10, no more restarts)
-                    // Counter can exceed limit to track total crashes, but restarts stop at limit
-                    if crash_count >= daemon_config.restarts {
-                        // Reached max restarts - give up and set running=false
-                        process.running = false;
-                        log!("[daemon] process reached max crash limit", 
-                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
-                    } else {
-                        // Still within crash limit - mark as crashed
-                        log!("[daemon] process crashed", 
-                             "name" => item.name, "id" => id, "crash_count" => crash_count, "max_restarts" => daemon_config.restarts);
+                    if item.running {
+                        let process_name = item.name.clone();
+                        if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
+                            handle.spawn(emit_crash_event_and_notification(id, process_name));
+                        }
+                        
+                        if crash_count >= daemon_config.restarts {
+                            process.running = false;
+                            log!("[daemon] process reached max crash limit", "name" => &item.name, "id" => id, "crashes" => crash_count);
+                        } else {
+                            log!("[daemon] process crashed", "name" => &item.name, "id" => id, "crashes" => crash_count);
+                        }
                     }
-                } else {
-                    // Process was already stopped but crashed again (e.g., after manual restart)
-                    // Counter has been incremented to track crash history even after limit
-                    log!("[daemon] stopped process crashed again", 
-                         "name" => item.name, "id" => id, "crash_count" => crash_count);
+                    runner.save();
                 }
-                
-                // Save state after crash detection to persist crash counter and PID updates
-                runner.save();
-             } else if item.running {
-                 // Check if process was very recently started (within grace period)
-                 // This prevents the daemon from immediately restarting a process that just started
+            }
+
+            // If the process is supposed to be running, attempt a restart.
+            if item.running && runner.exists(id) && runner.info(id).map_or(false, |p| p.running) {
                  let grace_period = daemon_config.crash_grace_period as i64;
                  let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
-                 
-                 // Check if there was a recent manual action (to prevent daemon from setting running=false immediately after manual start/restart)
                  let recently_acted = has_recent_action_timestamp(id);
-                 
-                 // Process is already marked as crashed - check limit before attempting restart
-                 // This handles cases where counter may have been incremented by restart failures
-                 if item.crash.value >= daemon_config.restarts && !recently_acted {
-                     // Already reached max restarts - set running=false and stop trying
-                     // Skip setting to false if there was a recent manual action
-                     let process = runner.process(id);
-                     process.running = false;
-                     log!("[daemon] process already reached max crash limit, stopping restart attempts", 
-                          "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
-                     // Save state after updating running flag
-                     runner.save();
-                 } else if !recently_acted && !just_started {
-                     // Still within limit, no recent action, and not just started - attempt restart now
-                     if runner.exists(id) {
-                         // Check if process is frozen (being edited/deleted)
-                         if runner.is_frozen(id) {
-                             log!("[daemon] skipping restart - process is frozen (being edited/deleted)", 
-                                  "name" => item.name, "id" => id);
-                             continue;
-                         }
-                         
-                         // Check if process is still marked as running after reload
-                         // This prevents restarting processes that were stopped/removed during reload
-                         if let Some(proc) = runner.info(id) {
-                             if proc.running {
-                                 log!("[daemon] restarting crashed process", 
-                                      "name" => item.name, "id" => id, "crash_count" => item.crash.value, "max_restarts" => daemon_config.restarts);
-                                 runner.restart(id, true, true);
-                                 log!("[daemon] restart complete", 
-                                      "name" => item.name, "id" => id, "new_pid" => runner.info(id).unwrap().pid);
-                                 // Note: restart() now calls save() internally, so we don't need to save here
-                             } else {
-                                 log!("[daemon] process was marked as stopped during reload, skipping restart",
-                                      "name" => item.name, "id" => id);
-                             }
-                         }
-                     } else {
-                         log!("[daemon] process was deleted, skipping restart",
-                              "name" => item.name, "id" => id);
-                     }
-                 } else {
-                     // Recent action was taken or process just started, skip automatic restart attempts
-                     if just_started {
-                         log!("[daemon] skipping restart - process just started (giving it time to initialize)", "name" => item.name, "id" => id);
-                     } else {
-                         log!("[daemon] skipping restart due to recent manual action", "name" => item.name, "id" => id);
-                     }
-                 }
-            } else {
-                // Process was already stopped and marked as crashed
-                // Don't log anything to avoid spam - user already knows it's stopped
+                
+                if !runner.is_frozen(id) && !just_started && !recently_acted {
+                    log!("[daemon] restarting crashed process", "name" => &item.name, "id" => id);
+                    runner.restart(id, true, true);
+                }
             }
         }
+         // Handle processes that need to be started (e.g. after restore or `opm start`)
+         if item.running && item.pid == 0 && !item.crash.crashed {
+             log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
+             runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
+             continue;
+         }
     }
 }
 
@@ -589,9 +421,11 @@ pub fn health(format: &String) {
     };
 }
 
-pub fn stop() {
+pub fn stop(verbose: bool) {
     if pid::exists() {
-        println!("{} Stopping OPM daemon", *helpers::SUCCESS);
+        if verbose {
+            println!("{} Stopping OPM daemon", *helpers::SUCCESS);
+        }
 
         match pid::read() {
             Ok(pid) => {
@@ -600,17 +434,23 @@ pub fn stop() {
                 }
                 pid::remove();
                 log!("[daemon] stopped", "pid" => pid);
-                println!("{} OPM daemon stopped", *helpers::SUCCESS);
+                if verbose {
+                    println!("{} OPM daemon stopped", *helpers::SUCCESS);
+                }
             }
             Err(err) => {
                 // PID file exists but can't be read (corrupted or invalid)
                 log!("[daemon] removing corrupted PID file", "error" => err);
-                println!("{} PID file is corrupted, removing it", *helpers::SUCCESS);
+                if verbose {
+                    println!("{} PID file is corrupted, removing it", *helpers::SUCCESS);
+                }
                 pid::remove();
-                println!("{} OPM daemon stopped", *helpers::SUCCESS);
+                if verbose {
+                    println!("{} OPM daemon stopped", *helpers::SUCCESS);
+                }
             }
         }
-    } else {
+    } else if verbose {
         crashln!("{} The daemon is not running", *helpers::FAIL)
     }
 }
@@ -881,7 +721,7 @@ pub fn start(verbose: bool) {
 
 pub fn restart(api: &bool, webui: &bool, verbose: bool) {
     if pid::exists() {
-        stop();
+        stop(verbose);
     }
 
     let config = config::read().daemon;
