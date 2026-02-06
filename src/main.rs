@@ -1010,10 +1010,10 @@ fn main() {
                 }
                 
                 if !socket_ready {
-                    eprintln!(
-                        "{} Warning: Daemon socket is not ready after ~{:.1} seconds. Restore may fail.\n\
-                         {} Consider waiting a moment and retrying the restore command.", 
-                        *opm::helpers::WARN,
+                    crashln!(
+                        "{} Daemon socket not ready after ~{:.1} seconds. Restore cannot proceed.\n\
+                         {} Please ensure the daemon is running correctly and try again.",
+                        *opm::helpers::FAIL,
                         total_wait_secs,
                         " ".repeat(4) // Indent the second line
                     );
