@@ -82,7 +82,20 @@ pub enum SocketResponse {
 /// This function creates a Unix socket at the specified path and listens for
 /// incoming connections from CLI commands. Each connection is handled in a
 /// separate thread.
+///
+/// Takes an optional callback that is invoked once the server is fully ready to accept connections.
 pub fn start_socket_server(socket_path: &str) -> Result<()> {
+    start_socket_server_with_callback::<fn()>(socket_path, None)
+}
+
+/// Start the Unix socket server with an optional readiness callback
+///
+/// The callback is invoked after the socket is bound and worker threads are spawned,
+/// signaling that the server is ready to accept connections.
+pub fn start_socket_server_with_callback<F>(socket_path: &str, ready_callback: Option<F>) -> Result<()>
+where
+    F: FnOnce() + Send + 'static,
+{
     // Remove old socket file if it exists
     if Path::new(socket_path).exists() {
         fs::remove_file(socket_path)?;
@@ -129,6 +142,12 @@ pub fn start_socket_server(socket_path: &str) -> Result<()> {
             }
             log::info!("Socket worker thread {} exiting", i);
         });
+    }
+    
+    // Invoke readiness callback after socket is bound and workers are spawned
+    // This signals that the server is ready to accept connections
+    if let Some(callback) = ready_callback {
+        callback();
     }
     
     // Accept connections and send to worker threads
