@@ -754,11 +754,20 @@ impl Runner {
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
             process.running = true;
-            process.children = vec![];
             process.started = Utc::now();
             // Clear crashed flag after successful restart
             // This allows the daemon to properly detect if the process crashes again
             process.crash.crashed = false;
+
+            // Discover children immediately after starting the process
+            // This prevents race conditions where the parent exits before the daemon
+            // can discover the children in its monitoring loop
+            // Wait a bit for the process to spawn its children
+            thread::sleep(Duration::from_millis(600));
+            process.children = process_find_children(result.pid);
+            if !process.children.is_empty() {
+                log::info!("Discovered {} child process(es) immediately after start: {:?}", process.children.len(), process.children);
+            }
 
             // Merge .env variables into the stored environment (dotenv takes priority)
             let mut updated_env: Env = env::vars().collect();
