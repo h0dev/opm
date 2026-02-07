@@ -85,80 +85,51 @@ impl NativeProcess {
 }
 
 #[cfg(target_os = "linux")]
-fn find_deepest_child_linux(parent_pid: i64) -> Option<i64> {
-    // Read children from /proc
+fn find_immediate_children_linux(parent_pid: i64) -> Vec<i64> {
     let proc_path = format!("/proc/{}/task/{}/children", parent_pid, parent_pid);
-    let contents = std::fs::read_to_string(&proc_path).ok()?;
+    let contents = match std::fs::read_to_string(&proc_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
     
-    let children: Vec<i64> = contents
+    contents
         .split_whitespace()
         .filter_map(|s| s.parse::<i64>().ok())
-        .collect();
+        .collect()
+}
 
+// Find the first long-running child (skip shells, find actual service process)
+#[cfg(target_os = "linux")]
+fn find_first_long_running_child_linux(parent_pid: i64) -> Option<i64> {
+    let shell_names = ["sh", "bash", "zsh", "fish", "dash"];
+    
+    let children = find_immediate_children_linux(parent_pid);
     if children.is_empty() {
         return None;
     }
 
-    // If only one child, recurse into it
-    if children.len() == 1 {
-        let child_pid = children[0];
-        log::debug!("Found single child {} of parent {}", child_pid, parent_pid);
-        
-        // Try to go deeper
-        if let Some(deeper) = find_deepest_child_linux(child_pid) {
-            return Some(deeper);
-        }
-        return Some(child_pid);
-    }
-
-    // Multiple children: find the deepest among all branches
-    log::debug!("Found {} children of parent {}", children.len(), parent_pid);
-    let mut deepest_pid = children[0];
-    let mut max_depth = 0;
-
+    // First pass: look for non-shell processes
     for &child in &children {
-        let depth = calculate_depth_linux(child, 0);
-        log::debug!("Child {} has depth {}", child, depth);
-        if depth > max_depth {
-            max_depth = depth;
-            deepest_pid = child;
+        if let Ok(exe) = get_process_name(child as u32) {
+            let exe_lower = exe.to_lowercase();
+            let is_shell = shell_names.iter().any(|s| exe_lower.contains(s));
+            
+            if !is_shell {
+                log::debug!("Found long-running process: {} (PID {})", exe, child);
+                return Some(child);
+            }
         }
     }
 
-    // Recurse into the deepest branch
-    if let Some(deeper) = find_deepest_child_linux(deepest_pid) {
-        return Some(deeper);
-    }
-    Some(deepest_pid)
-}
-
-#[cfg(target_os = "linux")]
-fn calculate_depth_linux(pid: i64, current_depth: usize) -> usize {
-    // Prevent infinite recursion
-    if current_depth > 20 {
-        return current_depth;
-    }
-
-    let proc_path = format!("/proc/{}/task/{}/children", pid, pid);
-    if let Ok(contents) = std::fs::read_to_string(&proc_path) {
-        let children: Vec<i64> = contents
-            .split_whitespace()
-            .filter_map(|s| s.parse::<i64>().ok())
-            .collect();
-
-        if children.is_empty() {
-            return current_depth;
+    // Second pass: recursively check shell children
+    for &child in &children {
+        if let Some(long_running) = find_first_long_running_child_linux(child) {
+            return Some(long_running);
         }
-
-        // Return depth of deepest child branch
-        children
-            .iter()
-            .map(|&child| calculate_depth_linux(child, current_depth + 1))
-            .max()
-            .unwrap_or(current_depth)
-    } else {
-        current_depth
     }
+
+    // Fallback: return first child
+    children.first().copied()
 }
 
 #[cfg(target_os = "linux")]
@@ -167,9 +138,9 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
 
     log::debug!("Looking for actual child of shell PID {}", shell_pid);
     
-    if let Some(deepest) = find_deepest_child_linux(shell_pid) {
-        log::debug!("Found deepest child PID {} for shell PID {}", deepest, shell_pid);
-        return deepest;
+    if let Some(long_running) = find_first_long_running_child_linux(shell_pid) {
+        log::debug!("Found long-running child PID {} for shell PID {}", long_running, shell_pid);
+        return long_running;
     }
 
     log::debug!("No child found, using shell PID {}", shell_pid);
