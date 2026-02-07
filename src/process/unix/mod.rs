@@ -134,16 +134,35 @@ fn find_first_long_running_child_linux(parent_pid: i64) -> Option<i64> {
 
 #[cfg(target_os = "linux")]
 pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
-    thread::sleep(Duration::from_millis(PROCESS_OPERATION_DELAY_MS));
-
-    log::debug!("Looking for actual child of shell PID {}", shell_pid);
+    // Retry logic: wait up to 3 seconds for the actual process to spawn
+    // This handles cases where scripts take time to fork the actual service
+    const MAX_RETRIES: u32 = 6;
+    const RETRY_DELAY_MS: u64 = 500;
     
-    if let Some(long_running) = find_first_long_running_child_linux(shell_pid) {
-        log::debug!("Found long-running child PID {} for shell PID {}", long_running, shell_pid);
-        return long_running;
+    for attempt in 0..MAX_RETRIES {
+        thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+        
+        log::debug!("Looking for actual child of shell PID {} (attempt {}/{})", shell_pid, attempt + 1, MAX_RETRIES);
+        
+        if let Some(long_running) = find_first_long_running_child_linux(shell_pid) {
+            log::debug!("Found long-running child PID {} for shell PID {} after {} attempts", long_running, shell_pid, attempt + 1);
+            return long_running;
+        }
+        
+        // Check if shell is still alive
+        if !crate::process::is_pid_alive(shell_pid) {
+            log::debug!("Shell PID {} exited before spawning a detectable child, cannot track", shell_pid);
+            return shell_pid; // Return shell PID as fallback (will be handled by daemon adoption logic)
+        }
+        
+        // If this is not the last attempt, continue retrying
+        if attempt < MAX_RETRIES - 1 {
+            log::debug!("No child found yet, retrying in {}ms...", RETRY_DELAY_MS);
+        }
     }
-
-    log::debug!("No child found, using shell PID {}", shell_pid);
+    
+    // After all retries, if still no child found, use shell PID as fallback
+    log::debug!("No child found after {} attempts, using shell PID {} as fallback", MAX_RETRIES, shell_pid);
     shell_pid
 }
 
