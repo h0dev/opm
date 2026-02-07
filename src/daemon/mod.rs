@@ -175,8 +175,10 @@ fn restart_process() {
         } else {
             // --- PROCESS IS DEAD ---
             // The main PID is gone. Check for surviving children to adopt.
-            let surviving_children = opm::process::find_children_of_dead_parent(item.pid);
-            let adoptable_child = surviving_children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid));
+            // Use the stored children list instead of finding children of dead parent,
+            // because when a process dies, its children get reparented to init (pid 1)
+            // and we can't find them by parent PID anymore.
+            let adoptable_child = item.children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid));
 
             if let Some(&alive_child_pid) = adoptable_child {
                 // --- ADOPTION LOGIC ---
@@ -185,7 +187,8 @@ fn restart_process() {
                     let process = runner.process(id);
                     process.pid = alive_child_pid;
                     process.shell_pid = None; // The adopted child is now the main process, not a shell
-                    process.children = surviving_children.into_iter().filter(|&p| p != alive_child_pid).collect();
+                    // Filter out the adopted child from the children list
+                    process.children = item.children.iter().filter(|&&p| p != alive_child_pid).copied().collect();
                     runner.save();
                 }
                 // Skip crash handling for this cycle because we successfully adopted a child.
