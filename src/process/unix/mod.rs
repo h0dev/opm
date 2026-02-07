@@ -85,34 +85,184 @@ impl NativeProcess {
 }
 
 #[cfg(target_os = "linux")]
-pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
-    thread::sleep(Duration::from_millis(PROCESS_OPERATION_DELAY_MS));
+fn find_deepest_child_linux(parent_pid: i64) -> Option<i64> {
+    // Read children from /proc
+    let proc_path = format!("/proc/{}/task/{}/children", parent_pid, parent_pid);
+    let contents = std::fs::read_to_string(&proc_path).ok()?;
+    
+    let children: Vec<i64> = contents
+        .split_whitespace()
+        .filter_map(|s| s.parse::<i64>().ok())
+        .collect();
 
-    let proc_path = format!("/proc/{}/task/{}/children", shell_pid, shell_pid);
-    if let Ok(contents) = std::fs::read_to_string(&proc_path) {
-        if let Some(child_pid_str) = contents.split_whitespace().next() {
-            if let Ok(child_pid) = child_pid_str.parse::<i64>() {
-                return child_pid;
-            }
+    if children.is_empty() {
+        return None;
+    }
+
+    // If only one child, recurse into it
+    if children.len() == 1 {
+        let child_pid = children[0];
+        log::debug!("Found single child {} of parent {}", child_pid, parent_pid);
+        
+        // Try to go deeper
+        if let Some(deeper) = find_deepest_child_linux(child_pid) {
+            return Some(deeper);
+        }
+        return Some(child_pid);
+    }
+
+    // Multiple children: find the deepest among all branches
+    log::debug!("Found {} children of parent {}", children.len(), parent_pid);
+    let mut deepest_pid = children[0];
+    let mut max_depth = 0;
+
+    for &child in &children {
+        let depth = calculate_depth_linux(child, 0);
+        log::debug!("Child {} has depth {}", child, depth);
+        if depth > max_depth {
+            max_depth = depth;
+            deepest_pid = child;
         }
     }
 
-    let pid = if let Ok(processes) = native_processes() {
-        processes
-            .iter()
-            .find(|process| {
-                if let Ok(Some(ppid)) = process.ppid() {
-                    ppid as i64 == shell_pid
-                } else {
-                    false
-                }
-            })
-            .map_or(shell_pid, |p| p.pid() as i64)
-    } else {
-        shell_pid
-    };
+    // Recurse into the deepest branch
+    if let Some(deeper) = find_deepest_child_linux(deepest_pid) {
+        return Some(deeper);
+    }
+    Some(deepest_pid)
+}
 
-    pid
+#[cfg(target_os = "linux")]
+fn calculate_depth_linux(pid: i64, current_depth: usize) -> usize {
+    // Prevent infinite recursion
+    if current_depth > 20 {
+        return current_depth;
+    }
+
+    let proc_path = format!("/proc/{}/task/{}/children", pid, pid);
+    if let Ok(contents) = std::fs::read_to_string(&proc_path) {
+        let children: Vec<i64> = contents
+            .split_whitespace()
+            .filter_map(|s| s.parse::<i64>().ok())
+            .collect();
+
+        if children.is_empty() {
+            return current_depth;
+        }
+
+        // Return depth of deepest child branch
+        children
+            .iter()
+            .map(|&child| calculate_depth_linux(child, current_depth + 1))
+            .max()
+            .unwrap_or(current_depth)
+    } else {
+        current_depth
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
+    thread::sleep(Duration::from_millis(PROCESS_OPERATION_DELAY_MS));
+
+    log::debug!("Looking for actual child of shell PID {}", shell_pid);
+    
+    if let Some(deepest) = find_deepest_child_linux(shell_pid) {
+        log::debug!("Found deepest child PID {} for shell PID {}", deepest, shell_pid);
+        return deepest;
+    }
+
+    log::debug!("No child found, using shell PID {}", shell_pid);
+    shell_pid
+}
+
+#[cfg(target_os = "macos")]
+fn find_deepest_child_macos(parent_pid: i64) -> Option<i64> {
+    use std::collections::HashMap;
+
+    // Build parent-child map from all processes
+    let processes = native_processes().ok()?;
+    let mut children_map: HashMap<i64, Vec<i64>> = HashMap::new();
+
+    for process in &processes {
+        if let Ok(Some(ppid)) = process.ppid() {
+            children_map
+                .entry(ppid as i64)
+                .or_insert_with(Vec::new)
+                .push(process.pid() as i64);
+        }
+    }
+
+    // Recursive helper to find deepest child
+    fn find_deepest_recursive(
+        pid: i64,
+        children_map: &HashMap<i64, Vec<i64>>,
+    ) -> i64 {
+        if let Some(children) = children_map.get(&pid) {
+            if children.is_empty() {
+                return pid;
+            }
+
+            if children.len() == 1 {
+                log::debug!("Found single child {} of parent {}", children[0], pid);
+                return find_deepest_recursive(children[0], children_map);
+            }
+
+            // Multiple children: find the deepest among all branches
+            log::debug!("Found {} children of parent {}", children.len(), pid);
+            let mut deepest_pid = children[0];
+            let mut max_depth = 0;
+
+            for &child in children {
+                let depth = calculate_depth_macos(child, 0, children_map);
+                log::debug!("Child {} has depth {}", child, depth);
+                if depth > max_depth {
+                    max_depth = depth;
+                    deepest_pid = child;
+                }
+            }
+
+            return find_deepest_recursive(deepest_pid, children_map);
+        }
+
+        pid
+    }
+
+    let deepest = find_deepest_recursive(parent_pid, &children_map);
+    
+    // Only return if we found a different (deeper) PID
+    if deepest != parent_pid {
+        Some(deepest)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn calculate_depth_macos(
+    pid: i64,
+    current_depth: usize,
+    children_map: &std::collections::HashMap<i64, Vec<i64>>,
+) -> usize {
+    // Prevent infinite recursion
+    if current_depth > 20 {
+        return current_depth;
+    }
+
+    if let Some(children) = children_map.get(&pid) {
+        if children.is_empty() {
+            return current_depth;
+        }
+
+        // Return depth of deepest child branch
+        children
+            .iter()
+            .map(|&child| calculate_depth_macos(child, current_depth + 1, children_map))
+            .max()
+            .unwrap_or(current_depth)
+    } else {
+        current_depth
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -120,28 +270,13 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     // Wait for shell to spawn the actual command
     thread::sleep(Duration::from_millis(PROCESS_OPERATION_DELAY_MS));
 
-    // Find children by iterating processes
-    if let Ok(processes) = native_processes() {
-        for process in processes {
-            let ppid = match process.ppid() {
-                Ok(Some(ppid)) => ppid as i64,
-                _ => continue,
-            };
+    log::debug!("Looking for actual child of shell PID {}", shell_pid);
 
-            if ppid == shell_pid {
-                return process.pid() as i64;
-            }
-        }
+    if let Some(deepest) = find_deepest_child_macos(shell_pid) {
+        log::debug!("Found deepest child PID {} for shell PID {}", deepest, shell_pid);
+        return deepest;
     }
 
-    // Fallback: try using sysctl or other macOS specific methods
-    for test_pid in 1..32768 {
-        if let Ok(Some(ppid)) = get_parent_pid(test_pid) {
-            if ppid as i64 == shell_pid {
-                return test_pid as i64;
-            }
-        }
-    }
-
+    log::debug!("No child found, using shell PID {}", shell_pid);
     shell_pid
 }
