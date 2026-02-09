@@ -1526,12 +1526,10 @@ impl Runner {
             None => string!("0b"),
         };
 
-        // Check if process is alive by checking root PID, shell PID (if present), and all tracked descendants
-        // This ensures background shell processes with living children are not marked as crashed
-        let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children) ||
-            item.shell_pid.map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
-
-        let process_actually_running = item.running && any_descendant_alive;
+        // Check if process is alive by checking both the actual PID and shell PID (if present)
+        // For shell-wrapped processes, either PID being alive means the process is running
+        let process_actually_running = item.running && 
+            (is_pid_alive(item.pid) || item.shell_pid.map_or(false, |pid| is_pid_alive(pid)));
 
         let status = if process_actually_running {
             string!("online")
