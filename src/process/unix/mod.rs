@@ -193,6 +193,12 @@ fn find_alive_process_in_group(pgid: u32, exclude_pid: i64) -> Option<i64> {
 }
 
 #[cfg(target_os = "linux")]
+pub fn find_alive_process_in_group_for_pid(pid: i64) -> Option<i64> {
+    let pgid = get_process_group_id(pid)?;
+    find_alive_process_in_group(pgid, pid)
+}
+
+#[cfg(target_os = "linux")]
 pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     // Store the shell's process group ID before it exits
     // This is critical for backgrounded processes where the shell exits immediately

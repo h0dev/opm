@@ -2075,6 +2075,16 @@ pub fn is_pid_info_missing(pid: i64, children: &[i64]) -> bool {
     pid <= 0 && children.is_empty()
 }
 
+#[cfg(target_os = "linux")]
+pub fn find_alive_process_in_group(pid: i64) -> Option<i64> {
+    unix::find_alive_process_in_group_for_pid(pid)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn find_alive_process_in_group(_pid: i64) -> Option<i64> {
+    None
+}
+
 /// Result of running a process
 #[derive(Debug, Clone)]
 pub struct ProcessRunResult {

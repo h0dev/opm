@@ -201,8 +201,34 @@ fn restart_process() {
                 continue;
             }
 
+            // Check for surviving processes to adopt
+            // First, try to find any alive process in the same process group as the tracked PID
+            // This covers shell-wrapped commands that spawn a long-running child and then exit.
+            let group_child = opm::process::find_alive_process_in_group(item.pid)
+                .or_else(|| item.shell_pid.and_then(opm::process::find_alive_process_in_group));
+
+            if let Some(alive_child_pid) = group_child {
+                log!("[daemon] main process died, adopting process group child", "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
+                if runner.exists(id) {
+                    let process = runner.process(id);
+                    process.pid = alive_child_pid;
+                    process.shell_pid = None; // The adopted child is now the main process, not a shell
+                    process.children = item
+                        .children
+                        .iter()
+                        .filter(|&&p| p != alive_child_pid)
+                        .copied()
+                        .collect();
+                    runner.save();
+                }
+                continue;
+            }
+
             // Check for surviving children to adopt (using stored children list)
-            let adoptable_child = item.children.iter().find(|&&child_pid| opm::process::is_pid_alive(child_pid));
+            let adoptable_child = item
+                .children
+                .iter()
+                .find(|&&child_pid| opm::process::is_pid_alive(child_pid));
 
             if let Some(&alive_child_pid) = adoptable_child {
                 // --- ADOPTION LOGIC ---
