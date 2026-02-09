@@ -1533,6 +1533,7 @@ impl Runner {
 
         let process_actually_running = item.running && any_descendant_alive;
 
+        let crash_detection_enabled = config::read().daemon.crash_detection;
         let status = if process_actually_running {
             string!("online")
         } else if item.running {
@@ -1548,17 +1549,21 @@ impl Runner {
                 // In both cases, show "starting" since daemon will handle it within the monitoring interval
                 string!("starting")
             } else {
-                // Calculate time since start only when needed (not for pid=0 case)
-                let time_since_start = Utc::now().signed_duration_since(item.started);
-                
-                if time_since_start < grace_period {
-                    // PID is non-zero but process is dead, and we're still within grace period.
-                    // This could be a very quick crash or the process is still initializing.
-                    // Show "starting" to avoid false crash reports.
-                    string!("starting")
+                if !crash_detection_enabled {
+                    string!("stopped")
                 } else {
-                    // Grace period has passed and process is still dead - it's officially crashed.
-                    string!("crashed")
+                    // Calculate time since start only when needed (not for pid=0 case)
+                    let time_since_start = Utc::now().signed_duration_since(item.started);
+                    
+                    if time_since_start < grace_period {
+                        // PID is non-zero but process is dead, and we're still within grace period.
+                        // This could be a very quick crash or the process is still initializing.
+                        // Show "starting" to avoid false crash reports.
+                        string!("starting")
+                    } else {
+                        // Grace period has passed and process is still dead - it's officially crashed.
+                        string!("crashed")
+                    }
                 }
             }
         } else {
