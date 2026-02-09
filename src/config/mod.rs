@@ -39,9 +39,17 @@ pub fn read() -> Config {
         Some(path) => {
             let path = path.display();
 
-            let config_path = format!("{path}/.opm/config.toml");
+            let config_dir = format!("{path}/.opm");
+            let config_path = format!("{}/config.toml", config_dir);
 
             if !Exists::check(&config_path).file() {
+                if let Err(err) = std::fs::create_dir_all(&config_dir) {
+                    crashln!(
+                        "{} Error creating config directory.\n{}",
+                        *helpers::FAIL,
+                        string!(err).white()
+                    )
+                }
                 // Generate a secure token for API protection
                 let secure_token = uuid::Uuid::new_v4().to_string();
 
@@ -129,9 +137,17 @@ pub fn servers() -> Servers {
     match home::home_dir() {
         Some(path) => {
             let path = path.display();
-            let config_path = format!("{path}/.opm/servers.toml");
+            let config_dir = format!("{path}/.opm");
+            let config_path = format!("{}/servers.toml", config_dir);
 
             if !Exists::check(&config_path).file() {
+                if let Err(err) = std::fs::create_dir_all(&config_dir) {
+                    crashln!(
+                        "{} Error creating config directory.\n{}",
+                        *helpers::FAIL,
+                        string!(err).white()
+                    )
+                }
                 if let Err(err) = write(&config_path, "") {
                     crashln!(
                         "{} Error writing servers.\n{}",
@@ -156,7 +172,16 @@ impl Config {
         match home::home_dir() {
             Some(path) => {
                 let path = path.display();
-                let config_path = format!("{path}/.opm/config.toml");
+                let config_dir = format!("{path}/.opm");
+                let config_path = format!("{}/config.toml", config_dir);
+
+                if let Err(err) = std::fs::create_dir_all(&config_dir) {
+                    crashln!(
+                        "{} Error creating config directory.\n{}",
+                        *helpers::FAIL,
+                        string!(err).white()
+                    )
+                }
 
                 let contents = match toml::to_string(&self) {
                     Ok(contents) => contents,
