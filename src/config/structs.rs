@@ -51,6 +51,8 @@ pub struct Daemon {
     pub notifications: Option<Notifications>,
     #[serde(default)]
     pub restore_cleanup: Option<RestoreCleanup>,
+    #[serde(default = "default_true")]
+    pub crash_detection: bool,
     /// Grace period in seconds before checking if a process has crashed after start/restart/reload
     /// This prevents false crash detection for processes that take time to initialize
     #[serde(default = "default_crash_grace_period")]

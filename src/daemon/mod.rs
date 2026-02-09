@@ -245,77 +245,81 @@ fn restart_process() {
                 continue;
             }
 
-            // --- CRASH HANDLING LOGIC ---
-            // No living parent and no living children to adopt. This is a real crash or clean exit.
-            let grace_period = daemon_config.crash_grace_period as i64;
-            let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
-            let is_new_crash = item.pid > 0;
+            if daemon_config.crash_detection {
+                // --- CRASH HANDLING LOGIC ---
+                // No living parent and no living children to adopt. This is a real crash or clean exit.
+                let grace_period = daemon_config.crash_grace_period as i64;
+                let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
+                let is_new_crash = item.pid > 0;
 
-            if is_new_crash && !just_started {
-                let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
-                let mut exited_successfully = false;
-                let mut handle_found = false;
+                if is_new_crash && !just_started {
+                    let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
+                    let mut exited_successfully = false;
+                    let mut handle_found = false;
 
-                if let Some((_, handle_ref)) = opm::process::PROCESS_HANDLES.remove(&process_handle_pid) {
-                    handle_found = true;
-                    if let Ok(mut child) = handle_ref.lock() {
-                        if let Ok(Some(status)) = child.try_wait() {
-                            exited_successfully = status.success();
-                            log!("[daemon] reaped exited process", "name" => &item.name, "id" => id, "success" => exited_successfully);
+                    if let Some((_, handle_ref)) = opm::process::PROCESS_HANDLES.remove(&process_handle_pid) {
+                        handle_found = true;
+                        if let Ok(mut child) = handle_ref.lock() {
+                            if let Ok(Some(status)) = child.try_wait() {
+                                exited_successfully = status.success();
+                                log!("[daemon] reaped exited process", "name" => &item.name, "id" => id, "success" => exited_successfully);
+                            }
                         }
                     }
-                }
 
-                if handle_found && exited_successfully {
+                    if handle_found && exited_successfully {
+                        if runner.exists(id) {
+                            let process = runner.process(id);
+                            process.running = false;
+                            process.pid = 0;
+                            process.shell_pid = None;
+                            process.crash.crashed = false;
+                            runner.save();
+                            log!("[daemon] process stopped cleanly", "name" => &item.name, "id" => id);
+                        }
+                        continue;
+                    }
+
+                    // If handle not found, or it exited with an error, it's a crash.
                     if runner.exists(id) {
                         let process = runner.process(id);
-                        process.running = false;
                         process.pid = 0;
                         process.shell_pid = None;
-                        process.crash.crashed = false;
+                        process.crash.value += 1;
+                        process.crash.crashed = true;
+                        let crash_count = process.crash.value;
+
+                        if item.running {
+                            let process_name = item.name.clone();
+                            if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
+                                handle.spawn(emit_crash_event_and_notification(id, process_name));
+                            }
+                            
+                            if crash_count >= daemon_config.restarts {
+                                process.running = false;
+                                log!("[daemon] process reached max crash limit", "name" => &item.name, "id" => id, "crashes" => crash_count);
+                            } else {
+                                log!("[daemon] process crashed", "name" => &item.name, "id" => id, "crashes" => crash_count);
+                            }
+                        }
                         runner.save();
-                        log!("[daemon] process stopped cleanly", "name" => &item.name, "id" => id);
                     }
-                    continue;
                 }
 
-                // If handle not found, or it exited with an error, it's a crash.
-                if runner.exists(id) {
-                    let process = runner.process(id);
-                    process.pid = 0;
-                    process.shell_pid = None;
-                    process.crash.value += 1;
-                    process.crash.crashed = true;
-                    let crash_count = process.crash.value;
-
-                    if item.running {
-                        let process_name = item.name.clone();
-                        if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
-                            handle.spawn(emit_crash_event_and_notification(id, process_name));
-                        }
-                        
-                        if crash_count >= daemon_config.restarts {
-                            process.running = false;
-                            log!("[daemon] process reached max crash limit", "name" => &item.name, "id" => id, "crashes" => crash_count);
-                        } else {
-                            log!("[daemon] process crashed", "name" => &item.name, "id" => id, "crashes" => crash_count);
-                        }
+                // If the process is supposed to be running, attempt a restart.
+                if item.running && runner.exists(id) && runner.info(id).map_or(false, |p| p.running) {
+                    let grace_period = daemon_config.crash_grace_period as i64;
+                    let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
+                    let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
+                    let within_action_delay = seconds_since_action < 5;
+                    
+                    if !runner.is_frozen(id) && !just_started && !within_action_delay {
+                        log!("[daemon] restarting crashed process", "name" => &item.name, "id" => id);
+                        runner.restart(id, true, true);
                     }
-                    runner.save();
                 }
-            }
-
-            // If the process is supposed to be running, attempt a restart.
-            if item.running && runner.exists(id) && runner.info(id).map_or(false, |p| p.running) {
-                 let grace_period = daemon_config.crash_grace_period as i64;
-                 let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
-                 let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
-                 let within_action_delay = seconds_since_action < 5;
-                
-                if !runner.is_frozen(id) && !just_started && !within_action_delay {
-                    log!("[daemon] restarting crashed process", "name" => &item.name, "id" => id);
-                    runner.restart(id, true, true);
-                }
+            } else {
+                log!("[daemon] crash detection disabled - skipping crash handling", "name" => &item.name, "id" => id);
             }
         }
          // Handle processes that need to be started (e.g. after restore or `opm start`)

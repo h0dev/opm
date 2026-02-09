@@ -74,6 +74,7 @@ pub fn read() -> Config {
                             daemon_log: true,
                             agent_log: true,
                         }),
+                        crash_detection: true,
                         crash_grace_period: 2,
                     },
                     role: structs::Role::Standalone,
