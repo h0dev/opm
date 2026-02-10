@@ -137,17 +137,16 @@ fn restart_process() {
         }
 
         // Check if any descendant is alive (root PID + tracked children)
+        let shell_alive = item
+            .shell_pid
+            .map_or(false, |pid| opm::process::is_pid_alive(pid));
+
         let any_descendant_alive = opm::process::is_any_descendant_alive(item.pid, &item.children)
-            || item
-                .shell_pid
-                .map_or(false, |pid| opm::process::is_pid_alive(pid));
+            || shell_alive;
 
         // Check if the main process (PID or shell_pid) is alive
         // This is the primary indicator of process health
-        let main_process_alive = opm::process::is_pid_alive(item.pid)
-            || item
-                .shell_pid
-                .map_or(false, |pid| opm::process::is_pid_alive(pid));
+        let main_process_alive = opm::process::is_pid_alive(item.pid) || shell_alive;
 
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
