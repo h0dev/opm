@@ -333,9 +333,11 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             // This fixes the phantom crash/stop issue where processes appear stopped after restore/start
                             // even though they're actually running.
 
-                            // If existing has a valid PID (>0) but incoming has default PID (0),
-                            // preserve the existing PID and running state - it was likely set mid-cycle
-                            // This is a safety check in case serde skipping is reintroduced
+                            // Safety check: If existing has a valid PID but incoming has pid=0,
+                            // preserve the existing state. This handles edge cases like:
+                            // - Deserialization from old dump files that had serde(skip) on pid
+                            // - Corrupted state updates
+                            // - Daemon restarts where temporary state is lost
                             if existing.pid > 0 && process.pid == 0 {
                                 process.pid = existing.pid;
                                 process.shell_pid = existing.shell_pid;
@@ -343,8 +345,8 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                                 process.running = existing.running;
                                 process.started = existing.started;
                                 log::debug!(
-                                    "[socket] Preserved mid-cycle PID update for process '{}' (id={}): pid={}, running={}, children={:?}",
-                                    process.name, id, process.pid, process.running, process.children
+                                    "[socket] Preserved PID for process '{}' (id={}): pid={}, running={}",
+                                    process.name, id, process.pid, process.running
                                 );
                             }
                         }

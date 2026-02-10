@@ -123,11 +123,6 @@ fn restart_process() {
     let process_ids: Vec<usize> = runner.process_ids().collect();
 
     for id in process_ids {
-        // Reload runner from memory for each process to get fresh state
-        // This prevents race conditions where processes start/stop during the monitoring cycle
-        // Critical: Without this reload, a process that starts mid-cycle appears dead (pid=0)
-        runner = Runner::new_direct();
-        
         let item = match runner.info(id) {
             Some(item) => item.clone(),
             None => continue, // Process was removed, skip it
