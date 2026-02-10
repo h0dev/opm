@@ -144,7 +144,7 @@ fn restart_process() {
 
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
-        let has_zombie_children = !item.children.is_empty() 
+        let all_children_are_zombies = !item.children.is_empty() 
             && item.children.iter().all(|&child_pid| {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
@@ -156,12 +156,11 @@ fn restart_process() {
                 }
             });
 
-        if has_zombie_children {
+        if all_children_are_zombies {
             // All tracked children are zombies - treat as crashed
             log!("[daemon] all tracked children are zombies, treating as crashed", 
                 "name" => &item.name, "id" => id, "children" => format!("{:?}", item.children));
-            // Force entry into crash detection by treating as not alive
-            // Fall through to the crash detection logic below
+            // Fall through to crash detection logic below (process is treated as dead)
         } else if any_descendant_alive {
             // --- PROCESS IS ALIVE ---
             // Update children list for the next cycle.
