@@ -226,6 +226,9 @@ fn restart_process() {
             }
 
             // Child PID adoption logic has been removed due to bugs in PR #306
+            // The adoption logic had two critical issues:
+            // 1. Could adopt unrelated PIDs that happened to be in the same process group
+            // 2. Prevented stopped processes from staying stopped (would restart them instead)
             // When a process dies, we no longer try to adopt its children
 
             if daemon_config.crash_detection {
@@ -253,7 +256,7 @@ fn restart_process() {
                     }
 
                     if handle_found && exited_successfully {
-                        // Child PID adoption logic has been removed due to bugs in PR #306
+                        // Child PID adoption logic removed (see comment above for details)
                         // Process exited cleanly - mark it as stopped
                         if runner.exists(id) {
                             let process = runner.process(id);
