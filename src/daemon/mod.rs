@@ -233,6 +233,10 @@ fn restart_process() {
                     .and_then(opm::process::find_alive_process_in_group)
             });
 
+            // Only adopt if the found PID is in our stored children list to prevent
+            // adopting unrelated processes that happen to be in the same process group
+            let group_child = group_child.filter(|&pid| item.children.contains(&pid));
+
             if let Some(alive_child_pid) = group_child {
                 log!("[daemon] main process died, adopting process group child", "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
                 if runner.exists(id) {
