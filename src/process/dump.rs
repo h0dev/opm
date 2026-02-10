@@ -335,8 +335,9 @@ pub fn write_memory(dump: &Runner) {
             log!("[dump::write_memory] Unexpected response from daemon socket, falling back to memory");
         }
         Err(_) => {
-            // Daemon not running, fall back to in-memory cache
-            log!("[dump::write_memory] Daemon not running, using in-memory cache");
+            // Daemon not running, fall back to disk so state persists across CLI processes
+            log!("[dump::write_memory] Daemon not running, writing to permanent dump");
+            write(dump);
         }
     }
 

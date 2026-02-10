@@ -37,6 +37,76 @@ lazy_static! {
     static ref SIMPLE_PATH_PATTERN: Regex = Regex::new(r"^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$").unwrap();
 }
 
+fn ensure_daemon_running() {
+    use global_placeholders::global;
+
+    let socket_path = global!("opm.socket");
+    if opm::socket::is_daemon_running(&socket_path) {
+        return;
+    }
+
+    println!("{} Starting OPM daemon...", *helpers::SUCCESS);
+    let config = config::read();
+    let api_enabled = config.daemon.web.api;
+    let webui_enabled = config.daemon.web.ui;
+
+    crate::daemon::restart(&api_enabled, &webui_enabled, false);
+
+    let max_retries = 20;
+    let mut retry_count = 0;
+    let mut socket_ready = false;
+
+    loop {
+        if opm::socket::is_daemon_running(&socket_path) {
+            socket_ready = true;
+            break;
+        }
+
+        if retry_count >= max_retries {
+            break;
+        }
+
+        let wait_ms = 200 + (retry_count * 100);
+        std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+        retry_count += 1;
+    }
+
+    if !socket_ready {
+        eprintln!(
+            "{} Warning: Daemon socket not ready after initial attempts, retrying...",
+            *helpers::WARN
+        );
+
+        let additional_retries = 5;
+        for i in 0..additional_retries {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if opm::socket::is_daemon_running(&socket_path) {
+                socket_ready = true;
+                break;
+            }
+
+            if i == additional_retries - 1 {
+                eprintln!(
+                    "{} Warning: Daemon socket may not be ready after extended wait",
+                    *helpers::WARN
+                );
+            }
+        }
+    }
+
+    if socket_ready {
+        println!("{} OPM daemon started", *helpers::SUCCESS);
+    } else {
+        crashln!(
+            "{} Failed to connect to OPM daemon socket after {} total retries\n{}\n{}",
+            *helpers::FAIL,
+            max_retries + 5,
+            "The daemon may have failed to start or the socket is not accessible.".white(),
+            "Try running 'opm daemon --no-daemonize' to see error messages.".white()
+        );
+    }
+}
+
 // Constants for real-time statistics display timing
 pub(crate) const STATS_PRE_LIST_DELAY_MS: u64 = 100;
 
@@ -72,6 +142,7 @@ impl<'i> Internal<'i> {
         };
 
         if matches!(self.server_name, "internal" | "local") {
+            ensure_daemon_running();
             // Check if script is a file path with an extension
             let script_to_run = if let Some(ext_start) = script.rfind('.') {
                 let ext = &script[ext_start..];
@@ -176,6 +247,7 @@ impl<'i> Internal<'i> {
         );
 
         if matches!(self.server_name, "internal" | "local") {
+            ensure_daemon_running();
             let mut item = self.runner.get(self.id);
 
             match watch {
