@@ -142,7 +142,27 @@ fn restart_process() {
                 .shell_pid
                 .map_or(false, |pid| opm::process::is_pid_alive(pid));
 
-        if any_descendant_alive {
+        // Even if a PID is alive, check if all tracked children are zombies
+        // This handles cases where the wrong PID was adopted but the actual children crashed
+        let has_zombie_children = !item.children.is_empty() 
+            && item.children.iter().all(|&child_pid| {
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                {
+                    opm::process::unix::is_process_zombie(child_pid as i32)
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                {
+                    false
+                }
+            });
+
+        if has_zombie_children {
+            // All tracked children are zombies - treat as crashed
+            log!("[daemon] all tracked children are zombies, treating as crashed", 
+                "name" => &item.name, "id" => id, "children" => format!("{:?}", item.children));
+            // Force entry into crash detection by treating as not alive
+            // Fall through to the crash detection logic below
+        } else if any_descendant_alive {
             // --- PROCESS IS ALIVE ---
             // Update children list for the next cycle.
             let current_children = opm::process::process_find_children(item.pid);
