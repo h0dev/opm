@@ -295,6 +295,36 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                                 
                                 continue;
                             }
+                            
+                            // Same process - merge smartly to preserve mid-cycle updates
+                            // Problem: When restore starts a process, it updates PID/children/started via SetState.
+                            // But the daemon's monitoring loop may be running with a stale runner (pid=0).
+                            // When daemon saves, it would overwrite the fresh PID with stale pid=0.
+                            // 
+                            // Solution: Preserve runtime fields that may have been updated mid-cycle:
+                            // - pid, shell_pid, children, started: Keep existing if non-zero/non-default
+                            // - Other fields: Use incoming values (daemon is authoritative for state/counters)
+                            //
+                            // This fixes the phantom crash/stop issue where processes appear stopped after restore
+                            // even though they're actually running.
+                            
+                            // If existing has a valid PID (>0) but incoming has default PID (0),
+                            // preserve the existing PID - it was likely set mid-cycle by restore
+                            if existing.pid > 0 && process.pid == 0 {
+                                process.pid = existing.pid;
+                                process.shell_pid = existing.shell_pid;
+                                process.children = existing.children.clone();
+                                // Only preserve started if it's not the default Unix epoch
+                                let unix_epoch = chrono::DateTime::from_timestamp(0, 0)
+                                    .expect("Unix epoch timestamp should always be valid");
+                                if existing.started != unix_epoch {
+                                    process.started = existing.started;
+                                }
+                                log::debug!(
+                                    "[socket] Preserved mid-cycle PID update for process '{}' (id={}): pid={}, children={:?}",
+                                    process.name, id, process.pid, process.children
+                                );
+                            }
                         }
                         
                         // No conflict, or this is an update to existing process - insert normally
