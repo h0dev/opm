@@ -2148,7 +2148,8 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
 
     // Create parent directories for log files if they don't exist
     // This handles cases where process name contains slashes (e.g., "server/server.js")
-    if let Some(parent) = std::path::Path::new(&stdout_path).parent() {
+    // Both stdout and stderr use the same log_base, so we only need to create directories once
+    if let Some(parent) = std::path::Path::new(&log_base).parent() {
         fs::create_dir_all(parent).map_err(|err| {
             format!(
                 "Failed to create log directory '{}': {}. \
