@@ -205,10 +205,6 @@ pub fn find_alive_process_in_group_for_pid(pid: i64) -> Option<i64> {
 
 #[cfg(target_os = "linux")]
 pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
-    // Store the shell's process group ID before it exits
-    // This is critical for backgrounded processes where the shell exits immediately
-    let shell_pgid = get_process_group_id(shell_pid);
-
     // Retry logic with shorter intervals and immediate first check
     // Poll more frequently to catch the child before the shell exits
     const MAX_RETRIES: u32 = 20; // Increased from 6
@@ -245,30 +241,15 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
 
         // Check if shell is still alive
         if !crate::process::is_pid_alive(shell_pid) {
-            // Shell has exited - try process group fallback
-            if let Some(pgid) = shell_pgid {
-                log::debug!(
-                    "Shell PID {} exited, attempting process group fallback (PGID {})",
-                    shell_pid,
-                    pgid
-                );
-
-                // Try to find an alive non-shell process in the same process group
-                if let Some(group_child) = find_alive_process_in_group(pgid, shell_pid) {
-                    log::debug!(
-                        "Found process group fallback PID {} for shell PID {}",
-                        group_child,
-                        shell_pid
-                    );
-                    return group_child;
-                }
-            }
-
+            // Shell has exited without spawning a detectable child
+            // This typically means the command crashed immediately or doesn't exist
+            // Process group fallback has been removed as it could adopt unrelated PIDs
+            // that happen to be in the same process group (e.g., other opm processes)
             log::debug!(
-                "Shell PID {} exited and no fallback found, using shell PID as fallback",
+                "Shell PID {} exited without spawning a detectable child, using shell PID as fallback",
                 shell_pid
             );
-            return shell_pid; // Return shell PID as fallback (will be handled by daemon adoption logic)
+            return shell_pid; // Return shell PID as fallback (will be handled as crashed by daemon)
         }
 
         // If this is not the last attempt, continue retrying
@@ -277,19 +258,9 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
         }
     }
 
-    // After all retries, if still no child found, try process group fallback as last resort
-    if let Some(pgid) = shell_pgid {
-        if let Some(group_child) = find_alive_process_in_group(pgid, shell_pid) {
-            log::debug!(
-                "Final process group fallback found PID {} for shell PID {}",
-                group_child,
-                shell_pid
-            );
-            return group_child;
-        }
-    }
-
     // Ultimate fallback: use shell PID
+    // Process group fallback has been removed as it could adopt unrelated PIDs
+    // that happen to be in the same process group (e.g., other opm processes)
     log::debug!(
         "No child found after {} attempts, using shell PID {} as fallback",
         MAX_RETRIES,
