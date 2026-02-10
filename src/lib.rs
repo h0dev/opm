@@ -32,5 +32,6 @@ pub use process::{
     get_process_cpu_usage_percentage, get_process_cpu_usage_percentage_fast,
     get_process_cpu_usage_with_children, get_process_cpu_usage_with_children_fast,
     get_process_cpu_usage_with_children_from_process, get_process_memory_with_children,
-    is_any_descendant_alive, is_pid_alive, is_pid_info_missing, process_find_children, process_run, process_stop,
+    is_any_descendant_alive, is_pid_alive, is_pid_info_missing, process_find_children, process_run,
+    process_stop,
 };

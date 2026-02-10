@@ -91,7 +91,7 @@ fn find_immediate_children_linux(parent_pid: i64) -> Vec<i64> {
         Ok(c) => c,
         Err(_) => return vec![],
     };
-    
+
     contents
         .split_whitespace()
         .filter_map(|s| s.parse::<i64>().ok())
@@ -102,7 +102,7 @@ fn find_immediate_children_linux(parent_pid: i64) -> Vec<i64> {
 #[cfg(target_os = "linux")]
 fn find_first_long_running_child_linux(parent_pid: i64) -> Option<i64> {
     let shell_names = ["sh", "bash", "zsh", "fish", "dash"];
-    
+
     let children = find_immediate_children_linux(parent_pid);
     if children.is_empty() {
         return None;
@@ -113,7 +113,7 @@ fn find_first_long_running_child_linux(parent_pid: i64) -> Option<i64> {
         if let Ok(exe) = get_process_name(child as u32) {
             let exe_lower = exe.to_lowercase();
             let is_shell = shell_names.iter().any(|s| exe_lower.contains(s));
-            
+
             if !is_shell {
                 log::debug!("Found long-running process: {} (PID {})", exe, child);
                 return Some(child);
@@ -135,7 +135,7 @@ fn find_first_long_running_child_linux(parent_pid: i64) -> Option<i64> {
 #[cfg(target_os = "linux")]
 fn get_process_group_id(pid: i64) -> Option<u32> {
     use std::fs;
-    
+
     let stat_path = format!("/proc/{}/stat", pid);
     if let Ok(stat_content) = fs::read_to_string(&stat_path) {
         // Parse /proc/pid/stat format: pid (comm) state ppid pgrp ...
@@ -157,7 +157,7 @@ fn get_process_group_id(pid: i64) -> Option<u32> {
 #[cfg(target_os = "linux")]
 fn find_alive_process_in_group(pgid: u32, exclude_pid: i64) -> Option<i64> {
     use std::fs;
-    
+
     if let Ok(entries) = fs::read_dir("/proc") {
         for entry in entries.flatten() {
             if let Ok(pid_str) = entry.file_name().into_string() {
@@ -165,7 +165,7 @@ fn find_alive_process_in_group(pgid: u32, exclude_pid: i64) -> Option<i64> {
                     if pid == exclude_pid {
                         continue; // Skip the excluded PID (the shell)
                     }
-                    
+
                     // Check if this process is in the target group
                     if let Some(process_pgid) = get_process_group_id(pid) {
                         if process_pgid == pgid {
@@ -175,10 +175,15 @@ fn find_alive_process_in_group(pgid: u32, exclude_pid: i64) -> Option<i64> {
                                 if let Ok(name) = get_process_name(pid as u32) {
                                     let name_lower = name.to_lowercase();
                                     let shell_names = ["sh", "bash", "zsh", "fish", "dash"];
-                                    let is_shell = shell_names.iter().any(|s| name_lower.contains(s));
-                                    
+                                    let is_shell =
+                                        shell_names.iter().any(|s| name_lower.contains(s));
+
                                     if !is_shell {
-                                        log::debug!("Found non-shell process {} (PGID {}) in group", pid, pgid);
+                                        log::debug!(
+                                            "Found non-shell process {} (PGID {}) in group",
+                                            pid,
+                                            pgid
+                                        );
                                         return Some(pid);
                                     }
                                 }
@@ -203,61 +208,93 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     // Store the shell's process group ID before it exits
     // This is critical for backgrounded processes where the shell exits immediately
     let shell_pgid = get_process_group_id(shell_pid);
-    
+
     // Retry logic with shorter intervals and immediate first check
     // Poll more frequently to catch the child before the shell exits
     const MAX_RETRIES: u32 = 20; // Increased from 6
     const RETRY_DELAY_MS: u64 = 50; // Reduced from 500ms to 50ms
-    
+
     // Immediate first check (no sleep) to catch fast-spawning children
-    log::debug!("Looking for actual child of shell PID {} (immediate check)", shell_pid);
-    
+    log::debug!(
+        "Looking for actual child of shell PID {} (immediate check)",
+        shell_pid
+    );
+
     for attempt in 0..MAX_RETRIES {
         // Only sleep after the first attempt
         if attempt > 0 {
             thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
         }
-        
-        log::debug!("Looking for actual child of shell PID {} (attempt {}/{})", shell_pid, attempt + 1, MAX_RETRIES);
-        
+
+        log::debug!(
+            "Looking for actual child of shell PID {} (attempt {}/{})",
+            shell_pid,
+            attempt + 1,
+            MAX_RETRIES
+        );
+
         if let Some(long_running) = find_first_long_running_child_linux(shell_pid) {
-            log::debug!("Found long-running child PID {} for shell PID {} after {} attempts", long_running, shell_pid, attempt + 1);
+            log::debug!(
+                "Found long-running child PID {} for shell PID {} after {} attempts",
+                long_running,
+                shell_pid,
+                attempt + 1
+            );
             return long_running;
         }
-        
+
         // Check if shell is still alive
         if !crate::process::is_pid_alive(shell_pid) {
             // Shell has exited - try process group fallback
             if let Some(pgid) = shell_pgid {
-                log::debug!("Shell PID {} exited, attempting process group fallback (PGID {})", shell_pid, pgid);
-                
+                log::debug!(
+                    "Shell PID {} exited, attempting process group fallback (PGID {})",
+                    shell_pid,
+                    pgid
+                );
+
                 // Try to find an alive non-shell process in the same process group
                 if let Some(group_child) = find_alive_process_in_group(pgid, shell_pid) {
-                    log::debug!("Found process group fallback PID {} for shell PID {}", group_child, shell_pid);
+                    log::debug!(
+                        "Found process group fallback PID {} for shell PID {}",
+                        group_child,
+                        shell_pid
+                    );
                     return group_child;
                 }
             }
-            
-            log::debug!("Shell PID {} exited and no fallback found, using shell PID as fallback", shell_pid);
+
+            log::debug!(
+                "Shell PID {} exited and no fallback found, using shell PID as fallback",
+                shell_pid
+            );
             return shell_pid; // Return shell PID as fallback (will be handled by daemon adoption logic)
         }
-        
+
         // If this is not the last attempt, continue retrying
         if attempt < MAX_RETRIES - 1 {
             log::debug!("No child found yet, retrying in {}ms...", RETRY_DELAY_MS);
         }
     }
-    
+
     // After all retries, if still no child found, try process group fallback as last resort
     if let Some(pgid) = shell_pgid {
         if let Some(group_child) = find_alive_process_in_group(pgid, shell_pid) {
-            log::debug!("Final process group fallback found PID {} for shell PID {}", group_child, shell_pid);
+            log::debug!(
+                "Final process group fallback found PID {} for shell PID {}",
+                group_child,
+                shell_pid
+            );
             return group_child;
         }
     }
-    
+
     // Ultimate fallback: use shell PID
-    log::debug!("No child found after {} attempts, using shell PID {} as fallback", MAX_RETRIES, shell_pid);
+    log::debug!(
+        "No child found after {} attempts, using shell PID {} as fallback",
+        MAX_RETRIES,
+        shell_pid
+    );
     shell_pid
 }
 
@@ -279,10 +316,7 @@ fn find_deepest_child_macos(parent_pid: i64) -> Option<i64> {
     }
 
     // Recursive helper to find deepest child
-    fn find_deepest_recursive(
-        pid: i64,
-        children_map: &HashMap<i64, Vec<i64>>,
-    ) -> i64 {
+    fn find_deepest_recursive(pid: i64, children_map: &HashMap<i64, Vec<i64>>) -> i64 {
         if let Some(children) = children_map.get(&pid) {
             if children.is_empty() {
                 return pid;
@@ -314,7 +348,7 @@ fn find_deepest_child_macos(parent_pid: i64) -> Option<i64> {
     }
 
     let deepest = find_deepest_recursive(parent_pid, &children_map);
-    
+
     // Only return if we found a different (deeper) PID
     if deepest != parent_pid {
         Some(deepest)
@@ -358,7 +392,11 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     log::debug!("Looking for actual child of shell PID {}", shell_pid);
 
     if let Some(deepest) = find_deepest_child_macos(shell_pid) {
-        log::debug!("Found deepest child PID {} for shell PID {}", deepest, shell_pid);
+        log::debug!(
+            "Found deepest child PID {} for shell PID {}",
+            deepest,
+            shell_pid
+        );
         return deepest;
     }
 

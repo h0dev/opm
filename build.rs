@@ -69,14 +69,14 @@ fn use_system_node_or_download() -> PathBuf {
 fn download_node() -> PathBuf {
     #[cfg(target_os = "linux")]
     let target_os = "linux";
-    #[cfg(all(target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     let target_os = "darwin";
 
-    #[cfg(all(target_arch = "arm"))]
+    #[cfg(target_arch = "arm")]
     let target_arch = "armv7l";
-    #[cfg(all(target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     let target_arch = "x64";
-    #[cfg(all(target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     let target_arch = "arm64";
 
     let download_url = format!(
@@ -207,11 +207,11 @@ fn main() {
     let date = chrono::Utc::now();
     let profile = env::var("PROFILE").unwrap();
     let output = Command::new("git")
-        .args(&["rev-parse", "--short=10", "HEAD"])
+        .args(["rev-parse", "--short=10", "HEAD"])
         .output()
         .unwrap();
     let output_full = Command::new("git")
-        .args(&["rev-parse", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output()
         .unwrap();
 

@@ -182,7 +182,7 @@ pub fn start(
             }
             runner.save();
         }
-        
+
         // Allow CPU stats to accumulate before displaying the list
         thread::sleep(Duration::from_millis(STATS_PRE_LIST_DELAY_MS));
         Internal::list_with_runner(&string!("default"), &list_name, Some(&runner));
@@ -352,7 +352,7 @@ pub fn remove(items: &Items, server_name: &String) {
         // Resolve all items to IDs first, then sort in descending order
         // This prevents ID shift issues when removing multiple processes
         let mut ids_to_remove: Vec<usize> = Vec::new();
-        
+
         for item in &items.items {
             match item {
                 Item::Id(id) => {
@@ -361,17 +361,17 @@ pub fn remove(items: &Items, server_name: &String) {
                     } else {
                         crashln!("{} Process (id={}) not found", *helpers::FAIL, id);
                     }
-                },
+                }
                 Item::Name(name) => match runner.find(&name, server_name) {
                     Some(id) => ids_to_remove.push(id),
                     None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
                 },
             }
         }
-        
+
         // Sort IDs in descending order to avoid ID compaction issues
         ids_to_remove.sort_by(|a, b| b.cmp(a));
-        
+
         // Now remove all processes in descending ID order
         for id in ids_to_remove {
             Internal {

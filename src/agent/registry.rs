@@ -1,6 +1,6 @@
 use super::types::AgentInfo;
-use crate::process::ProcessItem;
 use crate::agent::messages::ActionResponse;
+use crate::process::ProcessItem;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
@@ -82,11 +82,11 @@ impl AgentRegistry {
         }
     }
 
-     pub fn update_processes(&self, id: &str, processes: Vec<ProcessItem>) {
-         let mut agent_processes = self.agent_processes.write().unwrap();
-         agent_processes.insert(id.to_string(), processes);
-         log::debug!("[Registry] Process list updated for agent {}", id);
-     }
+    pub fn update_processes(&self, id: &str, processes: Vec<ProcessItem>) {
+        let mut agent_processes = self.agent_processes.write().unwrap();
+        agent_processes.insert(id.to_string(), processes);
+        log::debug!("[Registry] Process list updated for agent {}", id);
+    }
 
     pub fn get_processes(&self, id: &str) -> Option<Vec<ProcessItem>> {
         let agent_processes = self.agent_processes.read().unwrap();
@@ -165,24 +165,27 @@ impl AgentRegistry {
 
         for agent_id in agent_ids {
             let request_id = format!("agent_save_{}", uuid::Uuid::new_v4());
-            
+
             let save_request = super::messages::AgentMessage::SaveRequest {
                 request_id: request_id.clone(),
             };
 
             if let Ok(save_json) = serde_json::to_string(&save_request) {
-                if let Ok(rx) = self.send_action_with_response(&agent_id, request_id.clone(), save_json) {
+                if let Ok(rx) =
+                    self.send_action_with_response(&agent_id, request_id.clone(), save_json)
+                {
                     // Wait for response with timeout
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(5),
-                        rx
-                    ).await {
+                    match tokio::time::timeout(tokio::time::Duration::from_secs(5), rx).await {
                         Ok(Ok(response)) if response.success => {
                             log::info!("[Registry] Agent {} saved successfully", agent_id);
                             successful_saves.push(agent_id);
                         }
                         Ok(Ok(response)) => {
-                            log::error!("[Registry] Agent {} save failed: {}", agent_id, response.message);
+                            log::error!(
+                                "[Registry] Agent {} save failed: {}",
+                                agent_id,
+                                response.message
+                            );
                         }
                         Ok(Err(_)) => {
                             log::error!("[Registry] Agent {} save request canceled", agent_id);

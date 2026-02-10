@@ -85,7 +85,7 @@ fn read_permanent_dump() -> Runner {
 /// If memory cache is None, permanent state is preserved
 fn merge_runners(mut permanent: Runner, memory: Option<Runner>) -> Runner {
     use std::sync::atomic::Ordering;
-    
+
     // If memory cache exists, it represents the complete current state
     // Replace permanent's list with memory's list to reflect deletions
     if let Some(memory) = memory {
@@ -93,7 +93,7 @@ fn merge_runners(mut permanent: Runner, memory: Option<Runner>) -> Runner {
         // When the daemon or CLI writes to memory cache via SetState, it sends
         // the complete runner with all processes. The memory cache is the single
         // source of truth for the current process list during runtime.
-        // 
+        //
         // We do a complete replacement (not a merge) because:
         // 1. Process deletions: If a process is in permanent but not in memory,
         //    it means it was explicitly removed, so we must not keep it.
@@ -111,13 +111,13 @@ fn merge_runners(mut permanent: Runner, memory: Option<Runner>) -> Runner {
         // This ensures deletions properly decrease the counter
         let mem_counter = memory.id.counter.load(Ordering::SeqCst);
         permanent.id.counter.store(mem_counter, Ordering::SeqCst);
-        
+
         // If both lists are empty, reset counter to 0
         if permanent.list.is_empty() {
             permanent.id.counter.store(0, Ordering::SeqCst);
         }
     }
-    
+
     permanent
 }
 
@@ -185,7 +185,7 @@ pub fn read_merged_direct() -> Runner {
     if let Some(memory) = read_memory_direct_option() {
         return memory;
     }
-    
+
     // Fallback to permanent dump if memory cache is empty
     // This is critical for daemon startup and restore operations
     read_permanent_dump()
@@ -278,7 +278,7 @@ pub fn raw() -> Vec<u8> {
 
 pub fn write(dump: &Runner) {
     let dump_path = global!("opm.dump");
-    
+
     // Create backup of existing dump file before writing new one
     if Exists::check(&dump_path).file() {
         let backup_path = format!("{}.bak", dump_path);
@@ -288,7 +288,7 @@ pub fn write(dump: &Runner) {
             log!("[dump::write] Created backup at {}", backup_path);
         }
     }
-    
+
     let encoded = match ron::ser::to_string(&dump) {
         Ok(contents) => contents,
         Err(err) => crashln!(
@@ -432,17 +432,20 @@ pub fn read_from_daemon_only() -> Result<Runner, String> {
     use std::time::Duration;
 
     let socket_path = global!("opm.socket");
-    
+
     // Use more aggressive retry strategy for restore operations
     // The daemon might be busy processing existing processes, so we give it more time
     // We use send_request_once directly to avoid nested retries
     const MAX_RETRIES: u32 = 10;
     const INITIAL_BACKOFF_MS: u64 = 100;
-    
+
     let mut last_error = None;
-    
+
     for attempt in 0..MAX_RETRIES {
-        match crate::socket::send_request_once(&socket_path, &crate::socket::SocketRequest::GetState) {
+        match crate::socket::send_request_once(
+            &socket_path,
+            &crate::socket::SocketRequest::GetState,
+        ) {
             Ok(crate::socket::SocketResponse::State(runner)) => {
                 if attempt > 0 {
                     log!(
@@ -461,7 +464,7 @@ pub fn read_from_daemon_only() -> Result<Runner, String> {
             }
             Err(e) => {
                 last_error = Some(e);
-                
+
                 // Don't retry on the last attempt
                 if attempt < MAX_RETRIES - 1 {
                     // Exponential backoff with cap: 100ms, 200ms, 400ms, 800ms, then capped at 1000ms
@@ -481,7 +484,7 @@ pub fn read_from_daemon_only() -> Result<Runner, String> {
             }
         }
     }
-    
+
     // All retries exhausted
     let err = format!(
         "Failed to read from daemon after {} retries: {}",
@@ -563,23 +566,24 @@ pub fn init_on_startup() -> Runner {
 pub fn restore_from_backup() -> Result<(), String> {
     let dump_path = global!("opm.dump");
     let backup_path = format!("{}.bak", dump_path);
-    
+
     // Check if backup exists
     if !Exists::check(&backup_path).file() {
         return Err("No backup file found. Create a backup first by saving processes.".to_string());
     }
-    
+
     // Try to read the backup file to validate it
     match file::try_read_object::<Runner>(backup_path.clone()) {
         Ok(backup_runner) => {
             // Backup is valid, restore it
             write(&backup_runner);
-            log!("[dump::restore_from_backup] Restored from backup: {}", backup_path);
+            log!(
+                "[dump::restore_from_backup] Restored from backup: {}",
+                backup_path
+            );
             Ok(())
         }
-        Err(e) => {
-            Err(format!("Backup file is corrupted or invalid: {}", e))
-        }
+        Err(e) => Err(format!("Backup file is corrupted or invalid: {}", e)),
     }
 }
 

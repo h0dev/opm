@@ -1,4 +1,4 @@
-use opm::agent::messages::{AgentMessage, ActionResponse};
+use opm::agent::messages::{ActionResponse, AgentMessage};
 use opm::agent::registry::AgentRegistry;
 use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
 use opm::process::ProcessItem;
@@ -125,7 +125,7 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                      if let Ok(response_json) = serde_json::to_string(&response) {
                                          yield Message::Text(response_json);
                                      }
-                                     
+
                                      log::info!("[WebSocket] Process update applied for agent {}", id);
                                  }
                                 AgentMessage::ActionResponse { request_id, success, message } => {

@@ -5,10 +5,10 @@ mod webui;
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{LogLevel, Verbosity};
-use macros_rs::{str, string, crashln};
-use update_informer::{registry, Check};
-use std::fs;
 use global_placeholders::global;
+use macros_rs::{crashln, str, string};
+use std::fs;
+use update_informer::{registry, Check};
 
 use crate::{
     cli::{internal::Internal, Args, Item, Items},
@@ -903,8 +903,8 @@ fn main() {
     globals::init();
 
     // Configure custom certificates for TLS
-    use rustls::ClientConfig;
     use rustls::crypto::ring::default_provider;
+    use rustls::ClientConfig;
     use std::sync::Arc;
     let provider = Arc::new(default_provider());
     use rustls_native_certs::load_native_certs;
@@ -913,7 +913,8 @@ fn main() {
         root_store.add(cert).unwrap();
     }
     let _tls_config = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions().unwrap()
+        .with_safe_default_protocol_versions()
+        .unwrap()
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
@@ -957,34 +958,35 @@ fn main() {
                 let socket_path = global!("opm.socket");
                 let mut retry_count = 0;
                 let mut socket_ready = false;
-                
+
                 // Calculate total max wait time for warning message
                 let total_wait_ms: u64 = (0..SOCKET_RETRY_MAX)
                     .map(|i| SOCKET_RETRY_INITIAL_MS + (i as u64 * SOCKET_RETRY_INCREMENT_MS))
                     .sum();
                 let total_wait_secs = total_wait_ms as f64 / 1000.0;
-                
+
                 // Always use full retry count for socket readiness checks
                 // Even if daemon was already running, socket might be reinitializing
                 // (e.g., during container restarts or daemon recovery)
                 let max_retries = SOCKET_RETRY_MAX;
-                
+
                 loop {
                     if opm::socket::is_daemon_running(&socket_path) {
                         socket_ready = true;
                         break;
                     }
-                    
+
                     if retry_count >= max_retries {
                         break;
                     }
-                    
+
                     // Exponential backoff: start with SOCKET_RETRY_INITIAL_MS and increase by SOCKET_RETRY_INCREMENT_MS each retry
-                    let wait_ms = SOCKET_RETRY_INITIAL_MS + (retry_count as u64 * SOCKET_RETRY_INCREMENT_MS);
+                    let wait_ms =
+                        SOCKET_RETRY_INITIAL_MS + (retry_count as u64 * SOCKET_RETRY_INCREMENT_MS);
                     std::thread::sleep(std::time::Duration::from_millis(wait_ms));
                     retry_count += 1;
                 }
-                
+
                 if !socket_ready {
                     crashln!(
                         "{} Daemon socket not ready after ~{:.1} seconds. Restore cannot proceed.\n\
@@ -1050,11 +1052,17 @@ fn main() {
 
         Commands::Backup { command } => match command {
             BackupCommand::Restore => {
-                use opm::{process::dump, helpers};
+                use opm::{helpers, process::dump};
                 match dump::restore_from_backup() {
                     Ok(()) => {
-                        println!("{} Successfully restored from backup file", *helpers::SUCCESS);
-                        println!("{} Restart the daemon to apply changes: opm daemon restore", *helpers::WARN);
+                        println!(
+                            "{} Successfully restored from backup file",
+                            *helpers::SUCCESS
+                        );
+                        println!(
+                            "{} Restart the daemon to apply changes: opm daemon restore",
+                            *helpers::WARN
+                        );
                     }
                     Err(e) => {
                         crashln!("{} {}", *helpers::FAIL, e);
@@ -1062,7 +1070,7 @@ fn main() {
                 }
             }
             BackupCommand::Status => {
-                use opm::{process::dump, helpers};
+                use opm::{helpers, process::dump};
                 let backup_path = format!("{}.bak", global!("opm.dump"));
                 if dump::has_backup() {
                     match fs::metadata(&backup_path) {
@@ -1072,11 +1080,18 @@ fn main() {
                             println!("  Size: {} bytes", metadata.len());
                             if let Ok(modified) = metadata.modified() {
                                 let datetime: chrono::DateTime<chrono::Utc> = modified.into();
-                                println!("  Last modified: {}", datetime.format("%Y-%m-%d %H:%M:%S UTC"));
+                                println!(
+                                    "  Last modified: {}",
+                                    datetime.format("%Y-%m-%d %H:%M:%S UTC")
+                                );
                             }
                         }
                         Err(e) => {
-                            crashln!("{} Failed to read backup file metadata: {}", *helpers::FAIL, e);
+                            crashln!(
+                                "{} Failed to read backup file metadata: {}",
+                                *helpers::FAIL,
+                                e
+                            );
                         }
                     }
                 } else {

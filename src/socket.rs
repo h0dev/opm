@@ -22,8 +22,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::thread;
 
-use crate::process::{dump, Runner};
 use crate::process;
+use crate::process::{dump, Runner};
 
 /// Duration (in seconds) that daemon will ignore a process after a manual action.
 /// This constant documents the timeout used by daemon/mod.rs::has_recent_action_timestamp().
@@ -37,7 +37,11 @@ const ACTION_IGNORE_DURATION_SECS: u64 = 5;
 fn create_action_timestamp(id: usize) {
     use crate::process::write_action_timestamp;
     if let Err(e) = write_action_timestamp(id) {
-        log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
+        log::warn!(
+            "Failed to create action timestamp file for process {}: {}",
+            id,
+            e
+        );
     }
 }
 
@@ -60,7 +64,11 @@ pub enum SocketRequest {
     /// Restart a process by ID
     RestartProcess(usize),
     /// Edit a process (name and/or command)
-    EditProcess { id: usize, name: Option<String>, command: Option<String> },
+    EditProcess {
+        id: usize,
+        name: Option<String>,
+        command: Option<String>,
+    },
     /// Ping to check if daemon is responsive
     Ping,
 }
@@ -93,7 +101,10 @@ pub fn start_socket_server(socket_path: &str) -> Result<()> {
 ///
 /// The callback is invoked after the socket is bound and worker threads are spawned,
 /// signaling that the server is ready to accept connections.
-pub fn start_socket_server_with_callback<F>(socket_path: &str, ready_callback: Option<F>) -> Result<()>
+pub fn start_socket_server_with_callback<F>(
+    socket_path: &str,
+    ready_callback: Option<F>,
+) -> Result<()>
 where
     F: FnOnce() + Send + 'static,
 {
@@ -103,7 +114,7 @@ where
     }
 
     let listener = UnixListener::bind(socket_path)?;
-    
+
     // Set permissions to allow cross-user CLI access when daemon runs under a different user
     #[cfg(unix)]
     {
@@ -111,14 +122,14 @@ where
         let permissions = std::fs::Permissions::from_mode(0o666);
         std::fs::set_permissions(socket_path, permissions)?;
     }
-    
+
     log::info!("Unix socket server started at {}", socket_path);
 
     // Use a bounded channel to limit concurrent connections
     const MAX_CONCURRENT_CONNECTIONS: usize = 100;
     let (tx, rx) = std::sync::mpsc::sync_channel::<UnixStream>(MAX_CONCURRENT_CONNECTIONS);
     let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
-    
+
     // Spawn worker threads to handle connections
     const WORKER_THREADS: usize = 4;
     for i in 0..WORKER_THREADS {
@@ -144,13 +155,13 @@ where
             log::info!("Socket worker thread {} exiting", i);
         });
     }
-    
+
     // Invoke readiness callback after socket is bound and workers are spawned
     // This signals that the server is ready to accept connections
     if let Some(callback) = ready_callback {
         callback();
     }
-    
+
     // Accept connections and send to worker threads
     for stream in listener.incoming() {
         match stream {
@@ -181,10 +192,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     // Set read timeout to prevent hanging on malicious clients
     // Increased from 5s to 30s to allow for large state transfers
     stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-    
+
     // Set write timeout to prevent hanging on socket writes
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
-    
+
     // Read request from stream
     // IMPORTANT: We create the BufReader in a limited scope so that it gets dropped
     // before we write to the stream. This prevents buffering synchronization issues.
@@ -192,13 +203,13 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     // the BufReader is dropped and the borrow ends, allowing us to use stream for writing.
     let request = {
         let mut line = String::new();
-        
+
         // Limit input size to 50MB to allow for larger state objects while preventing memory exhaustion
         // Increased from 10MB to accommodate larger process lists
         const MAX_REQUEST_SIZE: usize = 50 * 1024 * 1024;
         let reader = BufReader::new(&mut stream);
         let mut limited_reader = reader.take(MAX_REQUEST_SIZE as u64);
-        
+
         // Read the request line
         match limited_reader.read_line(&mut line) {
             Ok(0) => {
@@ -213,10 +224,14 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                 return Err(anyhow!("Failed to read request: {}", e));
             }
         }
-        
+
         // Parse request before reader is dropped
         serde_json::from_str::<SocketRequest>(&line).map_err(|e| {
-            log::error!("[socket] Failed to parse request (len={}): {}", line.len(), e);
+            log::error!(
+                "[socket] Failed to parse request (len={}): {}",
+                line.len(),
+                e
+            );
             anyhow!("Invalid request format: {}", e)
         })?
     }; // BufReader is dropped here, releasing the mutable borrow on stream
@@ -235,12 +250,12 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             // where the daemon's stale runner overwrites newly created processes
             // Read current memory state
             let current_memory = dump::read_memory_direct_option();
-            
+
             let merged_runner = match current_memory {
                 Some(mut current) => {
                     // Merge strategy: Update/add all processes from the provided runner
                     // while preserving any processes in memory that aren't in the provided runner.
-                    // 
+                    //
                     // This prevents two issues:
                     // 1. Daemon (or any caller) accidentally deleting processes created after it loaded state
                     // 2. Race conditions where CLI creates a process while daemon is monitoring
@@ -254,7 +269,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     // For processes only in current memory:
                     // - They are preserved (not deleted)
                     // - This fixes the reported bug where newly created processes disappeared
-                    
+
                     // Update all processes that exist in the provided runner
                     // Handle ID conflicts: if a process ID already exists and the incoming process
                     // is fundamentally different (race condition from concurrent creates with stale counter),
@@ -269,49 +284,55 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             let is_same_process = existing.name == process.name
                                 && existing.script == process.script
                                 && existing.path == process.path;
-                            
+
                             if !is_same_process {
                                 // True ID conflict detected! Two genuinely different processes claim the same ID.
                                 // This happens in race conditions during concurrent process creation with stale counters.
                                 // Allocate a new ID for the incoming process to prevent overwriting.
-                                let mut new_id = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
+                                let mut new_id = current
+                                    .id
+                                    .counter
+                                    .load(std::sync::atomic::Ordering::Relaxed);
                                 while current.list.contains_key(&new_id) {
                                     new_id += 1;
                                 }
-                                
+
                                 // Log before moving process (avoids unnecessary clones)
                                 log::warn!(
                                     "[socket] True ID conflict detected for id={} (existing process '{}' vs incoming process '{}'). Reassigned incoming to id={}.",
                                     id, existing.name, process.name, new_id
                                 );
-                                
+
                                 // Update process with new ID and insert
                                 process.id = new_id;
                                 current.list.insert(new_id, process);
-                                
+
                                 // Update counter to be at least new_id + 1
                                 let next_counter = new_id + 1;
-                                current.id.counter.store(next_counter, std::sync::atomic::Ordering::Relaxed);
-                                
+                                current
+                                    .id
+                                    .counter
+                                    .store(next_counter, std::sync::atomic::Ordering::Relaxed);
+
                                 continue;
                             }
-                            
+
                             // Same process - merge smartly to preserve mid-cycle updates
                             // Problem: When restore/start updates a process, it sets PID/children/started via SetState.
                             // But the daemon's monitoring loop may be running with a stale runner (pid=0).
                             // When daemon saves, it would overwrite the fresh PID with stale pid=0.
-                            // 
+                            //
                             // Additionally, if the daemon incorrectly marks a running process as stopped
                             // (e.g., shell wrapper exits but child still running), we need to preserve the
                             // correct running state to prevent phantom stops.
-                            // 
+                            //
                             // Solution: Preserve runtime fields that may have been updated mid-cycle:
                             // - pid, shell_pid, children, started, running: Keep existing if non-zero/non-default
                             // - Other fields: Use incoming values (daemon is authoritative for state/counters)
                             //
                             // This fixes the phantom crash/stop issue where processes appear stopped after restore/start
                             // even though they're actually running.
-                            
+
                             // If existing has a valid PID (>0) but incoming has default PID (0),
                             // preserve the existing PID and running state - it was likely set mid-cycle
                             if existing.pid > 0 && process.pid == 0 {
@@ -334,19 +355,26 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                                 );
                             }
                         }
-                        
+
                         // No conflict, or this is an update to existing process - insert normally
                         current.list.insert(id, process);
                     }
-                    
+
                     // Update the ID counter to the maximum of both
                     // Use Relaxed ordering since socket handler is single-threaded and sequential
-                    let provided_counter = runner.id.counter.load(std::sync::atomic::Ordering::Relaxed);
-                    let current_counter = current.id.counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let provided_counter =
+                        runner.id.counter.load(std::sync::atomic::Ordering::Relaxed);
+                    let current_counter = current
+                        .id
+                        .counter
+                        .load(std::sync::atomic::Ordering::Relaxed);
                     if provided_counter > current_counter {
-                        current.id.counter.store(provided_counter, std::sync::atomic::Ordering::Relaxed);
+                        current
+                            .id
+                            .counter
+                            .store(provided_counter, std::sync::atomic::Ordering::Relaxed);
                     }
-                    
+
                     current
                 }
                 None => {
@@ -354,7 +382,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     runner
                 }
             };
-            
+
             // Write merged state to memory cache
             dump::write_memory_direct(&merged_runner);
             SocketResponse::Success
@@ -375,46 +403,49 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
-            
+
             if runner.exists(id) {
                 // Get PID info before removing
                 let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
-                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
-                
+                let children = runner
+                    .info(id)
+                    .map(|p| p.children.clone())
+                    .unwrap_or_default();
+
                 // Create action timestamp to prevent daemon from interfering during removal
                 create_action_timestamp(id);
-                
+
                 // IMPORTANT: Mark process as stopped BEFORE removing from list
                 // This prevents race condition where daemon's restart_process() loop
                 // detects the process is dead and tries to restart it during removal
                 // Safe to call process(id) because we're inside runner.exists(id) check
                 runner.process(id).running = false;
-                runner.process(id).crash.crashed = false;  // Clear crashed flag
-                
+                runner.process(id).crash.crashed = false; // Clear crashed flag
+
                 // Save state with running=false before removal
                 // This ensures daemon sees the stopped state and won't try to restart
                 // Using dump::write_memory_direct instead of runner.save() to avoid recursion
                 // since this is running inside the socket handler
                 dump::write_memory_direct(&runner);
-                
+
                 // Brief delay to ensure daemon's monitoring loop sees the updated state
                 // before we remove the process from the list. This is a lightweight
                 // synchronization approach suitable for this use case where the daemon
                 // runs on a 1-second interval. A longer delay would be wasteful, and
                 // proper synchronization primitives would add unnecessary complexity.
                 std::thread::sleep(std::time::Duration::from_millis(100));
-                
+
                 // Remove from list
                 runner.list.remove(&id);
                 runner.compact();
-                
+
                 // Write to memory cache only - don't persist until save
                 dump::write_memory_direct(&runner);
-                
+
                 // Now kill the process
                 if pid > 0 {
                     use crate::process::process_stop;
-                    
+
                     // Kill children
                     for child_pid in children {
                         let _ = nix::sys::signal::kill(
@@ -422,14 +453,14 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             nix::sys::signal::Signal::SIGTERM,
                         );
                     }
-                    
+
                     // Kill main process
                     let _ = process_stop(pid);
-                    
+
                     // Wait for termination (simple version without accessing private function)
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-                
+
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
@@ -440,25 +471,28 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
-            
+
             if runner.exists(id) {
                 let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
-                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
-                
+                let children = runner
+                    .info(id)
+                    .map(|p| p.children.clone())
+                    .unwrap_or_default();
+
                 // Create action timestamp to prevent daemon from interfering during stop
                 create_action_timestamp(id);
-                
+
                 // Mark as stopped and clear crashed flag
                 runner.process(id).running = false;
-                runner.process(id).crash.crashed = false;  // Clear crashed flag
-                
+                runner.process(id).crash.crashed = false; // Clear crashed flag
+
                 // Write to memory cache only
                 dump::write_memory_direct(&runner);
-                
+
                 // Kill the process
                 if pid > 0 {
                     use crate::process::process_stop;
-                    
+
                     // Kill children
                     for child_pid in children {
                         let _ = nix::sys::signal::kill(
@@ -466,13 +500,13 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             nix::sys::signal::Signal::SIGTERM,
                         );
                     }
-                    
+
                     // Kill main process
                     let _ = process_stop(pid);
-                    
+
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-                
+
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
@@ -483,7 +517,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
-            
+
             if runner.exists(id) {
                 // Mark as running - daemon will spawn the process
                 runner.process(id).running = true;
@@ -491,10 +525,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                 runner.process(id).pid = 0; // Reset PID so daemon knows to spawn
                 runner.process(id).shell_pid = None;
                 runner.process(id).started = chrono::Utc::now();
-                
+
                 // Write to memory cache only
                 dump::write_memory_direct(&runner);
-                
+
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
@@ -505,16 +539,19 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
-            
+
             if runner.exists(id) {
                 let pid = runner.info(id).map(|p| p.pid).unwrap_or(0);
                 let shell_pid = runner.info(id).and_then(|p| p.shell_pid);
-                let children = runner.info(id).map(|p| p.children.clone()).unwrap_or_default();
-                
+                let children = runner
+                    .info(id)
+                    .map(|p| p.children.clone())
+                    .unwrap_or_default();
+
                 // Kill existing process
                 if pid > 0 {
                     use crate::process::process_stop;
-                    
+
                     // Kill children
                     for child_pid in children {
                         let _ = nix::sys::signal::kill(
@@ -522,10 +559,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             nix::sys::signal::Signal::SIGTERM,
                         );
                     }
-                    
+
                     // Kill main process
                     let _ = process_stop(pid);
-                    
+
                     // Remove process handle if it exists
                     let handle_pid = shell_pid.unwrap_or(pid);
                     if let Some((_, handle)) = process::PROCESS_HANDLES.remove(&handle_pid) {
@@ -533,10 +570,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             let _ = child.wait();
                         }
                     }
-                    
+
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-                
+
                 // Mark for restart - daemon will spawn the process
                 runner.process(id).running = true;
                 runner.process(id).crash.crashed = false;
@@ -545,10 +582,10 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                 runner.process(id).shell_pid = None;
                 runner.process(id).children = vec![];
                 runner.process(id).started = chrono::Utc::now();
-                
+
                 // Write to memory cache only
                 dump::write_memory_direct(&runner);
-                
+
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
@@ -559,21 +596,21 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
-            
+
             if runner.exists(id) {
                 // Update name if provided
                 if let Some(new_name) = name {
                     runner.process(id).name = new_name;
                 }
-                
+
                 // Update command/script if provided
                 if let Some(new_command) = command {
                     runner.process(id).script = new_command;
                 }
-                
+
                 // Write to memory cache only
                 dump::write_memory_direct(&runner);
-                
+
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
@@ -587,32 +624,35 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
         log::error!("[socket] Failed to serialize response: {}", e);
         anyhow!("Failed to serialize response: {}", e)
     })?;
-    
+
     let response_len = response_json.len();
     log::debug!("[socket] Sending response ({} bytes)", response_len);
-    
+
     // Write response with error handling
     if let Err(e) = stream.write_all(response_json.as_bytes()) {
         log::error!("[socket] Failed to write response body: {}", e);
         return Err(anyhow!("Failed to write response: {}", e));
     }
-    
+
     if let Err(e) = stream.write_all(b"\n") {
         log::error!("[socket] Failed to write response newline: {}", e);
         return Err(anyhow!("Failed to write newline: {}", e));
     }
-    
+
     if let Err(e) = stream.flush() {
         log::error!("[socket] Failed to flush response: {}", e);
         return Err(anyhow!("Failed to flush: {}", e));
     }
-    
+
     // Shutdown write side to signal completion
     // This ensures the client knows the response is complete
     // Expected errors: ENOTCONN (client closed connection early), EPIPE (broken pipe)
     // These are normal when a client disconnects or crashes, so we only log at debug level
     if let Err(e) = stream.shutdown(std::net::Shutdown::Write) {
-        log::debug!("[socket] Error during write shutdown (client may have disconnected): {}", e);
+        log::debug!(
+            "[socket] Error during write shutdown (client may have disconnected): {}",
+            e
+        );
     }
 
     log::debug!("[socket] Successfully sent response");
@@ -624,7 +664,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
 pub fn send_request(socket_path: &str, request: SocketRequest) -> Result<SocketResponse> {
     const MAX_RETRIES: u32 = 3;
     const INITIAL_BACKOFF_MS: u64 = 50;
-    
+
     let mut last_error = None;
     let candidates = collect_socket_paths(socket_path);
 
@@ -693,15 +733,22 @@ fn collect_socket_paths(primary: &str) -> Vec<String> {
 }
 
 /// Internal function to attempt a single socket request without retry
-pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> Result<SocketResponse> {
+pub(crate) fn send_request_once(
+    socket_path: &str,
+    request: &SocketRequest,
+) -> Result<SocketResponse> {
     let mut stream = UnixStream::connect(socket_path).map_err(|e| {
-        log::debug!("[socket client] Failed to connect to {}: {}", socket_path, e);
+        log::debug!(
+            "[socket client] Failed to connect to {}: {}",
+            socket_path,
+            e
+        );
         anyhow!(
             "Failed to connect to daemon socket: {}. Is the daemon running?",
             e
         )
     })?;
-    
+
     // Set timeouts for client connections as well
     stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
@@ -711,30 +758,36 @@ pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> R
         log::error!("[socket client] Failed to serialize request: {}", e);
         anyhow!("Failed to serialize request: {}", e)
     })?;
-    
-    log::debug!("[socket client] Sending request ({} bytes)", request_json.len());
-    
+
+    log::debug!(
+        "[socket client] Sending request ({} bytes)",
+        request_json.len()
+    );
+
     stream.write_all(request_json.as_bytes()).map_err(|e| {
         log::error!("[socket client] Failed to write request: {}", e);
         anyhow!("Failed to write request: {}", e)
     })?;
-    
+
     stream.write_all(b"\n").map_err(|e| {
         log::error!("[socket client] Failed to write newline: {}", e);
         anyhow!("Failed to write newline: {}", e)
     })?;
-    
+
     stream.flush().map_err(|e| {
         log::error!("[socket client] Failed to flush request: {}", e);
         anyhow!("Failed to flush: {}", e)
     })?;
-    
+
     // Shutdown the write side to signal we're done sending
     // This ensures the server knows no more data is coming
     // Note: In normal operation this should succeed. If it fails, it indicates
     // a connection problem and we should report it to the caller.
     stream.shutdown(std::net::Shutdown::Write).map_err(|e| {
-        log::debug!("[socket client] Failed to shutdown write (connection issue): {}", e);
+        log::debug!(
+            "[socket client] Failed to shutdown write (connection issue): {}",
+            e
+        );
         anyhow!("Failed to shutdown write: {}", e)
     })?;
 
@@ -747,12 +800,16 @@ pub(crate) fn send_request_once(socket_path: &str, request: &SocketRequest) -> R
         log::error!("[socket client] Failed to read response: {}", e);
         anyhow!("Failed to read response: {}", e)
     })?;
-    
+
     log::debug!("[socket client] Received response ({} bytes)", line.len());
 
     // Parse response
     let response: SocketResponse = serde_json::from_str(&line).map_err(|e| {
-        log::error!("[socket client] Failed to parse response (len={}): {}", line.len(), e);
+        log::error!(
+            "[socket client] Failed to parse response (len={}): {}",
+            line.len(),
+            e
+        );
         anyhow!("Invalid response format: {}", e)
     })?;
 

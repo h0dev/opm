@@ -54,11 +54,11 @@ const STATUS_GRACE_PERIOD_SECS: i64 = 15;
 pub fn write_action_timestamp(id: usize) -> Result<(), std::io::Error> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    
+
     if let Some(home_dir) = home::home_dir() {
         let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
         let timestamp = Utc::now().to_rfc3339();
-        
+
         // Open file with O_SYNC flag to ensure data is written synchronously
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -66,13 +66,13 @@ pub fn write_action_timestamp(id: usize) -> Result<(), std::io::Error> {
             .truncate(true)
             .mode(0o644)
             .open(&action_file)?;
-        
+
         // Write the timestamp
         file.write_all(timestamp.as_bytes())?;
-        
+
         // Explicitly sync to ensure data is flushed to disk
         file.sync_all()?;
-        
+
         log::debug!("Created and synced timestamp file for process {}", id);
     }
     Ok(())
@@ -397,19 +397,19 @@ pub fn is_pid_alive(pid: i64) -> bool {
     // - EPERM (1): Permission denied - the process exists but we can't signal it
     // If errno is EPERM, the process exists, so we should return true
     let result = unsafe { libc::kill(pid as i32, 0) };
-    
+
     if result != 0 {
         // kill failed, check why
         let err = std::io::Error::last_os_error();
         let errno = err.raw_os_error().unwrap_or(0);
-        
+
         // EPERM (1) means process exists but we don't have permission
         // This should be treated as "process is alive"
         if errno == libc::EPERM {
             // Process exists but permission denied - treat as alive
             return true;
         }
-        
+
         // Any other error (especially ESRCH) means process doesn't exist
         return false;
     }
@@ -575,7 +575,7 @@ impl Runner {
                     script: command.clone(),
                     env: stored_env,
                     max_memory,
-                    agent_id: None, // Local processes don't have an agent
+                    agent_id: None,     // Local processes don't have an agent
                     frozen_until: None, // Not frozen by default
                     last_action_at: Utc::now(),
                 },
@@ -585,7 +585,11 @@ impl Runner {
             // immediately marking it as crashed if it exits quickly during startup
             // Write with fsync to ensure timestamp is durably written before daemon checks
             if let Err(e) = write_action_timestamp(id) {
-                log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
+                log::warn!(
+                    "Failed to create action timestamp file for process {}: {}",
+                    id,
+                    e
+                );
             }
         }
 
@@ -608,10 +612,14 @@ impl Runner {
             // Skip for daemon-initiated restarts (dead=true) since daemon will handle those.
             if !dead {
                 if let Err(e) = write_action_timestamp(id) {
-                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
+                    log::warn!(
+                        "Failed to create action timestamp file for process {}: {}",
+                        id,
+                        e
+                    );
                 }
             }
-            
+
             let process = self.process(id);
             let full_config = config::read();
             let config = full_config.runner;
@@ -773,23 +781,31 @@ impl Runner {
             const MAX_DISCOVERY_TIME_MS: u64 = 600;
             const POLL_INTERVAL_MS: u64 = 50;
             let mut elapsed_ms = 0;
-            
+
             while elapsed_ms < MAX_DISCOVERY_TIME_MS {
                 thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
                 elapsed_ms += POLL_INTERVAL_MS;
-                
+
                 let discovered_children = process_find_children(result.pid);
                 if !discovered_children.is_empty() {
                     process.children = discovered_children;
-                    log::info!("Discovered {} child process(es) after {}ms: {:?}", 
-                        process.children.len(), elapsed_ms, process.children);
+                    log::info!(
+                        "Discovered {} child process(es) after {}ms: {:?}",
+                        process.children.len(),
+                        elapsed_ms,
+                        process.children
+                    );
                     break;
                 }
             }
-            
+
             // If no children found after polling, that's OK - the daemon will discover them later
             if process.children.is_empty() {
-                log::debug!("No children discovered after {}ms for process {}", elapsed_ms, result.pid);
+                log::debug!(
+                    "No children discovered after {}ms for process {}",
+                    elapsed_ms,
+                    result.pid
+                );
             }
 
             // Merge .env variables into the stored environment (dotenv takes priority)
@@ -811,7 +827,7 @@ impl Runner {
 
             // Timestamp file was already created at the beginning of this method
             // to prevent race conditions with the daemon during the entire restart operation.
-            
+
             // Save state after successful restart to persist changes
             self.save();
         }
@@ -1004,13 +1020,17 @@ impl Runner {
                 }
             }
 
-            // Create timestamp file for manual reloads (not daemon reloads) to prevent 
+            // Create timestamp file for manual reloads (not daemon reloads) to prevent
             // daemon from immediately marking the process as crashed during startup
             // This gives the process time to initialize before daemon monitoring kicks in
             // Write with fsync to ensure timestamp is durably written before daemon checks
             if !dead {
                 if let Err(e) = write_action_timestamp(id) {
-                    log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
+                    log::warn!(
+                        "Failed to create action timestamp file for process {}: {}",
+                        id,
+                        e
+                    );
                 }
             }
 
@@ -1028,15 +1048,18 @@ impl Runner {
         // Get PID info before removing from list
         let pid = self.info(id).map(|p| p.pid).unwrap_or(0);
         let shell_pid = self.info(id).and_then(|p| p.shell_pid);
-        let children = self.info(id).map(|p| p.children.clone()).unwrap_or_default();
-        
+        let children = self
+            .info(id)
+            .map(|p| p.children.clone())
+            .unwrap_or_default();
+
         // Mark as stopped first to prevent auto-restart during removal
         // This is important if daemon is running and monitoring processes
         if self.exists(id) {
             self.process(id).running = false;
             self.save();
         }
-        
+
         // Remove from list
         self.list.remove(&id);
         self.compact(); // Compact IDs after removal
@@ -1044,17 +1067,20 @@ impl Runner {
         // Persist in-memory deletions immediately to permanent storage
         // so that deleted processes do not reappear after a restart/restore.
         dump::commit_memory();
-        
+
         // Now kill the actual process using the saved PID info
         if pid > 0 {
             kill_children(children);
             let _ = process_stop(pid);
-            
+
             // Wait for process termination
             if !wait_for_process_termination(pid) {
-                log::warn!("Process {} did not terminate within timeout during remove", pid);
+                log::warn!(
+                    "Process {} did not terminate within timeout during remove",
+                    pid
+                );
             }
-            
+
             // Remove child handle from global state if it exists
             let handle_pid = shell_pid.unwrap_or(pid);
             if let Some((_, handle)) = PROCESS_HANDLES.remove(&handle_pid) {
@@ -1099,7 +1125,7 @@ impl Runner {
                     }
                 }
             }
-            
+
             // Direct removal (daemon not running or socket failed)
             self.remove_direct_internal(id);
         }
@@ -1125,11 +1151,19 @@ impl Runner {
         if keys == expected_keys {
             // Already compact, just ensure ID counter is correct
             self.id = id::Id::new(keys.len());
-            log::debug!("[compact] Already compact, IDs: {:?}, next ID: {}", keys, keys.len());
+            log::debug!(
+                "[compact] Already compact, IDs: {:?}, next ID: {}",
+                keys,
+                keys.len()
+            );
             return;
         }
 
-        log::debug!("[compact] Compacting IDs from {:?} to 0..{}", keys, keys.len());
+        log::debug!(
+            "[compact] Compacting IDs from {:?} to 0..{}",
+            keys,
+            keys.len()
+        );
 
         // BTreeMap is already sorted, so we can use into_iter() directly
         // Extract all processes by replacing the list with an empty one
@@ -1146,7 +1180,10 @@ impl Runner {
 
         // Reset the ID counter to the next available ID
         self.id = id::Id::new(self.list.len());
-        log::debug!("[compact] Compaction complete, next ID: {}", self.list.len());
+        log::debug!(
+            "[compact] Compaction complete, next ID: {}",
+            self.list.len()
+        );
     }
 
     pub fn set_id(&mut self, id: id::Id) {
@@ -1335,10 +1372,10 @@ impl Runner {
         if increment_counter {
             process.crash.value += 1;
         }
-        
+
         // Only mark as crashed if the process was actually running before (had a valid PID)
         // Processes that never successfully started (pid <= 0) should remain in stopped state
-        // 
+        //
         // The PID indicates whether a process ran in this session:
         // - pid > 0: Process was running (or restored and successfully restarted), failure is a crash
         // - pid = 0: Process never started in this session (restored but not started, or explicitly stopped)
@@ -1460,7 +1497,7 @@ impl Runner {
         process.restarts = 0;
         process.crash.value = 0;
         process.crash.crashed = false;
-            process.last_action_at = Utc::now();
+        process.last_action_at = Utc::now();
         return self;
     }
 
@@ -1528,8 +1565,10 @@ impl Runner {
 
         // Check if process is alive by checking root PID, shell PID (if present), and all tracked descendants
         // This ensures background shell processes with living children are not marked as crashed
-        let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children) ||
-            item.shell_pid.map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
+        let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children)
+            || item
+                .shell_pid
+                .map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
 
         let process_actually_running = item.running && any_descendant_alive;
 
@@ -1541,7 +1580,7 @@ impl Runner {
             // Use longer grace period to account for slow-starting processes
             // and to avoid false crash reports during daemon restart cycles
             let grace_period = chrono::Duration::seconds(STATUS_GRACE_PERIOD_SECS);
-            
+
             if item.pid == 0 {
                 // PID is 0, which means either:
                 // 1. New/restored process waiting for daemon to start it, OR
@@ -1554,7 +1593,7 @@ impl Runner {
                 } else {
                     // Calculate time since start only when needed (not for pid=0 case)
                     let time_since_start = Utc::now().signed_duration_since(item.started);
-                    
+
                     if time_since_start < grace_period {
                         // PID is non-zero but process is dead, and we're still within grace period.
                         // This could be a very quick crash or the process is still initializing.
@@ -1724,8 +1763,10 @@ impl ProcessWrapper {
         let crash_detection_enabled = config::read().daemon.crash_detection;
         // Check if process actually exists before reporting as online
         // Use descendants and shell PID for shell-wrapped/backgrounded processes
-        let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children) ||
-            item.shell_pid.map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
+        let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children)
+            || item
+                .shell_pid
+                .map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
         let process_actually_running = item.running && any_descendant_alive;
 
         let mut memory_usage: Option<MemoryInfo> = None;
@@ -1762,7 +1803,7 @@ impl ProcessWrapper {
             // Process is marked as running but PID is not alive.
             // Use grace period to account for slow-starting processes and restart windows
             let grace_period = chrono::Duration::seconds(STATUS_GRACE_PERIOD_SECS);
-            
+
             if item.pid == 0 {
                 // PID is 0 - process is waiting to be started or restarted by daemon
                 string!("starting")
@@ -1772,7 +1813,7 @@ impl ProcessWrapper {
                 } else {
                     // Calculate time since start only when needed (not for pid=0 case)
                     let time_since_start = Utc::now().signed_duration_since(item.started);
-                    
+
                     if time_since_start < grace_period {
                         // Within grace period - still initializing
                         string!("starting")
@@ -2069,14 +2110,14 @@ pub fn is_any_descendant_alive(root_pid: i64, children: &[i64]) -> bool {
     if is_pid_alive(root_pid) {
         return true;
     }
-    
+
     // Check all tracked children
     for &child_pid in children {
         if is_pid_alive(child_pid) {
             return true;
         }
     }
-    
+
     false
 }
 
@@ -3649,7 +3690,7 @@ mod tests {
                     process.running = true;
                     // With our fix: crashed flag cleared AFTER successful restart
                     process.crash.crashed = false;
-            process.last_action_at = Utc::now();
+                    process.last_action_at = Utc::now();
                 }
 
                 assert_eq!(
@@ -3778,7 +3819,7 @@ mod tests {
                 max_memory: 0,
                 agent_id: None,
                 frozen_until: None,
-            last_action_at: Utc::now(),
+                last_action_at: Utc::now(),
             };
             runner.list.insert(id, process);
         }
@@ -3979,7 +4020,7 @@ mod tests {
                 max_memory: 0,
                 agent_id: None,
                 frozen_until: None,
-            last_action_at: Utc::now(),
+                last_action_at: Utc::now(),
             };
             runner.list.insert(id, process);
         }
@@ -4000,7 +4041,7 @@ mod tests {
         // Compact: 0(p0), 1(p1), 2(p2), 3(p5)
         let mut ids_to_remove = vec![3, 4];
         ids_to_remove.sort_by(|a, b| b.cmp(a)); // Sort descending
-        
+
         for id in ids_to_remove {
             // Remove and compact (simulating what happens in actual removal)
             runner.list.remove(&id);
@@ -4008,20 +4049,40 @@ mod tests {
         }
 
         // After removal and compaction
-        assert_eq!(runner.list.len(), 4, "Should have 4 processes after removal");
-        
+        assert_eq!(
+            runner.list.len(),
+            4,
+            "Should have 4 processes after removal"
+        );
+
         // Verify compaction happened correctly - IDs should be sequential 0-3
         assert!(runner.exists(0), "Process 0 should exist");
         assert!(runner.exists(1), "Process 1 should exist");
         assert!(runner.exists(2), "Process 2 should exist");
         assert!(runner.exists(3), "Process 3 should exist");
-        
+
         // Verify the names - should be process_0, process_1, process_2, process_5
         // (process_3 and process_4 were removed via IDs 4 and 3)
-        assert_eq!(runner.info(0).unwrap().name, "process_0", "ID 0 should be process_0");
-        assert_eq!(runner.info(1).unwrap().name, "process_1", "ID 1 should be process_1");
-        assert_eq!(runner.info(2).unwrap().name, "process_2", "ID 2 should be process_2");
-        assert_eq!(runner.info(3).unwrap().name, "process_5", "ID 3 should be process_5");
+        assert_eq!(
+            runner.info(0).unwrap().name,
+            "process_0",
+            "ID 0 should be process_0"
+        );
+        assert_eq!(
+            runner.info(1).unwrap().name,
+            "process_1",
+            "ID 1 should be process_1"
+        );
+        assert_eq!(
+            runner.info(2).unwrap().name,
+            "process_2",
+            "ID 2 should be process_2"
+        );
+        assert_eq!(
+            runner.info(3).unwrap().name,
+            "process_5",
+            "ID 3 should be process_5"
+        );
 
         // Verify ID counter is correct
         let next_id = runner.id.next();
@@ -4063,24 +4124,30 @@ mod tests {
         };
 
         runner.list.insert(id, process);
-        
+
         // Verify process is running initially
-        assert!(runner.info(id).unwrap().running, "Process should be running initially");
+        assert!(
+            runner.info(id).unwrap().running,
+            "Process should be running initially"
+        );
 
         // Note: We can't directly test remove_direct_internal as it would try to kill the process
         // Instead, we test the logic by manually simulating the steps
-        
+
         // Step 1: Mark as stopped (what remove_direct_internal should do first)
         if runner.exists(id) {
             runner.process(id).running = false;
         }
-        
+
         // Verify process is marked as stopped
-        assert!(!runner.info(id).unwrap().running, "Process should be marked as stopped");
-        
+        assert!(
+            !runner.info(id).unwrap().running,
+            "Process should be marked as stopped"
+        );
+
         // Step 2: Remove from list (this would happen after marking as stopped)
         runner.list.remove(&id);
-        
+
         // Verify process is removed
         assert!(!runner.exists(id), "Process should be removed from list");
     }
@@ -4133,13 +4200,13 @@ mod tests {
         // This test validates that the fix prevents the incorrect state transition:
         // crashed (crash.crashed=true) -> stopped (crash.crashed=false)
         // that was happening when no process handle was found.
-        // 
+        //
         // The fix ensures that only processes with handles AND successful exit codes
         // are treated as clean stops. Processes without handles (like this one)
         // should maintain their crashed state and go through proper crash handling.
-        
+
         let info_after = runner.info(id).unwrap();
-        assert!(info_after.crash.crashed, 
+        assert!(info_after.crash.crashed,
                 "Crashed flag should remain true - process shouldn't transition to stopped without explicit user action or successful exit");
     }
 
@@ -4220,11 +4287,7 @@ mod tests {
             runner.exists(id),
             "Crashed process should still exist after multiple queries"
         );
-        assert_eq!(
-            runner.list.len(),
-            1,
-            "List size should remain unchanged"
-        );
+        assert_eq!(runner.list.len(), 1, "List size should remain unchanged");
     }
 
     #[test]
@@ -4267,7 +4330,10 @@ mod tests {
 
         // Verify initial state - crashed flag is true
         let info = runner.info(id).unwrap();
-        assert!(info.crash.crashed, "Process should initially be marked as crashed");
+        assert!(
+            info.crash.crashed,
+            "Process should initially be marked as crashed"
+        );
         assert_eq!(info.crash.value, 5, "Crash count should be 5");
 
         // Get the status - should show as "crashed" because crashed=true
@@ -4292,8 +4358,7 @@ mod tests {
             "Crashed flag should be cleared after successful exit"
         );
         assert_eq!(
-            info_after.crash.value,
-            5,
+            info_after.crash.value, 5,
             "Crash count should remain unchanged (preserves history)"
         );
 
@@ -4359,7 +4424,7 @@ mod tests {
         let process = runner.process(id);
         process.running = false;
         process.crash.crashed = false;
-            process.last_action_at = Utc::now();
+        process.last_action_at = Utc::now();
         process.children = vec![];
         process.pid = 0;
         process.shell_pid = None; // This is the fix being tested - shell_pid must be None
@@ -4403,7 +4468,7 @@ mod tests {
 
         let process = Process {
             id,
-            pid: UNLIKELY_PID, // Dead PID (actual child)
+            pid: UNLIKELY_PID,          // Dead PID (actual child)
             shell_pid: Some(alive_pid), // Alive shell PID (our test process)
             env: BTreeMap::new(),
             name: "test_shell_process".to_string(),
@@ -4447,24 +4512,30 @@ mod tests {
         // Test that is_pid_alive correctly handles EPERM (permission denied)
         // When kill(pid, 0) returns EPERM, it means the process exists but we don't have permission
         // This should be treated as "process is alive"
-        
+
         // Test with PID 1 (init/systemd) which always exists
         // We may not have permission to signal it, but it should still be considered alive
         let init_alive = is_pid_alive(1);
         assert!(init_alive, "PID 1 (init) should always be considered alive");
-        
+
         // Test with our own process (we definitely have permission)
         let own_pid = std::process::id() as i64;
         let own_alive = is_pid_alive(own_pid);
         assert!(own_alive, "Our own process should be considered alive");
-        
+
         // Test with non-existent PID (should return false)
         let unlikely_pid_alive = is_pid_alive(UNLIKELY_PID);
-        assert!(!unlikely_pid_alive, "Non-existent process should be considered dead");
-        
+        assert!(
+            !unlikely_pid_alive,
+            "Non-existent process should be considered dead"
+        );
+
         // Test with invalid PIDs (should return false)
         assert!(!is_pid_alive(0), "PID 0 should be considered invalid");
-        assert!(!is_pid_alive(-1), "Negative PID should be considered invalid");
+        assert!(
+            !is_pid_alive(-1),
+            "Negative PID should be considered invalid"
+        );
     }
 
     #[test]
@@ -4473,24 +4544,24 @@ mod tests {
         // This validates the fix for the issue where processes would incorrectly show as "stopped"
         // immediately after being started, even though they were actually running,
         // because the state wasn't persisted properly between CLI commands.
-        
+
         let mut runner = setup_test_runner();
         let id = runner.id.next();
 
         // Create a process that was just started (simulating what happens after opm start)
         // Use the current process PID to simulate a running process
         let current_pid = std::process::id() as i64;
-        
+
         let process = Process {
             id,
-            pid: current_pid,  // Use a valid, alive PID
+            pid: current_pid, // Use a valid, alive PID
             shell_pid: None,
             env: BTreeMap::new(),
             name: "test_started_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
             restarts: 0,
-            running: true,  // Process was just started, so running=true
+            running: true, // Process was just started, so running=true
             crash: Crash {
                 crashed: false,
                 value: 0,
@@ -4522,7 +4593,7 @@ mod tests {
             processes[0].status, "online",
             "Started process with valid PID should show as online, not stopped"
         );
-        
+
         // Verify it's the correct process
         assert_eq!(processes[0].name, "test_started_process");
         assert_eq!(processes[0].pid, current_pid);
@@ -4533,7 +4604,7 @@ mod tests {
         // This test validates the fix for the issue where shell scripts that spawn
         // background processes would be incorrectly marked as crashed when the shell exits.
         // The daemon should adopt the child process as the new monitored PID.
-        
+
         let mut runner = setup_test_runner();
         let id = runner.id.next();
 
@@ -4541,10 +4612,10 @@ mod tests {
         // but a child process is still running
         let dead_pid = UNLIKELY_PID; // Parent shell PID (dead)
         let alive_child_pid = std::process::id() as i64; // Child process PID (alive - using current process)
-        
+
         let process = Process {
             id,
-            pid: dead_pid,  // Parent shell is dead
+            pid: dead_pid, // Parent shell is dead
             shell_pid: None,
             env: BTreeMap::new(),
             name: "test_parent_exits".to_string(),
@@ -4573,17 +4644,20 @@ mod tests {
 
         // Before the fix, the daemon would mark this as crashed and set pid=0
         // After the fix, it should adopt the child process
-        
+
         // Note: We can't directly test the daemon monitoring loop here,
         // but we can verify that is_pid_alive correctly identifies the states:
         assert!(!is_pid_alive(dead_pid), "Parent PID should be dead");
         assert!(is_pid_alive(alive_child_pid), "Child PID should be alive");
-        
+
         // Verify the children list contains the alive child
         let proc = runner.process(id);
         assert_eq!(proc.children.len(), 1, "Should have one child");
-        assert_eq!(proc.children[0], alive_child_pid, "Child should be the alive PID");
-        
+        assert_eq!(
+            proc.children[0], alive_child_pid,
+            "Child should be the alive PID"
+        );
+
         // After daemon adoption (which happens in daemon/mod.rs), the process should:
         // 1. Have its pid updated to the alive child
         // 2. Have the child removed from the children list
@@ -4680,13 +4754,13 @@ mod tests {
 
         let item = runner.info(id).unwrap();
         let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
-        
+
         // Should be within 5s delay
         assert!(
             seconds_since_action < 5,
             "Should be within 5s delay immediately after creation"
         );
-        
+
         // Simulate daemon check - process should NOT be marked crashed within delay
         // (The actual daemon would skip crash marking when within_action_delay is true)
         assert!(
@@ -4731,18 +4805,18 @@ mod tests {
         runner.list.insert(id, process);
 
         let item = runner.info(id).unwrap();
-        
+
         // Verify PID info is detected as missing
         assert!(
             is_pid_info_missing(item.pid, &item.children),
             "PID info should be missing when pid <= 0 and no children"
         );
-        
+
         // The daemon should:
         // 1. Log an error about missing PID info
         // 2. NOT mark the process as crashed (no crash counter increment)
         // 3. Continue to the next process
-        
+
         // Verify crash counter was NOT incremented
         assert_eq!(
             item.crash.value, 0,
@@ -4758,7 +4832,7 @@ mod tests {
     fn test_restore_pid_preserved_across_daemon_save() {
         // Test that when restore updates a process PID mid-cycle,
         // the daemon doesn't overwrite it with stale pid=0 when it saves.
-        // 
+        //
         // This tests the fix for the phantom crash/stop issue where:
         // 1. LoadPermanent loads dump with pid=0
         // 2. Daemon monitoring loop starts with runner having pid=0
@@ -4805,7 +4879,10 @@ mod tests {
 
         // Verify initial state - process has pid=0
         let info_before = runner.info(id).unwrap();
-        assert_eq!(info_before.pid, 0, "Process should have pid=0 after LoadPermanent");
+        assert_eq!(
+            info_before.pid, 0,
+            "Process should have pid=0 after LoadPermanent"
+        );
         assert!(info_before.running, "Process should be marked as running");
 
         // Simulate restore starting the process and updating PID via SetState
@@ -4814,14 +4891,21 @@ mod tests {
         process_after_restore.pid = 12345; // Fresh PID assigned by restore
         process_after_restore.children = vec![12346, 12347]; // Discovered children
         process_after_restore.started = Utc::now(); // Fresh start time
-        
+
         // Update the process - this simulates SetState being called
         runner.list.insert(id, process_after_restore);
 
         // Verify PID was updated
         let info_after_restore = runner.info(id).unwrap();
-        assert_eq!(info_after_restore.pid, 12345, "Process should have fresh PID after restore");
-        assert_eq!(info_after_restore.children.len(), 2, "Process should have 2 children");
+        assert_eq!(
+            info_after_restore.pid, 12345,
+            "Process should have fresh PID after restore"
+        );
+        assert_eq!(
+            info_after_restore.children.len(),
+            2,
+            "Process should have 2 children"
+        );
 
         // Now simulate daemon's monitoring loop saving its stale runner (pid=0)
         // This is the problematic case - daemon loaded state before restore updated it
@@ -4836,7 +4920,7 @@ mod tests {
         // preserve the existing PID. We simulate this merge logic here.
         let existing = runner.info(id).unwrap();
         let mut merged = daemon_stale_runner;
-        
+
         // Apply the merge logic from the fix
         if existing.pid > 0 && merged.pid == 0 {
             merged.pid = existing.pid;
@@ -4846,7 +4930,7 @@ mod tests {
                 merged.started = existing.started;
             }
         }
-        
+
         runner.list.insert(id, merged);
 
         // Verify the fresh PID is preserved, not overwritten with stale pid=0
@@ -4856,12 +4940,12 @@ mod tests {
             "Fresh PID should be preserved, not overwritten with stale pid=0"
         );
         assert_eq!(
-            info_final.children.len(), 2,
+            info_final.children.len(),
+            2,
             "Children list should be preserved"
         );
         assert_ne!(
-            info_final.started,
-            unix_epoch,
+            info_final.started, unix_epoch,
             "Start time should be preserved, not reset to Unix epoch"
         );
 

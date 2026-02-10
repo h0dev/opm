@@ -44,9 +44,7 @@ pub enum AgentMessage {
         message: String,
     },
     /// Save request from server to agent
-    SaveRequest {
-        request_id: String,
-    },
+    SaveRequest { request_id: String },
     /// Response message
     Response { success: bool, message: String },
     /// Ping message from server to agent

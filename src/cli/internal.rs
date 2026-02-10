@@ -499,7 +499,7 @@ impl<'i> Internal<'i> {
         // Freeze process before removal to prevent auto-restart during deletion
         // Give it 10 seconds freeze window - more than enough for removal to complete
         self.runner.freeze(self.id, 10);
-        
+
         self.runner.remove(self.id);
         println!("{} Removed {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
         log!("process removed (id={})", self.id);
@@ -1137,7 +1137,7 @@ impl<'i> Internal<'i> {
         // Freeze process during editing to prevent auto-restart conflicts
         // Give it 5 seconds freeze window - enough for edit to complete
         self.runner.freeze(self.id, 5);
-        
+
         let process = self.runner.process(self.id);
 
         // Update command if provided
@@ -1197,9 +1197,9 @@ impl<'i> Internal<'i> {
         // This prevents port conflicts and resource issues
         // Note: This is primarily for backward compatibility with old dump files
         // that still have PIDs saved. New dumps won't have PIDs (they're skipped).
-        // 
+        //
         // OPTIMIZATION: We no longer load the full dump file into RAM here.
-        // Instead, we rely on the daemon's init_on_startup() to handle any 
+        // Instead, we rely on the daemon's init_on_startup() to handle any
         // cleanup needed. This avoids unnecessary memory usage and file I/O
         // during restore operations, especially for large dump files.
         // The daemon will properly handle process state when it starts.
@@ -1210,17 +1210,17 @@ impl<'i> Internal<'i> {
             use crate::daemon::pid;
             pid::exists() && pid::read().map(|p| pid::running(p.get())).unwrap_or(false)
         };
-        
+
         if !daemon_running {
             println!("{} Starting OPM daemon...", *helpers::SUCCESS);
             // Read config to check if API/WebUI should be enabled
             let config = config::read();
             let api_enabled = config.daemon.web.api;
             let webui_enabled = config.daemon.web.ui;
-            
+
             // Start the daemon with appropriate flags
             crate::daemon::restart(&api_enabled, &webui_enabled, false);
-            
+
             // Wait for daemon socket to be ready before proceeding
             // Use socket readiness check instead of fixed sleep
             use global_placeholders::global;
@@ -1230,29 +1230,32 @@ impl<'i> Internal<'i> {
             let max_retries = 20; // Increased from 10 to give daemon more time to start
             let mut retry_count = 0;
             let mut socket_ready = false;
-            
+
             loop {
                 if opm::socket::is_daemon_running(&socket_path) {
                     socket_ready = true;
                     break;
                 }
-                
+
                 if retry_count >= max_retries {
                     break;
                 }
-                
+
                 // Start with 200ms and increase by 100ms each retry
                 // (matches SOCKET_RETRY_INITIAL_MS and SOCKET_RETRY_INCREMENT_MS in main.rs)
                 let wait_ms = 200 + (retry_count * 100);
                 std::thread::sleep(std::time::Duration::from_millis(wait_ms));
                 retry_count += 1;
             }
-            
+
             if !socket_ready {
                 // Socket not ready after initial retries, but daemon may still be starting
                 // Try a few more times with longer waits before giving up
-                eprintln!("{} Warning: Daemon socket not ready after initial attempts, retrying...", *helpers::WARN);
-                
+                eprintln!(
+                    "{} Warning: Daemon socket not ready after initial attempts, retrying...",
+                    *helpers::WARN
+                );
+
                 // Additional retry loop with longer waits (1 second each)
                 let additional_retries = 5;
                 for i in 0..additional_retries {
@@ -1261,13 +1264,16 @@ impl<'i> Internal<'i> {
                         socket_ready = true;
                         break;
                     }
-                    
+
                     if i == additional_retries - 1 {
-                        eprintln!("{} Warning: Daemon socket may not be ready after extended wait", *helpers::WARN);
+                        eprintln!(
+                            "{} Warning: Daemon socket may not be ready after extended wait",
+                            *helpers::WARN
+                        );
                     }
                 }
             }
-            
+
             // Print success message only once, after all retries are complete
             if socket_ready {
                 println!("{} OPM daemon started", *helpers::SUCCESS);
@@ -1282,18 +1288,21 @@ impl<'i> Internal<'i> {
                 );
             }
         }
-        
+
         // Clean up all stale timestamp files before restore to ensure fresh start
         // This prevents old timestamp files from interfering with crash detection
         crate::daemon::cleanup_all_timestamp_files();
-        
+
         // Load permanent dump into daemon memory for restore operations
         use global_placeholders::global;
         let socket_path = global!("opm.socket");
         match opm::socket::send_request(&socket_path, opm::socket::SocketRequest::LoadPermanent) {
             Ok(opm::socket::SocketResponse::Success) => {}
             Ok(opm::socket::SocketResponse::Error(message)) => {
-                crashln!("{} Failed to load dump into daemon memory: {message}", *helpers::FAIL)
+                crashln!(
+                    "{} Failed to load dump into daemon memory: {message}",
+                    *helpers::FAIL
+                )
             }
             Ok(_) => crashln!("{} Unexpected response from daemon", *helpers::FAIL),
             Err(e) => crashln!("{} Failed to contact daemon: {e}", *helpers::FAIL),
@@ -1408,7 +1417,7 @@ impl<'i> Internal<'i> {
             return;
         }
 
-            for (id, name, _was_running, _was_crashed) in &processes_to_restore {
+        for (id, name, _was_running, _was_crashed) in &processes_to_restore {
             // All processes in this list have running=true and need to be restarted
             // This includes both clean processes and those that were previously crashed
             runner = Internal {
@@ -1424,7 +1433,11 @@ impl<'i> Internal<'i> {
             // This gives the process time to initialize without daemon interference
             // Write with fsync to ensure timestamp is durably written before daemon checks
             if let Err(e) = opm::process::write_action_timestamp(*id) {
-                ::log::warn!("Failed to create action timestamp file for process {}: {}", id, e);
+                ::log::warn!(
+                    "Failed to create action timestamp file for process {}: {}",
+                    id,
+                    e
+                );
             }
 
             // Wait for process to start up before checking PID
@@ -1447,7 +1460,8 @@ impl<'i> Internal<'i> {
                 };
 
                 // Small startup grace period to avoid falsely reporting as crashed
-                let recently_started = (chrono::Utc::now() - process.started) < chrono::Duration::seconds(2);
+                let recently_started =
+                    (chrono::Utc::now() - process.started) < chrono::Duration::seconds(2);
 
                 if process.running && process_alive {
                     restored_ids.push(*id);
@@ -1534,8 +1548,10 @@ impl<'i> Internal<'i> {
                     let crash_detection_enabled = config::read().daemon.crash_detection;
                     // Check if process actually exists before reporting as online
                     // Include shell PID and tracked descendants to avoid false crashed status
-                    let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children) ||
-                        item.shell_pid.map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
+                    let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children)
+                        || item
+                            .shell_pid
+                            .map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
                     let process_actually_running = item.running && any_descendant_alive;
 
                     let mut cpu_percent: String = string!("0.00%");
@@ -1705,9 +1721,9 @@ impl<'i> Internal<'i> {
             render_list(&mut Runner::new(), true);
         }
     }
-    
+
     /// Lists processes using the provided runner or falls back to loading from disk.
-    /// 
+    ///
     /// This prevents race conditions with the daemon when displaying state immediately after modifications
     /// by using the in-memory runner state instead of reloading from disk.
     pub fn list_with_runner(format: &String, server_name: &String, runner_opt: Option<&Runner>) {
@@ -1715,7 +1731,7 @@ impl<'i> Internal<'i> {
         // Otherwise fall back to the standard list behavior
         if matches!(&**server_name, "internal" | "local" | "default") && runner_opt.is_some() {
             let mut runner_clone = runner_opt.unwrap().clone();
-            
+
             let render_list = |runner: &mut Runner, internal: bool| {
                 let mut processes: Vec<ProcessItem> = Vec::new();
 
@@ -1762,8 +1778,8 @@ impl<'i> Internal<'i> {
                         // Check both the actual PID and shell PID (if present) to determine if process is alive.
                         // For shell-wrapped processes, either PID being alive means the process is running.
                         // This is consistent with the daemon monitoring logic and prevents false crash detection.
-                        let pid_alive = is_pid_alive(item.pid) || 
-                            item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
+                        let pid_alive = is_pid_alive(item.pid)
+                            || item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
                         let process_actually_running = item.running && pid_alive;
 
                         let mut cpu_percent: String = string!("0.00%");
@@ -1860,17 +1876,18 @@ impl<'i> Internal<'i> {
                         });
                     }
 
-                    let table = Table::new(&processes)
-                        .with(Style::rounded().remove_verticals())
-                        .with(
-                            Modify::new(Segment::all()).with(BorderColor::filled(Color::new(
-                                "\x1b[38;2;45;55;72m",
-                                "\x1b[39m",
-                            ))),
-                        )
-                        .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
-                        .with(Modify::new(Columns::single(1)).with(Width::truncate(40).suffix("... ")))
-                        .to_string();
+                    let table =
+                        Table::new(&processes)
+                            .with(Style::rounded().remove_verticals())
+                            .with(Modify::new(Segment::all()).with(BorderColor::filled(
+                                Color::new("\x1b[38;2;45;55;72m", "\x1b[39m"),
+                            )))
+                            .with(Colorization::exact([Color::FG_BRIGHT_CYAN], Rows::first()))
+                            .with(
+                                Modify::new(Columns::single(1))
+                                    .with(Width::truncate(40).suffix("... ")),
+                            )
+                            .to_string();
 
                     if let Ok(json) = serde_json::to_string(&processes) {
                         match format.as_str() {
@@ -1882,7 +1899,7 @@ impl<'i> Internal<'i> {
                     };
                 }
             };
-            
+
             render_list(&mut runner_clone, true);
         } else {
             // For remote servers or when no runner provided, use standard list

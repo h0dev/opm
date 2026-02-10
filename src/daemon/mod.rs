@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use colored::Colorize;
 use fork::{daemon, Fork};
 use global_placeholders::global;
+use home;
 use macros_rs::{crashln, string, ternary};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use opm::process::{unix::NativeProcess as Process, MemoryInfo};
@@ -19,7 +20,6 @@ use serde_json::json;
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{process, thread::sleep, time::Duration};
-use home;
 
 use opm::{
     config,
@@ -62,7 +62,7 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
         // CRITICAL FIX: Must call save_permanent() to persist to disk,
         // otherwise state is lost when daemon restarts (memory cache is cleared)
         runner.save_permanent();
-        
+
         log!("[daemon] shutdown complete - state saved to permanent storage", "action" => "shutdown");
     });
 
@@ -137,20 +137,23 @@ fn restart_process() {
         }
 
         // Check if any descendant is alive (root PID + tracked children)
-        let any_descendant_alive = opm::process::is_any_descendant_alive(item.pid, &item.children) || 
-            item.shell_pid.map_or(false, |pid| opm::process::is_pid_alive(pid));
+        let any_descendant_alive = opm::process::is_any_descendant_alive(item.pid, &item.children)
+            || item
+                .shell_pid
+                .map_or(false, |pid| opm::process::is_pid_alive(pid));
 
         if any_descendant_alive {
             // --- PROCESS IS ALIVE ---
             // Update children list for the next cycle.
             let current_children = opm::process::process_find_children(item.pid);
             // Merge new children with existing ones (keep union of both sets)
-            let mut all_children: std::collections::HashSet<i64> = item.children.iter().copied().collect();
+            let mut all_children: std::collections::HashSet<i64> =
+                item.children.iter().copied().collect();
             for child in &current_children {
                 all_children.insert(*child);
             }
             let merged_children: Vec<i64> = all_children.into_iter().collect();
-            
+
             if merged_children != item.children {
                 log!("[daemon] updating children list", "name" => &item.name, "id" => id, "children" => format!("{:?}", merged_children));
                 runner.set_children(id, merged_children).save();
@@ -159,7 +162,9 @@ fn restart_process() {
             // Perform other checks for living processes (memory, watch).
             if item.running && item.max_memory > 0 {
                 let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-                if let Some(memory_info) = opm::process::get_process_memory_with_children(pid_for_monitoring) {
+                if let Some(memory_info) =
+                    opm::process::get_process_memory_with_children(pid_for_monitoring)
+                {
                     if memory_info.rss > item.max_memory {
                         log!("[daemon] memory limit exceeded", "name" => &item.name, "id" => id, "memory" => memory_info.rss, "limit" => item.max_memory);
                         runner.stop(id);
@@ -190,11 +195,11 @@ fn restart_process() {
             }
         } else {
             // --- PROCESS IS DEAD (no root, no children alive) ---
-            
+
             // Check per-process 5s delay after last action (start/restart/reload/restore)
             let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
             let within_action_delay = seconds_since_action < 5;
-            
+
             if within_action_delay {
                 log!("[daemon] skipping crash check - within 5s delay after action", 
                     "name" => &item.name, "id" => id, "seconds_since_action" => seconds_since_action);
@@ -204,8 +209,10 @@ fn restart_process() {
             // Check for surviving processes to adopt
             // First, try to find any alive process in the same process group as the tracked PID
             // This covers shell-wrapped commands that spawn a long-running child and then exit.
-            let group_child = opm::process::find_alive_process_in_group(item.pid)
-                .or_else(|| item.shell_pid.and_then(opm::process::find_alive_process_in_group));
+            let group_child = opm::process::find_alive_process_in_group(item.pid).or_else(|| {
+                item.shell_pid
+                    .and_then(opm::process::find_alive_process_in_group)
+            });
 
             if let Some(alive_child_pid) = group_child {
                 log!("[daemon] main process died, adopting process group child", "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
@@ -237,8 +244,13 @@ fn restart_process() {
                     let process = runner.process(id);
                     process.pid = alive_child_pid;
                     process.shell_pid = None; // The adopted child is now the main process, not a shell
-                    // Filter out the adopted child from the children list
-                    process.children = item.children.iter().filter(|&&p| p != alive_child_pid).copied().collect();
+                                              // Filter out the adopted child from the children list
+                    process.children = item
+                        .children
+                        .iter()
+                        .filter(|&&p| p != alive_child_pid)
+                        .copied()
+                        .collect();
                     runner.save();
                 }
                 // Skip crash handling for this cycle because we successfully adopted a child.
@@ -257,7 +269,9 @@ fn restart_process() {
                     let mut exited_successfully = false;
                     let mut handle_found = false;
 
-                    if let Some((_, handle_ref)) = opm::process::PROCESS_HANDLES.remove(&process_handle_pid) {
+                    if let Some((_, handle_ref)) =
+                        opm::process::PROCESS_HANDLES.remove(&process_handle_pid)
+                    {
                         handle_found = true;
                         if let Ok(mut child) = handle_ref.lock() {
                             if let Ok(Some(status)) = child.try_wait() {
@@ -271,11 +285,14 @@ fn restart_process() {
                         // Before marking as cleanly exited, check if there are surviving children
                         // This handles shell wrappers that spawn a long-running child and then exit
                         // (e.g., `/bin/sh -c 'node server.js'` where the shell exits but node continues)
-                        
+
                         // First try to find a child in the same process group
                         let group_child = opm::process::find_alive_process_in_group(item.pid)
-                            .or_else(|| item.shell_pid.and_then(opm::process::find_alive_process_in_group));
-                        
+                            .or_else(|| {
+                                item.shell_pid
+                                    .and_then(opm::process::find_alive_process_in_group)
+                            });
+
                         if let Some(alive_child_pid) = group_child {
                             log!("[daemon] shell exited cleanly but child still alive, adopting", 
                                 "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
@@ -283,16 +300,23 @@ fn restart_process() {
                                 let process = runner.process(id);
                                 process.pid = alive_child_pid;
                                 process.shell_pid = None; // The adopted child is now the main process
-                                process.children = item.children.iter().filter(|&&p| p != alive_child_pid).copied().collect();
+                                process.children = item
+                                    .children
+                                    .iter()
+                                    .filter(|&&p| p != alive_child_pid)
+                                    .copied()
+                                    .collect();
                                 runner.save();
                             }
                             continue;
                         }
-                        
+
                         // Then check stored children list
-                        let adoptable_child = item.children.iter()
+                        let adoptable_child = item
+                            .children
+                            .iter()
                             .find(|&&child_pid| opm::process::is_pid_alive(child_pid));
-                        
+
                         if let Some(&alive_child_pid) = adoptable_child {
                             log!("[daemon] shell exited cleanly but tracked child still alive, adopting", 
                                 "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
@@ -300,12 +324,17 @@ fn restart_process() {
                                 let process = runner.process(id);
                                 process.pid = alive_child_pid;
                                 process.shell_pid = None; // The adopted child is now the main process
-                                process.children = item.children.iter().filter(|&&p| p != alive_child_pid).copied().collect();
+                                process.children = item
+                                    .children
+                                    .iter()
+                                    .filter(|&&p| p != alive_child_pid)
+                                    .copied()
+                                    .collect();
                                 runner.save();
                             }
                             continue;
                         }
-                        
+
                         // No living children found - process genuinely stopped
                         if runner.exists(id) {
                             let process = runner.process(id);
@@ -333,7 +362,7 @@ fn restart_process() {
                             if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
                                 handle.spawn(emit_crash_event_and_notification(id, process_name));
                             }
-                            
+
                             if crash_count >= daemon_config.restarts {
                                 process.running = false;
                                 log!("[daemon] process reached max crash limit", "name" => &item.name, "id" => id, "crashes" => crash_count);
@@ -346,12 +375,13 @@ fn restart_process() {
                 }
 
                 // If the process is supposed to be running, attempt a restart.
-                if item.running && runner.exists(id) && runner.info(id).map_or(false, |p| p.running) {
+                if item.running && runner.exists(id) && runner.info(id).map_or(false, |p| p.running)
+                {
                     let grace_period = daemon_config.crash_grace_period as i64;
                     let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
                     let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
                     let within_action_delay = seconds_since_action < 5;
-                    
+
                     if !runner.is_frozen(id) && !just_started && !within_action_delay {
                         log!("[daemon] restarting crashed process", "name" => &item.name, "id" => id);
                         runner.restart(id, true, true);
@@ -361,14 +391,13 @@ fn restart_process() {
                 log!("[daemon] crash detection disabled - skipping crash handling", "name" => &item.name, "id" => id);
             }
         }
-         // Handle processes that need to be started (e.g. after restore or `opm start`)
-          if item.running && item.pid == 0 && !item.crash.crashed {
-              log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
-              runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
-              continue;
-          }
+        // Handle processes that need to be started (e.g. after restore or `opm start`)
+        if item.running && item.pid == 0 && !item.crash.crashed {
+            log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
+            runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
+            continue;
+        }
     }
-
 }
 
 pub fn health(format: &String) {
@@ -607,7 +636,10 @@ pub fn start(verbose: bool) {
         let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
 
         unsafe {
-            libc::signal(libc::SIGTERM, handle_termination_signal as *const () as usize);
+            libc::signal(
+                libc::SIGTERM,
+                handle_termination_signal as *const () as usize,
+            );
             libc::signal(libc::SIGPIPE, handle_sigpipe as *const () as usize);
         };
 
@@ -684,7 +716,7 @@ pub fn start(verbose: bool) {
         let socket_path = global!("opm.socket").to_string();
         let socket_path_clone = socket_path.clone();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
-        
+
         match std::thread::Builder::new()
             .name("socket-server".to_string())
             .spawn(move || {
@@ -839,7 +871,7 @@ pub fn reset() {
     // Use the compact() function to compress all IDs and fill gaps
     // This ensures IDs are sequential: 0, 1, 2, etc.
     runner.compact();
-    
+
     // Write directly to permanent storage without merging memory cache
     // dump::write() updates the permanent dump file without auto-save behavior
     // (dump::commit_memory() removed - it merges memory cache and clears it)
@@ -1055,7 +1087,10 @@ pub fn cleanup_all_timestamp_files() {
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                ::log::warn!("Failed to read directory entry during timestamp cleanup: {}", e);
+                ::log::warn!(
+                    "Failed to read directory entry during timestamp cleanup: {}",
+                    e
+                );
                 continue;
             }
         };
@@ -1082,12 +1117,18 @@ pub fn cleanup_all_timestamp_files() {
 fn has_recent_action_timestamp(id: usize) -> bool {
     match home::home_dir() {
         Some(home_dir) => {
-            let action_file = format!("{}/.opm/{}{}{}", home_dir.display(), TIMESTAMP_FILE_PREFIX, id, TIMESTAMP_FILE_SUFFIX);
+            let action_file = format!(
+                "{}/.opm/{}{}{}",
+                home_dir.display(),
+                TIMESTAMP_FILE_PREFIX,
+                id,
+                TIMESTAMP_FILE_SUFFIX
+            );
             let path = std::path::Path::new(&action_file);
             if !path.exists() {
                 return false;
             }
-            
+
             // Check if file is less than 5 seconds old
             // Increased from 3 to 5 seconds to give more time for process startup
             // and prevent daemon from interfering during manual start/restart operations
@@ -1100,7 +1141,7 @@ fn has_recent_action_timestamp(id: usize) -> bool {
                 }
             }
             false
-        },
+        }
         None => false,
     }
 }

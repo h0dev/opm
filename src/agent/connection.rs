@@ -1,14 +1,14 @@
 use super::messages::AgentMessage;
 use super::types::{AgentConfig, AgentInfo, AgentStatus};
+use crate::process;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use rustls::crypto::ring;
-use std::time::Duration;
-use tokio::time::sleep;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message, Connector};
-use crate::process;
 
 pub struct AgentConnection {
     config: AgentConfig,
@@ -436,7 +436,7 @@ impl AgentConnection {
 
                                         // Save all processes locally
                                         use crate::process::Runner;
-                                        
+
                                         let (success, message) = match std::panic::catch_unwind(|| {
                                             let runner = Runner::new();
                                             runner.save_permanent();

@@ -777,8 +777,11 @@ pub async fn save_handler(
 
     // Save all agent processes
     let saved_agents = registry.save_all_agents().await;
-    
-    log::info!("[save_handler] Saved local processes and {} agent(s)", saved_agents.len());
+
+    log::info!(
+        "[save_handler] Saved local processes and {} agent(s)",
+        saved_agents.len()
+    );
 
     timer.observe_duration();
     Json(attempt(true, "save"))
@@ -1618,19 +1621,19 @@ pub async fn list_handler(
             let agent_id = agent.id.clone();
             let agent_name = agent.name.clone();
             let agent_api_endpoint = agent.api_endpoint.clone();
-            
+
             log::debug!(
                 "[list] Adding {} processes from agent '{}' (id: {})",
                 agent_processes.len(),
                 agent_name,
                 agent_id
             );
-            
+
             for process in &mut agent_processes {
                 process.agent_id = Some(agent_id.clone());
                 process.agent_name = Some(agent_name.clone());
                 process.agent_api_endpoint = agent_api_endpoint.clone();
-                
+
                 log::debug!(
                     "[list] Agent process: id={}, name='{}', agent_id='{}' ",
                     process.id,
@@ -1759,17 +1762,14 @@ pub async fn logs_raw_handler(id: usize, kind: String, _t: Token) -> Result<Stri
     security(("api_key" = []))
 )]
 #[get("/files?<path>")]
-pub async fn file_stream_handler(
-    path: String,
-    _t: Token,
-) -> Result<String, GenericError> {
+pub async fn file_stream_handler(path: String, _t: Token) -> Result<String, GenericError> {
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["file_stream"])
         .start_timer();
     HTTP_COUNTER.inc();
 
     log::debug!("[file_stream] Reading file: {}", path);
-    
+
     match fs::read_to_string(&path) {
         Ok(content) => {
             timer.observe_duration();
@@ -2391,7 +2391,7 @@ pub async fn stream_info(server: String, id: usize, _t: Token) -> EventStream![]
                 sleep(Duration::from_millis(500));
             }
         }
-        
+
         // Handle remote servers
         match config::servers().servers {
             Some(servers) => {
@@ -2399,7 +2399,7 @@ pub async fn stream_info(server: String, id: usize, _t: Token) -> EventStream![]
                     Some(remote_server) => {
                         let (client, headers) = client(&remote_server.token).await;
                         let address = &remote_server.address;
-                        
+
                         loop {
                             match client.get(fmtstr!("{address}/process/{id}/info")).headers(headers.clone()).send().await {
                                 Ok(data) => {
@@ -2718,7 +2718,10 @@ pub async fn agent_process_logs_handler(
             timer.observe_duration();
             return Err(generic_error(
                 Status::ServiceUnavailable,
-                format!("Agent '{}' does not have an API endpoint configured", agent_id)
+                format!(
+                    "Agent '{}' does not have an API endpoint configured",
+                    agent_id
+                ),
             ));
         }
     };
@@ -2772,7 +2775,7 @@ pub async fn agent_process_logs_handler(
                     error_text
                 );
                 timer.observe_duration();
-                
+
                 // Use appropriate status code based on agent's response
                 let server_status = if status_code.is_client_error() {
                     // 4xx errors from agent (e.g., 404 Not Found) - pass through
@@ -2781,7 +2784,7 @@ pub async fn agent_process_logs_handler(
                     // 5xx errors from agent - this is a Bad Gateway since upstream failed
                     Status::BadGateway
                 };
-                
+
                 Err(generic_error(
                     server_status,
                     format!(
@@ -2851,18 +2854,19 @@ pub async fn agent_file_stream_handler(
 
     // Handle local agent specially - read file directly
     if agent_id == "local" {
-        log::debug!(
-            "[agent_file_stream] Handling local agent, path: {}",
-            path
-        );
-        
+        log::debug!("[agent_file_stream] Handling local agent, path: {}", path);
+
         match fs::read_to_string(&path) {
             Ok(content) => {
                 timer.observe_duration();
                 return Ok(content);
             }
             Err(e) => {
-                log::warn!("[agent_file_stream] Failed to read local file {}: {}", path, e);
+                log::warn!(
+                    "[agent_file_stream] Failed to read local file {}: {}",
+                    path,
+                    e
+                );
                 timer.observe_duration();
                 return Err(generic_error(
                     Status::NotFound,
@@ -2876,7 +2880,10 @@ pub async fn agent_file_stream_handler(
     let agent = match registry.get(&agent_id) {
         Some(agent) => agent,
         None => {
-            log::warn!("[agent_file_stream] Agent {} not found in registry", agent_id);
+            log::warn!(
+                "[agent_file_stream] Agent {} not found in registry",
+                agent_id
+            );
             timer.observe_duration();
             return Err(generic_error(
                 Status::NotFound,
@@ -2907,11 +2914,7 @@ pub async fn agent_file_stream_handler(
 
     // Forward request to agent API
     let url = format!("{}/files?path={}", api_endpoint, path.replace(" ", "%20"));
-    log::debug!(
-        "Streaming file from agent API: {} for path {}",
-        url,
-        path
-    );
+    log::debug!("Streaming file from agent API: {} for path {}", url, path);
 
     match reqwest::get(&url).await {
         Ok(response) => {
@@ -2936,8 +2939,11 @@ pub async fn agent_file_stream_handler(
                 }
             } else {
                 let status_code = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| String::from("No error details"));
-                
+                let error_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| String::from("No error details"));
+
                 log::error!(
                     "Agent {} API returned error status {} for file {}: {}",
                     agent_id,
@@ -3098,8 +3104,11 @@ pub async fn agent_action_handler(
                 // Wait for response with timeout
                 match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
                     Ok(Ok(response)) => {
-                        log::info!("[WebSocket] Action response received: success={}, message={}",
-                            response.success, response.message);
+                        log::info!(
+                            "[WebSocket] Action response received: success={}, message={}",
+                            response.success,
+                            response.message
+                        );
                         timer.observe_duration();
                         Ok(Json(attempt(response.success, &body.method)))
                     }
