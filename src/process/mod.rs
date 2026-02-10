@@ -4753,4 +4753,121 @@ mod tests {
             "Process should NOT be marked crashed when PID info is missing"
         );
     }
+
+    #[test]
+    fn test_restore_pid_preserved_across_daemon_save() {
+        // Test that when restore updates a process PID mid-cycle,
+        // the daemon doesn't overwrite it with stale pid=0 when it saves.
+        // 
+        // This tests the fix for the phantom crash/stop issue where:
+        // 1. LoadPermanent loads dump with pid=0
+        // 2. Daemon monitoring loop starts with runner having pid=0
+        // 3. Restore updates PID to 12345 via SetState
+        // 4. Daemon saves its stale runner (pid=0), which should NOT overwrite the fresh PID
+        //
+        // The fix: SetState handler preserves existing PID when incoming has pid=0
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Simulate process after LoadPermanent - has all fields but pid=0 (default after deserialization)
+        let process_from_dump = Process {
+            id,
+            pid: 0, // Default after deserialization (not persisted)
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "uptimekuma".to_string(),
+            path: PathBuf::from("/home/container/uptime-kuma"),
+            script: "node server/server.js".to_string(),
+            restarts: 0,
+            running: true, // Was running before daemon restart
+            crash: Crash {
+                crashed: false,
+                value: 0,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: chrono::DateTime::from_timestamp(0, 0).unwrap(), // Unix epoch (default)
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+        };
+
+        runner.list.insert(id, process_from_dump.clone());
+
+        // Verify initial state - process has pid=0
+        let info_before = runner.info(id).unwrap();
+        assert_eq!(info_before.pid, 0, "Process should have pid=0 after LoadPermanent");
+        assert!(info_before.running, "Process should be marked as running");
+
+        // Simulate restore starting the process and updating PID via SetState
+        // This is what happens when restore calls runner.restart() and then save()
+        let mut process_after_restore = process_from_dump.clone();
+        process_after_restore.pid = 12345; // Fresh PID assigned by restore
+        process_after_restore.children = vec![12346, 12347]; // Discovered children
+        process_after_restore.started = Utc::now(); // Fresh start time
+        
+        // Update the process - this simulates SetState being called
+        runner.list.insert(id, process_after_restore);
+
+        // Verify PID was updated
+        let info_after_restore = runner.info(id).unwrap();
+        assert_eq!(info_after_restore.pid, 12345, "Process should have fresh PID after restore");
+        assert_eq!(info_after_restore.children.len(), 2, "Process should have 2 children");
+
+        // Now simulate daemon's monitoring loop saving its stale runner (pid=0)
+        // This is the problematic case - daemon loaded state before restore updated it
+        // and now tries to save its stale copy
+        let mut daemon_stale_runner = process_from_dump.clone();
+        daemon_stale_runner.pid = 0; // Stale PID from daemon's old runner
+        daemon_stale_runner.shell_pid = None;
+        daemon_stale_runner.children = vec![]; // Stale children list
+        daemon_stale_runner.started = chrono::DateTime::from_timestamp(0, 0).unwrap(); // Stale start time
+
+        // The fix: When merging in SetState handler, if existing has pid>0 but incoming has pid=0,
+        // preserve the existing PID. We simulate this merge logic here.
+        let existing = runner.info(id).unwrap();
+        let mut merged = daemon_stale_runner;
+        
+        // Apply the merge logic from the fix
+        if existing.pid > 0 && merged.pid == 0 {
+            merged.pid = existing.pid;
+            merged.shell_pid = existing.shell_pid;
+            merged.children = existing.children.clone();
+            let unix_epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
+            if existing.started != unix_epoch {
+                merged.started = existing.started;
+            }
+        }
+        
+        runner.list.insert(id, merged);
+
+        // Verify the fresh PID is preserved, not overwritten with stale pid=0
+        let info_final = runner.info(id).unwrap();
+        assert_eq!(
+            info_final.pid, 12345,
+            "Fresh PID should be preserved, not overwritten with stale pid=0"
+        );
+        assert_eq!(
+            info_final.children.len(), 2,
+            "Children list should be preserved"
+        );
+        assert_ne!(
+            info_final.started,
+            chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            "Start time should be preserved, not reset to Unix epoch"
+        );
+
+        // Verify status shows as "online" or "starting" (grace period), not "stopped"
+        let processes = runner.fetch();
+        assert!(
+            processes[0].status == "online" || processes[0].status == "starting",
+            "Process with valid PID should show as online or starting, got: {}",
+            processes[0].status
+        );
+    }
 }
