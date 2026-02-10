@@ -142,8 +142,16 @@ fn restart_process() {
                 .shell_pid
                 .map_or(false, |pid| opm::process::is_pid_alive(pid));
 
+        // Check if the main process (PID or shell_pid) is alive
+        // This is the primary indicator of process health
+        let main_process_alive = opm::process::is_pid_alive(item.pid)
+            || item
+                .shell_pid
+                .map_or(false, |pid| opm::process::is_pid_alive(pid));
+
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
+        // However, if the main process itself is alive, we should treat it as online
         let all_children_are_zombies = !item.children.is_empty() 
             && item.children.iter().all(|&child_pid| {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -156,9 +164,9 @@ fn restart_process() {
                 }
             });
 
-        if all_children_are_zombies {
-            // All tracked children are zombies - treat as crashed
-            log!("[daemon] all tracked children are zombies, treating as crashed", 
+        if all_children_are_zombies && !main_process_alive {
+            // All tracked children are zombies AND main process is not alive - treat as crashed
+            log!("[daemon] all tracked children are zombies and main process not alive, treating as crashed", 
                 "name" => &item.name, "id" => id, "children" => format!("{:?}", item.children));
             // Fall through to crash detection logic below (process is treated as dead)
         } else if any_descendant_alive {
