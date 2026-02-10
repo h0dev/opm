@@ -123,10 +123,18 @@ fn restart_process() {
     let process_ids: Vec<usize> = runner.process_ids().collect();
 
     for id in process_ids {
+        // Reload runner from memory for each process to get fresh state
+        // This prevents race conditions where processes start/stop during the monitoring cycle
+        // Critical: Without this reload, a process that starts mid-cycle appears dead (pid=0)
+        runner = Runner::new_direct();
+        
         let item = match runner.info(id) {
             Some(item) => item.clone(),
             None => continue, // Process was removed, skip it
         };
+
+        log!("[daemon] checking process", "name" => &item.name, "id" => id, "pid" => item.pid, 
+            "running" => item.running, "crashed" => item.crash.crashed);
 
         // Check if PID info is missing/incomplete - log error and skip crash detection
         if opm::process::is_pid_info_missing(item.pid, &item.children) {
@@ -141,6 +149,8 @@ fn restart_process() {
             || item
                 .shell_pid
                 .map_or(false, |pid| opm::process::is_pid_alive(pid));
+
+        log!("[daemon] liveness check", "name" => &item.name, "id" => id, "any_descendant_alive" => any_descendant_alive);
 
         if any_descendant_alive {
             // --- PROCESS IS ALIVE ---
@@ -195,49 +205,21 @@ fn restart_process() {
             }
         } else {
             // --- PROCESS IS DEAD (no root, no children alive) ---
-
-            // Reload runner from memory to get the freshest state before crash detection.
-            // This prevents race conditions where the process just started but we're
-            // checking with stale state from the beginning of the monitoring cycle.
-            // Critical: Without this reload, a process that starts during the daemon cycle
-            // appears dead (pid=0) and gets incorrectly marked as stopped.
-            runner = Runner::new_direct();
-            let fresh_item = match runner.info(id) {
-                Some(item) => item.clone(),
-                None => {
-                    log!("[daemon] process {} was removed during cycle, skipping", "id" => id);
-                    continue;
-                }
-            };
-
-            // Re-check if process is actually alive with fresh state
-            // This is critical because the process might have just started
-            let fresh_any_descendant_alive = opm::process::is_any_descendant_alive(fresh_item.pid, &fresh_item.children)
-                || fresh_item
-                    .shell_pid
-                    .map_or(false, |pid| opm::process::is_pid_alive(pid));
-
-            if fresh_any_descendant_alive {
-                // Process is actually alive! The initial check was with stale state.
-                // Update our working item reference and continue with alive logic
-                log!("[daemon] process {} actually alive after reload (was stale), skipping crash check", 
-                    "name" => &fresh_item.name, "id" => id);
-                continue;
-            }
+            
+            log!("[daemon] process appears dead, checking grace periods", "name" => &item.name, "id" => id, "pid" => item.pid);
 
             // Check per-process 5s delay after last action (start/restart/reload/restore)
-            // Use fresh_item to get accurate last_action_at
-            let seconds_since_action = (Utc::now() - fresh_item.last_action_at).num_seconds();
+            let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
             let within_action_delay = seconds_since_action < 5;
+
+            log!("[daemon] action delay check", "name" => &item.name, "id" => id, 
+                "seconds_since_action" => seconds_since_action, "within_action_delay" => within_action_delay);
 
             if within_action_delay {
                 log!("[daemon] skipping crash check - within 5s delay after action", 
-                    "name" => &fresh_item.name, "id" => id, "seconds_since_action" => seconds_since_action);
+                    "name" => &item.name, "id" => id, "seconds_since_action" => seconds_since_action);
                 continue;
             }
-
-            // Use fresh_item for all subsequent checks
-            let item = fresh_item;
 
             // Check for surviving processes to adopt
             // First, try to find any alive process in the same process group as the tracked PID
@@ -294,8 +276,13 @@ fn restart_process() {
                 // --- CRASH HANDLING LOGIC ---
                 // No living parent and no living children to adopt. This is a real crash or clean exit.
                 let grace_period = daemon_config.crash_grace_period as i64;
-                let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
+                let uptime_secs = (Utc::now() - item.started).num_seconds();
+                let just_started = uptime_secs < grace_period;
                 let is_new_crash = item.pid > 0;
+
+                log!("[daemon] crash detection check", "name" => &item.name, "id" => id, 
+                    "pid" => item.pid, "uptime_secs" => uptime_secs, "grace_period" => grace_period, 
+                    "just_started" => just_started, "is_new_crash" => is_new_crash);
 
                 if is_new_crash && !just_started {
                     let process_handle_pid = item.shell_pid.unwrap_or(item.pid);

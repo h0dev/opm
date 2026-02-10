@@ -246,6 +246,12 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             SocketResponse::State(merged)
         }
         SocketRequest::SetState(runner) => {
+            log::info!("[socket] SetState received with {} processes", runner.list.len());
+            for (id, proc) in &runner.list {
+                log::info!("[socket] SetState process: id={}, name={}, pid={}, running={}", 
+                    id, proc.name, proc.pid, proc.running);
+            }
+            
             // Merge the provided state with existing memory cache to prevent race conditions
             // where the daemon's stale runner overwrites newly created processes
             // Read current memory state
@@ -335,7 +341,22 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
 
                             // If existing has a valid PID (>0) but incoming has default PID (0),
                             // preserve the existing PID and running state - it was likely set mid-cycle
+                            // CRITICAL: This prevents daemon from overwriting fresh state with stale state
+                            // when the daemon's monitoring cycle started before a process was created/started.
                             if existing.pid > 0 && process.pid == 0 {
+                                // Also check if existing is more recent (has newer last_action_at)
+                                // This ensures we don't overwrite a freshly started process
+                                let existing_is_newer = existing.last_action_at > process.last_action_at;
+                                
+                                if existing_is_newer {
+                                    log::info!(
+                                        "[socket] Rejecting stale update for process '{}' (id={}): existing pid={} (action_at={:?}) vs incoming pid=0 (action_at={:?})",
+                                        process.name, id, existing.pid, existing.last_action_at, process.last_action_at
+                                    );
+                                    // Skip this update entirely - keep the existing process
+                                    continue;
+                                }
+                                
                                 process.pid = existing.pid;
                                 process.shell_pid = existing.shell_pid;
                                 process.children = existing.children.clone();
