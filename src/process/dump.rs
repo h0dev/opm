@@ -144,19 +144,7 @@ pub fn read_memory_direct() -> Runner {
 /// Used by merge logic to distinguish between no cache vs empty cache
 pub fn read_memory_direct_option() -> Option<Runner> {
     let cache = MEMORY_CACHE.lock().unwrap();
-    let result = cache.clone();
-    
-    if let Some(ref runner) = result {
-        log!("[dump::read_memory_direct_option] Read {} processes from memory cache", runner.list.len());
-        for (id, proc) in &runner.list {
-            log!("[dump::read_memory_direct_option] Process in cache: id={}, name={}, pid={}, running={}", 
-                id, proc.name, proc.pid, proc.running);
-        }
-    } else {
-        log!("[dump::read_memory_direct_option] Memory cache is empty");
-    }
-    
-    result
+    cache.clone()
 }
 
 /// Public version for socket server to avoid recursion
@@ -333,15 +321,8 @@ pub fn read_memory() -> Runner {
 pub fn write_memory(dump: &Runner) {
     use global_placeholders::global;
 
-    log!("[dump::write_memory] Called with {} processes", dump.list.len());
-    for (id, proc) in &dump.list {
-        log!("[dump::write_memory] Process: id={}, name={}, pid={}, running={}", 
-            id, proc.name, proc.pid, proc.running);
-    }
-
     // Try to send to daemon via socket first
     let socket_path = global!("opm.socket");
-    log!("[dump::write_memory] Sending SetState to daemon at {}", socket_path);
     match crate::socket::send_request(
         &socket_path,
         crate::socket::SocketRequest::SetState(dump.clone()),
@@ -350,12 +331,12 @@ pub fn write_memory(dump: &Runner) {
             log!("[dump::write_memory] Updated state in daemon via socket");
             return;
         }
-        Ok(resp) => {
-            log!("[dump::write_memory] Unexpected response from daemon socket: {:?}, falling back to memory", resp);
+        Ok(_) => {
+            log!("[dump::write_memory] Unexpected response from daemon socket, falling back to memory");
         }
-        Err(e) => {
+        Err(_) => {
             // Daemon not running, fall back to in-memory cache
-            log!("[dump::write_memory] Daemon not running ({:?}), using in-memory cache", e);
+            log!("[dump::write_memory] Daemon not running, using in-memory cache");
         }
     }
 

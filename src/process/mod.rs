@@ -203,31 +203,24 @@ pub type Env = BTreeMap<String, String>;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Process {
     pub id: usize,
-    /// Process ID - not persisted to dump, always starts at 0
-    #[serde(skip)]
+    /// Process ID - persisted to enable state synchronization via socket
     pub pid: i64,
     /// PID of the parent shell process when running commands through a shell.
     /// This is set when the command is executed via a shell (e.g., bash -c 'script.sh')
     /// and shell_pid != actual_pid. Used for accurate CPU monitoring of shell scripts.
-    /// Not persisted to dump, always starts at None
-    #[serde(skip)]
     pub shell_pid: Option<i64>,
     pub env: Env,
     pub name: String,
     pub path: PathBuf,
     pub script: String,
-    /// Restart counter - not persisted to dump, always starts at 0
-    #[serde(skip)]
+    /// Restart counter - persisted to maintain state across socket communication
     pub restarts: u64,
     pub running: bool,
     pub crash: Crash,
     pub watch: Watch,
-    /// Child process IDs - not persisted to dump, always starts empty
-    #[serde(skip)]
+    /// Child process IDs - persisted to enable state synchronization via socket
     pub children: Vec<i64>,
-    /// Process start timestamp - not persisted to dump
-    /// Defaults to Unix epoch when deserialized, set to current time when process starts
-    #[serde(skip)]
+    /// Process start timestamp - persisted to enable accurate uptime tracking
     pub started: DateTime<Utc>,
     /// Maximum memory limit in bytes (0 = no limit)
     #[serde(default)]
