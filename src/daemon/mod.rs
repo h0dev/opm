@@ -268,6 +268,45 @@ fn restart_process() {
                     }
 
                     if handle_found && exited_successfully {
+                        // Before marking as cleanly exited, check if there are surviving children
+                        // This handles shell wrappers that spawn a long-running child and then exit
+                        // (e.g., `/bin/sh -c 'node server.js'` where the shell exits but node continues)
+                        
+                        // First try to find a child in the same process group
+                        let group_child = opm::process::find_alive_process_in_group(item.pid)
+                            .or_else(|| item.shell_pid.and_then(opm::process::find_alive_process_in_group));
+                        
+                        if let Some(alive_child_pid) = group_child {
+                            log!("[daemon] shell exited cleanly but child still alive, adopting", 
+                                "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
+                            if runner.exists(id) {
+                                let process = runner.process(id);
+                                process.pid = alive_child_pid;
+                                process.shell_pid = None; // The adopted child is now the main process
+                                process.children = item.children.iter().filter(|&&p| p != alive_child_pid).copied().collect();
+                                runner.save();
+                            }
+                            continue;
+                        }
+                        
+                        // Then check stored children list
+                        let adoptable_child = item.children.iter()
+                            .find(|&&child_pid| opm::process::is_pid_alive(child_pid));
+                        
+                        if let Some(&alive_child_pid) = adoptable_child {
+                            log!("[daemon] shell exited cleanly but tracked child still alive, adopting", 
+                                "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
+                            if runner.exists(id) {
+                                let process = runner.process(id);
+                                process.pid = alive_child_pid;
+                                process.shell_pid = None; // The adopted child is now the main process
+                                process.children = item.children.iter().filter(|&&p| p != alive_child_pid).copied().collect();
+                                runner.save();
+                            }
+                            continue;
+                        }
+                        
+                        // No living children found - process genuinely stopped
                         if runner.exists(id) {
                             let process = runner.process(id);
                             process.running = false;

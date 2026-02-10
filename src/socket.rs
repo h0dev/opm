@@ -297,23 +297,31 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                             }
                             
                             // Same process - merge smartly to preserve mid-cycle updates
-                            // Problem: When restore starts a process, it updates PID/children/started via SetState.
+                            // Problem: When restore/start updates a process, it sets PID/children/started via SetState.
                             // But the daemon's monitoring loop may be running with a stale runner (pid=0).
                             // When daemon saves, it would overwrite the fresh PID with stale pid=0.
                             // 
+                            // Additionally, if the daemon incorrectly marks a running process as stopped
+                            // (e.g., shell wrapper exits but child still running), we need to preserve the
+                            // correct running state to prevent phantom stops.
+                            // 
                             // Solution: Preserve runtime fields that may have been updated mid-cycle:
-                            // - pid, shell_pid, children, started: Keep existing if non-zero/non-default
+                            // - pid, shell_pid, children, started, running: Keep existing if non-zero/non-default
                             // - Other fields: Use incoming values (daemon is authoritative for state/counters)
                             //
-                            // This fixes the phantom crash/stop issue where processes appear stopped after restore
+                            // This fixes the phantom crash/stop issue where processes appear stopped after restore/start
                             // even though they're actually running.
                             
                             // If existing has a valid PID (>0) but incoming has default PID (0),
-                            // preserve the existing PID - it was likely set mid-cycle by restore
+                            // preserve the existing PID and running state - it was likely set mid-cycle
                             if existing.pid > 0 && process.pid == 0 {
                                 process.pid = existing.pid;
                                 process.shell_pid = existing.shell_pid;
                                 process.children = existing.children.clone();
+                                // Preserve running state when preserving PID
+                                // This prevents daemon from incorrectly stopping a running process
+                                // when shell wrapper exits but child is still alive
+                                process.running = existing.running;
                                 // Only preserve started if it's not the default Unix epoch
                                 let unix_epoch = chrono::DateTime::from_timestamp(0, 0)
                                     .expect("Unix epoch timestamp should always be valid");
@@ -321,8 +329,8 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                                     process.started = existing.started;
                                 }
                                 log::debug!(
-                                    "[socket] Preserved mid-cycle PID update for process '{}' (id={}): pid={}, children={:?}",
-                                    process.name, id, process.pid, process.children
+                                    "[socket] Preserved mid-cycle PID update for process '{}' (id={}): pid={}, running={}, children={:?}",
+                                    process.name, id, process.pid, process.running, process.children
                                 );
                             }
                         }
