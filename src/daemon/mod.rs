@@ -225,60 +225,11 @@ fn restart_process() {
                 continue;
             }
 
-            // Check for surviving processes to adopt
-            // First, try to find any alive process in the same process group as the tracked PID
-            // This covers shell-wrapped commands that spawn a long-running child and then exit.
-            let group_child = opm::process::find_alive_process_in_group(item.pid).or_else(|| {
-                item.shell_pid
-                    .and_then(opm::process::find_alive_process_in_group)
-            });
-
-            // Only adopt if the found PID is in our stored children list to prevent
-            // adopting unrelated processes that happen to be in the same process group
-            let group_child = group_child.filter(|&pid| item.children.contains(&pid));
-
-            if let Some(alive_child_pid) = group_child {
-                log!("[daemon] main process died, adopting process group child", "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
-                if runner.exists(id) {
-                    let process = runner.process(id);
-                    process.pid = alive_child_pid;
-                    process.shell_pid = None; // The adopted child is now the main process, not a shell
-                    process.children = item
-                        .children
-                        .iter()
-                        .filter(|&&p| p != alive_child_pid)
-                        .copied()
-                        .collect();
-                    runner.save();
-                }
-                continue;
-            }
-
-            // Check for surviving children to adopt (using stored children list)
-            let adoptable_child = item
-                .children
-                .iter()
-                .find(|&&child_pid| opm::process::is_pid_alive(child_pid));
-
-            if let Some(&alive_child_pid) = adoptable_child {
-                // --- ADOPTION LOGIC ---
-                log!("[daemon] main process died, adopting living child", "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
-                if runner.exists(id) {
-                    let process = runner.process(id);
-                    process.pid = alive_child_pid;
-                    process.shell_pid = None; // The adopted child is now the main process, not a shell
-                                              // Filter out the adopted child from the children list
-                    process.children = item
-                        .children
-                        .iter()
-                        .filter(|&&p| p != alive_child_pid)
-                        .copied()
-                        .collect();
-                    runner.save();
-                }
-                // Skip crash handling for this cycle because we successfully adopted a child.
-                continue;
-            }
+            // Child PID adoption logic has been removed due to bugs in PR #306
+            // The adoption logic had two critical issues:
+            // 1. Could adopt unrelated PIDs that happened to be in the same process group
+            // 2. Prevented stopped processes from staying stopped (would restart them instead)
+            // When a process dies, we no longer try to adopt its children
 
             if daemon_config.crash_detection {
                 // --- CRASH HANDLING LOGIC ---
@@ -305,60 +256,8 @@ fn restart_process() {
                     }
 
                     if handle_found && exited_successfully {
-                        // Before marking as cleanly exited, check if there are surviving children
-                        // This handles shell wrappers that spawn a long-running child and then exit
-                        // (e.g., `/bin/sh -c 'node server.js'` where the shell exits but node continues)
-
-                        // First try to find a child in the same process group
-                        let group_child = opm::process::find_alive_process_in_group(item.pid)
-                            .or_else(|| {
-                                item.shell_pid
-                                    .and_then(opm::process::find_alive_process_in_group)
-                            });
-
-                        if let Some(alive_child_pid) = group_child {
-                            log!("[daemon] shell exited cleanly but child still alive, adopting", 
-                                "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
-                            if runner.exists(id) {
-                                let process = runner.process(id);
-                                process.pid = alive_child_pid;
-                                process.shell_pid = None; // The adopted child is now the main process
-                                process.children = item
-                                    .children
-                                    .iter()
-                                    .filter(|&&p| p != alive_child_pid)
-                                    .copied()
-                                    .collect();
-                                runner.save();
-                            }
-                            continue;
-                        }
-
-                        // Then check stored children list
-                        let adoptable_child = item
-                            .children
-                            .iter()
-                            .find(|&&child_pid| opm::process::is_pid_alive(child_pid));
-
-                        if let Some(&alive_child_pid) = adoptable_child {
-                            log!("[daemon] shell exited cleanly but tracked child still alive, adopting", 
-                                "name" => &item.name, "id" => id, "old_pid" => item.pid, "new_pid" => alive_child_pid);
-                            if runner.exists(id) {
-                                let process = runner.process(id);
-                                process.pid = alive_child_pid;
-                                process.shell_pid = None; // The adopted child is now the main process
-                                process.children = item
-                                    .children
-                                    .iter()
-                                    .filter(|&&p| p != alive_child_pid)
-                                    .copied()
-                                    .collect();
-                                runner.save();
-                            }
-                            continue;
-                        }
-
-                        // No living children found - process genuinely stopped
+                        // Child PID adoption logic removed (see comment above for details)
+                        // Process exited cleanly - mark it as stopped
                         if runner.exists(id) {
                             let process = runner.process(id);
                             process.running = false;
