@@ -200,11 +200,8 @@ fn restart_process() {
             // --- PROCESS IS DEAD (no root, no children alive) ---
 
             // Check per-process 5s delay after last action (start/restart/reload/restore)
-            // Check BOTH the last_action_at timestamp AND the action timestamp file
-            // The file-based check prevents race conditions where CLI/socket operations
-            // update state but the daemon has a stale runner loaded at cycle start
             let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
-            let within_action_delay = seconds_since_action < 5 || has_recent_action_timestamp(id);
+            let within_action_delay = seconds_since_action < 5;
 
             if within_action_delay {
                 log!("[daemon] skipping crash check - within 5s delay after action", 
@@ -1031,6 +1028,7 @@ pub fn cleanup_all_timestamp_files() {
 }
 
 // Helper function to check if there was a recent action timestamp file
+#[allow(dead_code)]
 fn has_recent_action_timestamp(id: usize) -> bool {
     match home::home_dir() {
         Some(home_dir) => {
