@@ -296,6 +296,8 @@ fn restart_process() {
                         }
                         log!("[daemon] restarting crashed process", "name" => &item.name, "id" => id);
                         runner.restart(id, true, true);
+                        // Save state after restart to persist PID, counters, and cleared crashed flag
+                        runner.save();
                     }
                 }
             } else {
@@ -306,6 +308,8 @@ fn restart_process() {
         if item.running && item.pid == 0 && !item.crash.crashed {
             log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
             runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
+            // Save state after restart to persist PID and state changes
+            runner.save();
             continue;
         }
     }
