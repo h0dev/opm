@@ -45,32 +45,9 @@ static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     // SAFETY: Signal handlers should be kept simple and avoid complex operations.
-    // However, we need to save process state before daemon exits.
-    // This is a critical operation to ensure process state is preserved for restore.
-    // We accept the small risk of issues during signal handling because:
-    // 1. The alternative (losing process state) is worse
-    // 2. This only runs on daemon shutdown, not during normal operation
-    // 3. Worst case: state isn't saved, but daemon still exits cleanly
-
-    // Try to save process state before exiting
-    // Use catch_unwind to prevent panics from crashing the signal handler
-    let save_result = std::panic::catch_unwind(|| {
-        // Load current process state from memory cache
-        let runner = Runner::new();
-        // Save current state to both memory cache AND permanent storage
-        // This preserves running/crashed state as-is for restore
-        // CRITICAL FIX: Must call save_permanent() to persist to disk,
-        // otherwise state is lost when daemon restarts (memory cache is cleared)
-        runner.save_permanent();
-
-        log!("[daemon] shutdown complete - state saved to permanent storage", "action" => "shutdown");
-    });
-
-    // If save failed, log a warning (but still proceed with cleanup)
-    if save_result.is_err() {
-        // Note: Can't use log! macro without key-value pairs, using eprintln instead
-        eprintln!("[daemon] warning: failed to save process state during shutdown");
-    }
+    // Don't save process state on daemon shutdown - users should explicitly use 'opm save'
+    // if they want to persist process state across daemon restarts.
+    // This prevents unexpected process.dump writes when daemon is stopped/restarted.
 
     pid::remove();
     log!("[daemon] killed", "pid" => process::id());
@@ -284,6 +261,7 @@ fn restart_process() {
                         process.shell_pid = None;
                         process.crash.value += 1;
                         process.crash.crashed = true;
+                        process.restarts += 1; // Increment restarts counter to match crash.value
                         let crash_count = process.crash.value;
 
                         if item.running {
@@ -306,12 +284,12 @@ fn restart_process() {
                 // If the process is supposed to be running, attempt a restart.
                 if item.running && runner.exists(id) && runner.info(id).map_or(false, |p| p.running)
                 {
-                    let grace_period = daemon_config.crash_grace_period as i64;
-                    let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
                     let seconds_since_action = (Utc::now() - item.last_action_at).num_seconds();
                     let within_action_delay = seconds_since_action < 5;
 
-                    if !runner.is_frozen(id) && !just_started && !within_action_delay {
+                    // Don't restart if frozen or if we just performed an action (start/restart/stop)
+                    // Grace period check removed - if crash was detected, we should restart immediately
+                    if !runner.is_frozen(id) && !within_action_delay {
                         log!("[daemon] restarting crashed process", "name" => &item.name, "id" => id);
                         runner.restart(id, true, true);
                     }
