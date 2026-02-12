@@ -156,12 +156,16 @@ fn restart_process() {
             .shell_pid
             .map_or(false, |pid| opm::process::is_pid_alive(pid));
 
-        let any_descendant_alive = opm::process::is_any_descendant_alive(item.pid, &item.children)
-            || shell_alive;
+        // Treat PID=0 as dead (it's not a valid process PID for managed processes)
+        // PID 0 is reserved for the kernel scheduler and should never be assigned to user processes
+        let has_valid_pid = item.pid > 0;
+        
+        let any_descendant_alive = has_valid_pid 
+            && (opm::process::is_any_descendant_alive(item.pid, &item.children) || shell_alive);
 
         // Check if the main process (PID or shell_pid) is alive
         // This is the primary indicator of process health
-        let main_process_alive = opm::process::is_pid_alive(item.pid) || shell_alive;
+        let main_process_alive = has_valid_pid && (opm::process::is_pid_alive(item.pid) || shell_alive);
 
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
@@ -349,9 +353,13 @@ fn restart_process() {
                 // By placing this logic outside the is_new_crash check, we ensure that
                 // processes that failed to restart (e.g., due to bad working directory)
                 // will continue to be retried on subsequent daemon cycles.
+                log!("[daemon] checking if process needs restart", "id" => id, "name" => &item.name);
                 if runner.exists(id) {
+                    log!("[daemon] process exists in runner", "id" => id);
                     let updated_process = runner.info(id).cloned();
+                    log!("[daemon] got updated process", "id" => id, "has_proc" => updated_process.is_some());
                     if let Some(proc) = updated_process {
+                        log!("[daemon] checking if process is running", "id" => id, "running" => proc.running, "restarts" => proc.restarts);
                         if proc.running {
                             // Check restart limit BEFORE attempting restart
                             if proc.restarts >= daemon_config.restarts {
