@@ -581,6 +581,7 @@ impl Runner {
                     frozen_until: None, // Not frozen by default
                     last_action_at: Utc::now(),
                     manual_stop: false, // Not manually stopped by default
+                    errored: false,     // Not in error state by default
                 },
             );
 
