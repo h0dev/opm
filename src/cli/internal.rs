@@ -714,6 +714,9 @@ impl<'i> Internal<'i> {
 
                 let status = if process_actually_running {
                     "online   ".green().bold()
+                } else if item.errored {
+                    // Process reached restart limit - show as errored
+                    "errored  ".red().bold()
                 } else if crashed_due_to_pid {
                     // PID existed before but is no longer alive -> crash
                     "crashed   ".red().bold()
@@ -812,6 +815,8 @@ impl<'i> Internal<'i> {
 
             let status = if item.running {
                 "online   ".green().bold()
+            } else if item.errored {
+                "errored  ".red().bold()
             } else {
                 match item.crash.crashed {
                     true => "crashed   ",
@@ -1617,6 +1622,8 @@ impl<'i> Internal<'i> {
 
                     let status = if process_actually_running {
                         "online   ".green().bold()
+                    } else if item.errored {
+                        "errored  ".red().bold()
                     } else if item.running {
                         // Process is marked as running but PID doesn't exist
                         if crash_detection_enabled {
@@ -1849,6 +1856,8 @@ impl<'i> Internal<'i> {
 
                         let status = if process_actually_running {
                             "online   ".green().bold()
+                        } else if item.errored {
+                            "errored  ".red().bold()
                         } else if item.running {
                             // Process is marked as running but PID doesn't exist - it crashed
                             "crashed   ".red().bold()

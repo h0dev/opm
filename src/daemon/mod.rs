@@ -329,7 +329,8 @@ fn restart_process() {
                             // This is the single source of truth displayed in `opm info`
                             if item.restarts >= daemon_config.restarts {
                                 process.running = false;
-                                log!("[daemon] process reached max restart limit", "name" => &item.name, "id" => id, "restarts" => item.restarts, "limit" => daemon_config.restarts);
+                                process.errored = true;
+                                log!("[daemon] process reached max restart limit, setting errored state", "name" => &item.name, "id" => id, "restarts" => item.restarts, "limit" => daemon_config.restarts);
                             } else {
                                 log!("[daemon] process crashed", "name" => &item.name, "id" => id, "restarts" => item.restarts);
                             }
@@ -346,12 +347,13 @@ fn restart_process() {
                         if proc.running {
                             // Check restart limit BEFORE attempting restart
                             if proc.restarts >= daemon_config.restarts {
-                                // Limit reached - stop the process permanently
+                                // Limit reached - stop the process permanently and set errored state
                                 if let Some(process) = runner.list.get_mut(&id) {
                                     process.running = false;
+                                    process.errored = true;
                                 }
                                 runner.save();
-                                log!("[daemon] process reached max restart limit, stopping permanently", 
+                                log!("[daemon] process reached max restart limit, stopping permanently with errored state", 
                                     "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "limit" => daemon_config.restarts);
                             } else {
                                 let seconds_since_action = (Utc::now() - proc.last_action_at).num_seconds();

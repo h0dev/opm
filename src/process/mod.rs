@@ -213,7 +213,10 @@ pub struct Process {
     pub name: String,
     pub path: PathBuf,
     pub script: String,
-    /// Restart counter - persisted to maintain state across socket communication
+    /// Restart counter - NOT persisted, resets to 0 on each opm daemon start
+    /// This gives processes a fresh start after daemon restarts
+    #[serde(skip)]
+    #[serde(default)]
     pub restarts: u64,
     pub running: bool,
     pub crash: Crash,
@@ -240,6 +243,11 @@ pub struct Process {
     /// When true, prevents daemon from treating process exit as a crash
     /// Persisted temporarily to communicate with daemon, reset after handling
     pub manual_stop: bool,
+    /// Flag to indicate process reached error state (restart limit exceeded)
+    /// When true, process has crashed repeatedly and will not be restarted
+    /// Reset when user manually starts/restarts the process
+    #[serde(default)]
+    pub errored: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -635,7 +643,8 @@ impl Runner {
             // - !was_running: process was stopped/crashed
             if !dead && !increment_counter && !was_running {
                 process.restarts = 0;
-                log::info!("Resetting restart counter for stopped process {} (id={})", name, id);
+                process.errored = false;
+                log::info!("Resetting restart counter and errored flag for stopped process {} (id={})", name, id);
             }
 
             // Increment restart counter for manual restart/reload:
@@ -643,6 +652,8 @@ impl Runner {
             // - increment_counter=true (restart/reload command)
             if !dead && increment_counter {
                 process.restarts += 1;
+                // Clear errored state when user manually restarts
+                process.errored = false;
             }
 
             kill_children(process.children.clone());
@@ -1413,8 +1424,23 @@ impl Runner {
             let process_to_stop = self.process(id);
             let pid_to_check = process_to_stop.pid;
             let shell_pid = process_to_stop.shell_pid;
+            let children = process_to_stop.children.clone();
 
-            kill_children(process_to_stop.children.clone());
+            // CRITICAL: Set manual_stop flag BEFORE killing the process
+            // This prevents a race condition where the daemon detects the process death
+            // before seeing the manual_stop flag, causing it to restart the process
+            let process = self.process(id);
+            process.running = false;
+            process.crash.crashed = false;
+            process.last_action_at = Utc::now();
+            // Set manual_stop flag to indicate user-initiated stop
+            // This prevents daemon from treating the exit as a crash
+            process.manual_stop = true;
+            // Save state BEFORE killing to ensure daemon sees the flag first
+            self.save();
+
+            // Now kill the process - daemon will see manual_stop=true if it checks
+            kill_children(children);
             let _ = process_stop(pid_to_check); // Continue even if stopping fails
 
             // waiting until Process is terminated
@@ -1437,13 +1463,8 @@ impl Runner {
                 }
             }
 
+            // Clear PIDs after process is fully stopped
             let process = self.process(id);
-            process.running = false;
-            process.crash.crashed = false;
-            process.last_action_at = Utc::now();
-            // Set manual_stop flag to indicate user-initiated stop
-            // This prevents daemon from treating the exit as a crash
-            process.manual_stop = true;
             // Keep restarts counter to preserve restart history - only reset via reset_counters()
             process.children = vec![];
             // Set PID to 0 to indicate no valid PID and prevent monitor from treating this as a crash
@@ -1451,7 +1472,7 @@ impl Runner {
             // Reset shell_pid to None to prevent monitor from treating this as a crash
             process.shell_pid = None;
 
-            // Save state after stopping to ensure changes are persisted
+            // Save final state after process is fully terminated
             self.save();
         }
 
