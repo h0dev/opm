@@ -845,7 +845,13 @@ impl Runner {
             // to prevent race conditions with the daemon during the entire restart operation.
 
             // Save state after successful restart to persist changes
-            self.save();
+            // Use save_direct() when called from daemon (dead=true) to avoid serialization
+            // that would lose fields marked with #[serde(skip)] like the restart counter
+            if dead {
+                self.save_direct();
+            } else {
+                self.save();
+            }
         }
 
         return self;
@@ -1052,7 +1058,13 @@ impl Runner {
             }
 
             // Save state after successful reload to persist changes
-            self.save();
+            // Use save_direct() when called from daemon (dead=true) to avoid serialization
+            // that would lose fields marked with #[serde(skip)] like the restart counter
+            if dead {
+                self.save_direct();
+            } else {
+                self.save();
+            }
         }
 
         return self;
