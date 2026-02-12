@@ -236,6 +236,11 @@ pub struct Process {
     /// Not persisted to dump, always starts at Unix epoch
     #[serde(skip)]
     pub last_action_at: DateTime<Utc>,
+    /// Flag to indicate manual stop (user-initiated via 'opm stop')
+    /// When true, prevents daemon from treating process exit as a crash
+    /// Not persisted to dump, always starts at false
+    #[serde(skip)]
+    pub manual_stop: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -571,6 +576,7 @@ impl Runner {
                     agent_id: None,     // Local processes don't have an agent
                     frozen_until: None, // Not frozen by default
                     last_action_at: Utc::now(),
+                    manual_stop: false, // Not manually stopped by default
                 },
             );
 
@@ -764,6 +770,8 @@ impl Runner {
             // Clear crashed flag after successful restart
             // This allows the daemon to properly detect if the process crashes again
             process.crash.crashed = false;
+            // Clear manual_stop flag when process is started/restarted
+            process.manual_stop = false;
             process.last_action_at = Utc::now();
 
             // Discover children immediately after starting the process
@@ -980,6 +988,8 @@ impl Runner {
             // Clear crashed flag after successful reload
             // This allows the daemon to properly detect if the process crashes again
             process.crash.crashed = false;
+            // Clear manual_stop flag when process is reloaded
+            process.manual_stop = false;
             process.last_action_at = Utc::now();
 
             // Merge .env variables into the stored environment (dotenv takes priority)
@@ -1428,6 +1438,9 @@ impl Runner {
             process.running = false;
             process.crash.crashed = false;
             process.last_action_at = Utc::now();
+            // Set manual_stop flag to indicate user-initiated stop
+            // This prevents daemon from treating the exit as a crash
+            process.manual_stop = true;
             // Keep crash.value to preserve crash history - only reset via reset_counters()
             process.children = vec![];
             // Set PID to 0 to indicate no valid PID and prevent monitor from treating this as a crash

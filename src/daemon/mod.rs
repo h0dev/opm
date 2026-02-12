@@ -261,6 +261,23 @@ fn restart_process() {
                 let is_new_crash = item.pid > 0;
 
                 if is_new_crash && !just_started {
+                    // Check if this is a manual stop (user-initiated via 'opm stop')
+                    // If so, don't treat it as a crash - just mark as stopped
+                    if item.manual_stop {
+                        if runner.exists(id) {
+                            let process = runner.process(id);
+                            process.running = false;
+                            process.pid = 0;
+                            process.shell_pid = None;
+                            process.crash.crashed = false;
+                            // Reset manual_stop flag after handling
+                            process.manual_stop = false;
+                            runner.save();
+                            log!("[daemon] process stopped manually (not a crash)", "name" => &item.name, "id" => id);
+                        }
+                        continue;
+                    }
+
                     let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
                     let mut exited_successfully = false;
                     let mut handle_found = false;
