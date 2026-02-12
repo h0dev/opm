@@ -262,8 +262,11 @@ fn restart_process() {
 
                 if is_new_crash && !just_started {
                     // Check if this is a manual stop (user-initiated via 'opm stop')
-                    // If so, don't treat it as a crash - just mark as stopped
-                    if item.manual_stop {
+                    // Re-read the latest process state to check the manual_stop flag
+                    // (item is a snapshot from the start of the loop, might be stale)
+                    let is_manual_stop = runner.exists(id) && runner.process(id).manual_stop;
+                    
+                    if is_manual_stop {
                         if runner.exists(id) {
                             let process = runner.process(id);
                             process.running = false;

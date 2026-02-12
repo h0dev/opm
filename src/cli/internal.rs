@@ -745,11 +745,10 @@ impl<'i> Internal<'i> {
                     memory_usage,
                     memory_limit,
                     id: string!(self.id),
-                    restarts: if item.crash.crashed {
-                        item.crash.value
-                    } else {
-                        item.restarts
-                    },
+                    // Always show restarts counter (not crash.value)
+                    // restarts is persisted and provides accurate restart count
+                    // crash.value is not persisted (#[serde(skip)]) so always shows 0
+                    restarts: item.restarts,
                     name: item.name.clone(),
                     log_out: item.logs().out,
                     path: format!("{} ", path),
@@ -864,11 +863,10 @@ impl<'i> Internal<'i> {
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
-                    restarts: if item.crash.crashed {
-                        item.crash.value
-                    } else {
-                        item.restarts
-                    },
+                    // Always show restarts counter (not crash.value)
+                    // restarts is persisted and provides accurate restart count
+                    // crash.value is not persisted (#[serde(skip)]) so always shows 0
+                    restarts: item.restarts,
                     name: item.name.clone(),
                     pid: ternary!(
                         item.running && !item.crash.crashed,
@@ -1644,13 +1642,10 @@ impl<'i> Internal<'i> {
                         string!("none  ")
                     };
 
-                    // Display restarts counter consistently with `opm info` command:
-                    // Show crash.value when crashed, otherwise show restarts counter
-                    let restarts_value = if item.crash.crashed {
-                        item.crash.value
-                    } else {
-                        item.restarts
-                    };
+                    // Always show restarts counter (not crash.value)
+                    // restarts is persisted and provides accurate restart count
+                    // crash.value is not persisted (#[serde(skip)]) so always shows 0
+                    let restarts_value = item.restarts;
 
                     processes.push(ProcessItem {
                         status: status.into(),

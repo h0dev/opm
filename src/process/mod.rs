@@ -238,8 +238,7 @@ pub struct Process {
     pub last_action_at: DateTime<Utc>,
     /// Flag to indicate manual stop (user-initiated via 'opm stop')
     /// When true, prevents daemon from treating process exit as a crash
-    /// Not persisted to dump, always starts at false
-    #[serde(skip)]
+    /// Persisted temporarily to communicate with daemon, reset after handling
     pub manual_stop: bool,
 }
 
