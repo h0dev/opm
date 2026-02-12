@@ -325,26 +325,37 @@ fn restart_process() {
                     let updated_process = runner.info(id).cloned();
                     if let Some(proc) = updated_process {
                         if proc.running {
-                            let seconds_since_action = (Utc::now() - proc.last_action_at).num_seconds();
-                            
-                            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s
-                            let backoff_delay = (2u64.pow(proc.restarts.min(4) as u32)).min(30);
-                            let within_backoff = seconds_since_action < backoff_delay as i64;
-
-                            if within_backoff {
-                                log!("[daemon] backoff delay active", "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "backoff_secs" => backoff_delay, "elapsed_secs" => seconds_since_action);
-                            } else if runner.is_frozen(id) {
-                                log!("[daemon] process is frozen, skipping restart", "name" => &proc.name, "id" => id);
-                            } else {
-                                // Increment restarts counter before calling restart()
-                                // Note: restart() crashes the program on failure (crashln!), so this is safe
+                            // Check restart limit BEFORE attempting restart
+                            if proc.restarts >= daemon_config.restarts {
+                                // Limit reached - stop the process permanently
                                 if let Some(process) = runner.list.get_mut(&id) {
-                                    process.restarts += 1;
+                                    process.running = false;
                                 }
-                                log!("[daemon] restarting crashed process", "name" => &proc.name, "id" => id, "restarts" => proc.restarts + 1);
-                                runner.restart(id, true, true);
-                                // Save state after restart to persist PID, counters, and cleared crashed flag
                                 runner.save();
+                                log!("[daemon] process reached max restart limit, stopping permanently", 
+                                    "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "limit" => daemon_config.restarts);
+                            } else {
+                                let seconds_since_action = (Utc::now() - proc.last_action_at).num_seconds();
+                                
+                                // Exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s
+                                let backoff_delay = (2u64.pow(proc.restarts.min(4) as u32)).min(30);
+                                let within_backoff = seconds_since_action < backoff_delay as i64;
+
+                                if within_backoff {
+                                    log!("[daemon] backoff delay active", "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "backoff_secs" => backoff_delay, "elapsed_secs" => seconds_since_action);
+                                } else if runner.is_frozen(id) {
+                                    log!("[daemon] process is frozen, skipping restart", "name" => &proc.name, "id" => id);
+                                } else {
+                                    // Increment restarts counter before calling restart()
+                                    // Note: restart() crashes the program on failure (crashln!), so this is safe
+                                    if let Some(process) = runner.list.get_mut(&id) {
+                                        process.restarts += 1;
+                                    }
+                                    log!("[daemon] restarting crashed process", "name" => &proc.name, "id" => id, "restarts" => proc.restarts + 1);
+                                    runner.restart(id, true, true);
+                                    // Save state after restart to persist PID, counters, and cleared crashed flag
+                                    runner.save();
+                                }
                             }
                         }
                     }
