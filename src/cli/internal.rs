@@ -677,7 +677,7 @@ impl<'i> Internal<'i> {
                 let crashed_due_to_pid = item.running && pid_valid && !pid_alive;
                 
                 // Check if process has hit restart limit (error state)
-                let is_error_state = item.restarts >= daemon_config.restarts && !item.running;
+                let is_error_state = item.is_in_error_state(daemon_config.restarts);
 
                 let mut memory_usage: Option<MemoryInfo> = None;
                 let mut cpu_percent: Option<f64> = None;
@@ -1807,7 +1807,7 @@ impl<'i> Internal<'i> {
                         let process_actually_running = item.running && pid_alive;
                         
                         // Check if process has hit restart limit (error state)
-                        let is_error_state = item.restarts >= daemon_config.restarts && !item.running;
+                        let is_error_state = item.is_in_error_state(daemon_config.restarts);
 
                         let mut cpu_percent: String = string!("0.00%");
                         let mut memory_usage: String = string!("0b");

@@ -286,6 +286,31 @@ fn reset_restart_counters(runner: &Runner) -> Runner {
     runner_copy
 }
 
+/// Atomically write dump data to a file using temporary file + rename pattern
+/// This prevents 0-byte corruption by ensuring the target file is only updated
+/// after the new data has been successfully written and verified
+fn write_dump_atomically(temp_path: &str, dump_path: &str, encoded: &str) -> Result<(), String> {
+    // Write to temporary file
+    fs::write(temp_path, encoded)
+        .map_err(|e| format!("Failed to write temporary file: {}", e))?;
+    
+    // Verify the temporary file was written successfully and is not empty
+    let metadata = fs::metadata(temp_path)
+        .map_err(|e| format!("Failed to read temporary file metadata: {}", e))?;
+    
+    if metadata.len() == 0 {
+        return Err("Temporary file is empty (0 bytes)".to_string());
+    }
+    
+    // Atomically rename temporary file to official dump file
+    // On Unix systems, fs::rename is atomic when both paths are on the same filesystem
+    fs::rename(temp_path, dump_path)
+        .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
+    
+    log!("Successfully wrote dump file ({} bytes)", metadata.len());
+    Ok(())
+}
+
 pub fn write(dump: &Runner) {
     let dump_path = global!("opm.dump");
 
@@ -316,28 +341,7 @@ pub fn write(dump: &Runner) {
     // Write to temporary file first, then atomically rename
     let temp_path = format!("{}.tmp", dump_path);
     
-    // Wrap in try-catch to preserve original dump on failure
-    match (|| -> Result<(), String> {
-        // Write to temporary file
-        fs::write(&temp_path, &encoded)
-            .map_err(|e| format!("Failed to write temporary file: {}", e))?;
-        
-        // Verify the temporary file was written successfully and is not empty
-        let metadata = fs::metadata(&temp_path)
-            .map_err(|e| format!("Failed to read temporary file metadata: {}", e))?;
-        
-        if metadata.len() == 0 {
-            return Err("Temporary file is empty (0 bytes)".to_string());
-        }
-        
-        // Atomically rename temporary file to official dump file
-        // On Unix systems, fs::rename is atomic when both paths are on the same filesystem
-        fs::rename(&temp_path, &dump_path)
-            .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
-        
-        log!("[dump::write] Successfully wrote dump file ({} bytes)", metadata.len());
-        Ok(())
-    })() {
+    match write_dump_atomically(&temp_path, &dump_path, &encoded) {
         Ok(_) => {},
         Err(err) => {
             // Clean up temporary file if it exists

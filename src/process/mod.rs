@@ -620,7 +620,7 @@ impl Runner {
             let config = full_config.runner;
             let max_restarts = full_config.daemon.restarts;
             let Process {
-                path, script, name, running: was_running, restarts: current_restarts, ..
+                path, script, name, running: was_running, ..
             } = process.clone();
 
             // Save the current working directory so we can restore it after restart
@@ -633,8 +633,7 @@ impl Runner {
             // - dead=false: user-initiated (not daemon)
             // - !increment_counter: start command (not restart)
             // - !was_running OR in error state: process was stopped/crashed OR hit restart limit
-            let is_error_state = current_restarts >= max_restarts && !was_running;
-            if !dead && !increment_counter && (!was_running || is_error_state) {
+            if !dead && !increment_counter && (!was_running || process.is_in_error_state(max_restarts)) {
                 process.restarts = 0;
                 log::info!("Resetting restart counter for stopped/error process {} (id={})", name, id);
             }
@@ -1700,6 +1699,12 @@ impl Process {
             out: global!("opm.logs.out", name.as_str()),
             error: global!("opm.logs.error", name.as_str()),
         }
+    }
+    
+    /// Check if process is in error state (hit restart limit and stopped)
+    /// Error state means the process crashed too many times and daemon stopped trying to restart it
+    pub fn is_in_error_state(&self, restart_limit: u64) -> bool {
+        self.restarts >= restart_limit && !self.running
     }
 }
 
