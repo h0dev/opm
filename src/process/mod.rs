@@ -213,7 +213,9 @@ pub struct Process {
     pub name: String,
     pub path: PathBuf,
     pub script: String,
-    /// Restart counter - persisted to maintain accurate restart count across daemon restarts
+    /// Restart counter - NOT persisted, resets to 0 on each opm daemon start
+    /// This gives processes a fresh start after daemon restarts
+    #[serde(skip)]
     pub restarts: u64,
     pub running: bool,
     pub crash: Crash,
@@ -1231,6 +1233,15 @@ impl Runner {
     pub fn save(&self) {
         if self.remote.is_none() {
             dump::write_memory(&self);
+        }
+    }
+
+    /// Save runner state directly to memory cache without using socket
+    /// This is used by the daemon itself to avoid serialization/deserialization
+    /// that would lose fields marked with #[serde(skip)] like the restart counter
+    pub fn save_direct(&self) {
+        if self.remote.is_none() {
+            dump::write_memory_direct(&self);
         }
     }
 

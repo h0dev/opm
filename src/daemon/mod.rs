@@ -197,7 +197,8 @@ fn restart_process() {
 
             if merged_children != item.children {
                 log!("[daemon] updating children list", "name" => &item.name, "id" => id, "children" => format!("{:?}", merged_children));
-                runner.set_children(id, merged_children).save();
+                runner.set_children(id, merged_children);
+                runner.save_direct();
             }
 
             // Perform other checks for living processes (memory, watch).
@@ -229,7 +230,7 @@ fn restart_process() {
                 if uptime_secs >= daemon_config.crash_grace_period as i64 {
                     if runner.exists(id) {
                         runner.process(id).crash.crashed = false;
-                        runner.save();
+                        runner.save_direct();
                         log!("[daemon] process stabilized, cleared crashed flag", "name" => &item.name, "id" => id);
                     }
                 }
@@ -275,7 +276,7 @@ fn restart_process() {
                             process.crash.crashed = false;
                             // Reset manual_stop flag after handling
                             process.manual_stop = false;
-                            runner.save();
+                            runner.save_direct();
                             log!("[daemon] process stopped manually (not a crash)", "name" => &item.name, "id" => id);
                         }
                         continue;
@@ -306,7 +307,7 @@ fn restart_process() {
                             process.pid = 0;
                             process.shell_pid = None;
                             process.crash.crashed = false;
-                            runner.save();
+                            runner.save_direct();
                             log!("[daemon] process stopped cleanly", "name" => &item.name, "id" => id);
                         }
                         continue;
@@ -335,7 +336,7 @@ fn restart_process() {
                                 log!("[daemon] process crashed", "name" => &item.name, "id" => id, "restarts" => item.restarts);
                             }
                         }
-                        runner.save();
+                        runner.save_direct();
                     }
                 }
 
@@ -352,7 +353,7 @@ fn restart_process() {
                                     process.running = false;
                                     process.errored = true;
                                 }
-                                runner.save();
+                                runner.save_direct();
                                 log!("[daemon] process reached max restart limit, stopping permanently with errored state", 
                                     "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "limit" => daemon_config.restarts);
                             } else {
@@ -378,7 +379,7 @@ fn restart_process() {
                                     log!("[daemon] restarting crashed process", "name" => &proc.name, "id" => id, "restarts" => new_restart_count, "backoff_secs" => backoff_delay);
                                     runner.restart(id, true, true);
                                     // Save state after restart to persist PID, counters, and cleared crashed flag
-                                    runner.save();
+                                    runner.save_direct();
                                 }
                             }
                         }
@@ -393,7 +394,7 @@ fn restart_process() {
             log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
             runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
             // Save state after restart to persist PID and state changes
-            runner.save();
+            runner.save_direct();
             continue;
         }
     }
