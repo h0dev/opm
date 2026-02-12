@@ -1405,8 +1405,12 @@ impl Runner {
     }
 
     /// Save state after restart/reload failure to persist counter increments and state changes
-    /// Uses save_direct() for daemon operations (dead=true) to preserve #[serde(skip)] fields
-    /// Uses save() for user operations (dead=false) for full serialization
+    /// 
+    /// # Arguments
+    /// * `dead` - True if this is a daemon-initiated restart (process already dead/crashed),
+    ///           False if this is a user-initiated manual restart/reload.
+    ///           When true, uses save_direct() to preserve #[serde(skip)] fields like restart counter.
+    ///           When false, uses save() for full serialization.
     fn save_after_restart_failure(&mut self, dead: bool) {
         if dead {
             self.save_direct();
