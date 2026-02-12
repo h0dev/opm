@@ -317,7 +317,6 @@ fn restart_process() {
                         let process = runner.process(id);
                         process.pid = 0;
                         process.shell_pid = None;
-                        process.crash.value += 1;
                         process.crash.crashed = true;
 
                         if item.running {
@@ -326,13 +325,13 @@ fn restart_process() {
                                 handle.spawn(emit_crash_event_and_notification(id, process_name));
                             }
 
-                            // Check restart limit using restarts counter (not crash.value)
+                            // Check restart limit using restarts counter
                             // This is the single source of truth displayed in `opm info`
                             if item.restarts >= daemon_config.restarts {
                                 process.running = false;
                                 log!("[daemon] process reached max restart limit", "name" => &item.name, "id" => id, "restarts" => item.restarts, "limit" => daemon_config.restarts);
                             } else {
-                                log!("[daemon] process crashed", "name" => &item.name, "id" => id, "crashes" => process.crash.value);
+                                log!("[daemon] process crashed", "name" => &item.name, "id" => id, "restarts" => item.restarts);
                             }
                         }
                         runner.save();

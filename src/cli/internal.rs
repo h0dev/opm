@@ -745,9 +745,8 @@ impl<'i> Internal<'i> {
                     memory_usage,
                     memory_limit,
                     id: string!(self.id),
-                    // Always show restarts counter (not crash.value)
+                    // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
-                    // crash.value is not persisted (#[serde(skip)]) so always shows 0
                     restarts: item.restarts,
                     name: item.name.clone(),
                     log_out: item.logs().out,
@@ -863,9 +862,8 @@ impl<'i> Internal<'i> {
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
-                    // Always show restarts counter (not crash.value)
+                    // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
-                    // crash.value is not persisted (#[serde(skip)]) so always shows 0
                     restarts: item.restarts,
                     name: item.name.clone(),
                     pid: ternary!(
@@ -1642,9 +1640,8 @@ impl<'i> Internal<'i> {
                         string!("none  ")
                     };
 
-                    // Always show restarts counter (not crash.value)
+                    // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
-                    // crash.value is not persisted (#[serde(skip)]) so always shows 0
                     let restarts_value = item.restarts;
 
                     processes.push(ProcessItem {
@@ -1877,7 +1874,7 @@ impl<'i> Internal<'i> {
                             cpu: format!("{cpu_percent}   "),
                             mem: format!("{memory_usage}   "),
                             id: id.to_string().cyan().bold().into(),
-                            restarts: format!("{}  ", item.crash.value),
+                            restarts: format!("{}  ", item.restarts),
                             name: format!("{}   ", item.name.clone()),
                             pid: ternary!(
                                 process_actually_running,
