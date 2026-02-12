@@ -587,8 +587,7 @@ pub fn init_on_startup() -> Runner {
 
     // Note: We preserve both the crash.crashed flag and running state
     // so restore command can properly handle processes across daemon restarts.
-    // The restart counter is not persisted (marked with #[serde(skip)]),
-    // so it automatically resets to 0 on daemon startup.
+    // The restart counter is now persisted to maintain accurate restart counts.
 
     // Populate memory cache with loaded state to keep processes in RAM
     // This ensures the daemon has the process state immediately available in memory
@@ -597,7 +596,7 @@ pub fn init_on_startup() -> Runner {
     // This is a one-time startup operation, so the clone overhead is negligible.
     let mut cache = MEMORY_CACHE.lock().unwrap();
     *cache = Some(permanent.clone());
-    log!("[dump::init_on_startup] Populated memory cache with loaded state (restart counters reset to 0)");
+    log!("[dump::init_on_startup] Populated memory cache with loaded state");
 
     permanent
 }
