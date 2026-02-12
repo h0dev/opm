@@ -624,7 +624,7 @@ impl Runner {
             let config = full_config.runner;
             let max_restarts = full_config.daemon.restarts;
             let Process {
-                path, script, name, ..
+                path, script, name, running: was_running, ..
             } = process.clone();
 
             // Save the current working directory so we can restore it after restart
@@ -632,10 +632,20 @@ impl Runner {
             // and can cause it to crash when trying to access its own files
             let original_dir = std::env::current_dir().ok();
 
-            // Increment restart counter based on parameters:
-            // - dead=true (daemon auto-restart): don't increment (daemon already incremented)
-            // - dead=false with increment_counter=true (manual restart/reload): increment
-            // - dead=false with increment_counter=false (start command): don't increment
+            // Reset counters when user manually starts a stopped process (not a restart)
+            // This gives the process a fresh start after being stopped/crashed
+            // - dead=false: user-initiated (not daemon)
+            // - !increment_counter: start command (not restart)
+            // - !was_running: process was stopped/crashed
+            if !dead && !increment_counter && !was_running {
+                process.restarts = 0;
+                process.crash.value = 0;
+                log::info!("Resetting restart counter for stopped process {} (id={})", name, id);
+            }
+
+            // Increment restart counter for manual restart/reload:
+            // - dead=false (user-initiated, not daemon)
+            // - increment_counter=true (restart/reload command)
             if !dead && increment_counter {
                 process.restarts += 1;
                 process.crash.value += 1;
