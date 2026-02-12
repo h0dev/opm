@@ -542,11 +542,10 @@ pub fn init_on_startup() -> Runner {
     // so restore command can properly handle processes across daemon restarts.
     // Only reset the crash and restart counters to give processes a fresh start
 
-    // On startup, reset crash and restart counters for all processes
+    // On startup, reset restart counter for all processes
     // but preserve their running and crashed states
     for (_id, pr) in permanent.list.iter_mut() {
-        // Reset counters for all processes to give them a fresh start
-        pr.crash.value = 0;
+        // Reset counter for all processes to give them a fresh start
         pr.restarts = 0;
     }
 

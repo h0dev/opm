@@ -745,11 +745,9 @@ impl<'i> Internal<'i> {
                     memory_usage,
                     memory_limit,
                     id: string!(self.id),
-                    restarts: if item.crash.crashed {
-                        item.crash.value
-                    } else {
-                        item.restarts
-                    },
+                    // Always show restarts counter
+                    // restarts is persisted and provides accurate restart count
+                    restarts: item.restarts,
                     name: item.name.clone(),
                     log_out: item.logs().out,
                     path: format!("{} ", path),
@@ -864,11 +862,9 @@ impl<'i> Internal<'i> {
                     id: string!(self.id),
                     path: path.clone(),
                     status: status.into(),
-                    restarts: if item.crash.crashed {
-                        item.crash.value
-                    } else {
-                        item.restarts
-                    },
+                    // Always show restarts counter
+                    // restarts is persisted and provides accurate restart count
+                    restarts: item.restarts,
                     name: item.name.clone(),
                     pid: ternary!(
                         item.running && !item.crash.crashed,
@@ -1644,13 +1640,9 @@ impl<'i> Internal<'i> {
                         string!("none  ")
                     };
 
-                    // Display restarts counter consistently with `opm info` command:
-                    // Show crash.value when crashed, otherwise show restarts counter
-                    let restarts_value = if item.crash.crashed {
-                        item.crash.value
-                    } else {
-                        item.restarts
-                    };
+                    // Always show restarts counter
+                    // restarts is persisted and provides accurate restart count
+                    let restarts_value = item.restarts;
 
                     processes.push(ProcessItem {
                         status: status.into(),
@@ -1882,7 +1874,7 @@ impl<'i> Internal<'i> {
                             cpu: format!("{cpu_percent}   "),
                             mem: format!("{memory_usage}   "),
                             id: id.to_string().cyan().bold().into(),
-                            restarts: format!("{}  ", item.crash.value),
+                            restarts: format!("{}  ", item.restarts),
                             name: format!("{}   ", item.name.clone()),
                             pid: ternary!(
                                 process_actually_running,

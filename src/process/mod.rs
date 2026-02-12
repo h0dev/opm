@@ -236,14 +236,15 @@ pub struct Process {
     /// Not persisted to dump, always starts at Unix epoch
     #[serde(skip)]
     pub last_action_at: DateTime<Utc>,
+    /// Flag to indicate manual stop (user-initiated via 'opm stop')
+    /// When true, prevents daemon from treating process exit as a crash
+    /// Persisted temporarily to communicate with daemon, reset after handling
+    pub manual_stop: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Crash {
     pub crashed: bool,
-    /// Crash counter - not persisted to dump, always starts at 0
-    #[serde(skip)]
-    pub value: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
@@ -496,7 +497,7 @@ impl Runner {
             let config = config::read().runner;
             let crash = Crash {
                 crashed: false,
-                value: 0,
+
             };
 
             let watch = match watch {
@@ -571,6 +572,7 @@ impl Runner {
                     agent_id: None,     // Local processes don't have an agent
                     frozen_until: None, // Not frozen by default
                     last_action_at: Utc::now(),
+                    manual_stop: false, // Not manually stopped by default
                 },
             );
 
@@ -618,7 +620,7 @@ impl Runner {
             let config = full_config.runner;
             let max_restarts = full_config.daemon.restarts;
             let Process {
-                path, script, name, ..
+                path, script, name, running: was_running, ..
             } = process.clone();
 
             // Save the current working directory so we can restore it after restart
@@ -626,13 +628,21 @@ impl Runner {
             // and can cause it to crash when trying to access its own files
             let original_dir = std::env::current_dir().ok();
 
-            // Increment restart counter based on parameters:
-            // - dead=true (daemon auto-restart): don't increment (daemon already incremented)
-            // - dead=false with increment_counter=true (manual restart/reload): increment
-            // - dead=false with increment_counter=false (start command): don't increment
+            // Reset counters when user manually starts a stopped process (not a restart)
+            // This gives the process a fresh start after being stopped/crashed
+            // - dead=false: user-initiated (not daemon)
+            // - !increment_counter: start command (not restart)
+            // - !was_running: process was stopped/crashed
+            if !dead && !increment_counter && !was_running {
+                process.restarts = 0;
+                log::info!("Resetting restart counter for stopped process {} (id={})", name, id);
+            }
+
+            // Increment restart counter for manual restart/reload:
+            // - dead=false (user-initiated, not daemon)
+            // - increment_counter=true (restart/reload command)
             if !dead && increment_counter {
                 process.restarts += 1;
-                process.crash.value += 1;
             }
 
             kill_children(process.children.clone());
@@ -764,6 +774,8 @@ impl Runner {
             // Clear crashed flag after successful restart
             // This allows the daemon to properly detect if the process crashes again
             process.crash.crashed = false;
+            // Clear manual_stop flag when process is started/restarted
+            process.manual_stop = false;
             process.last_action_at = Utc::now();
 
             // Discover children immediately after starting the process
@@ -861,7 +873,6 @@ impl Runner {
             // - dead=false with increment_counter=false (not currently used): don't increment
             if !dead && increment_counter {
                 process.restarts += 1;
-                process.crash.value += 1;
             }
 
             if let Err(err) = std::env::set_current_dir(&path) {
@@ -980,6 +991,8 @@ impl Runner {
             // Clear crashed flag after successful reload
             // This allows the daemon to properly detect if the process crashes again
             process.crash.crashed = false;
+            // Clear manual_stop flag when process is reloaded
+            process.manual_stop = false;
             process.last_action_at = Utc::now();
 
             // Merge .env variables into the stored environment (dotenv takes priority)
@@ -1343,15 +1356,15 @@ impl Runner {
     }
 
     pub fn new_crash(&mut self, id: usize) -> &mut Self {
-        self.process(id).crash.value += 1;
+        self.process(id).restarts += 1;
         return self;
     }
 
-    /// Handle restart/reload failure by optionally incrementing crash counter and checking limit
+    /// Handle restart/reload failure by optionally incrementing restart counter and checking limit
     /// Sets running=false if the limit is reached or exceeded
     ///
     /// # Arguments
-    /// * `increment_counter` - Whether to increment crash counter. Set to false if counter was already incremented by daemon.
+    /// * `increment_counter` - Whether to increment restart counter. Set to false if counter was already incremented by daemon.
     fn handle_restart_failure(
         &mut self,
         id: usize,
@@ -1363,7 +1376,7 @@ impl Runner {
 
         // Only increment if not already incremented by caller (e.g., daemon)
         if increment_counter {
-            process.crash.value += 1;
+            process.restarts += 1;
         }
 
         // Only mark as crashed if the process was actually running before (had a valid PID)
@@ -1378,7 +1391,7 @@ impl Runner {
         }
 
         // Check if we've reached or exceeded max restart limit
-        if process.crash.value >= max_restarts {
+        if process.restarts >= max_restarts {
             process.running = false;
             log::error!(
                 "Process {} reached max restart attempts due to repeated failures",
@@ -1428,7 +1441,10 @@ impl Runner {
             process.running = false;
             process.crash.crashed = false;
             process.last_action_at = Utc::now();
-            // Keep crash.value to preserve crash history - only reset via reset_counters()
+            // Set manual_stop flag to indicate user-initiated stop
+            // This prevents daemon from treating the exit as a crash
+            process.manual_stop = true;
+            // Keep restarts counter to preserve restart history - only reset via reset_counters()
             process.children = vec![];
             // Set PID to 0 to indicate no valid PID and prevent monitor from treating this as a crash
             process.pid = 0;
@@ -1488,7 +1504,6 @@ impl Runner {
     pub fn reset_counters(&mut self, id: usize) -> &mut Self {
         let process = self.process(id);
         process.restarts = 0;
-        process.crash.value = 0;
         process.crash.crashed = false;
         process.last_action_at = Utc::now();
         return self;
@@ -1617,7 +1632,7 @@ impl Runner {
             pid: item.pid,
             cpu: cpu_percent,
             mem: memory_usage,
-            restarts: item.crash.value,
+            restarts: item.restarts,
             name: item.name.clone(),
             start_time: item.started,
             watch_path: item.watch.path.clone(),
@@ -1851,11 +1866,7 @@ impl ProcessWrapper {
             stats: Stats {
                 cpu_percent,
                 memory_usage,
-                restarts: if item.crash.crashed {
-                    item.crash.value
-                } else {
-                    item.restarts
-                },
+                restarts: item.restarts,
                 start_time: item.started.timestamp_millis(),
             },
             watch: Watch {
@@ -1870,7 +1881,7 @@ impl ProcessWrapper {
             raw: Raw {
                 running: item.running,
                 crashed: item.crash.crashed,
-                crashes: item.crash.value,
+                crashes: item.restarts,
             },
         }
     }
@@ -2278,7 +2289,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2291,6 +2302,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2331,7 +2343,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2344,6 +2356,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2419,7 +2432,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: true, // Set to crashed
-                value: 3,      // Set to non-zero crash count
+
             },
             watch: Watch {
                 enabled: false,
@@ -2432,13 +2445,13 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
 
         // Verify initial values
         assert_eq!(runner.info(id).unwrap().restarts, 5);
-        assert_eq!(runner.info(id).unwrap().crash.value, 3);
         assert_eq!(runner.info(id).unwrap().crash.crashed, true);
 
         // Reset counters
@@ -2446,7 +2459,6 @@ mod tests {
 
         // Verify counters are reset
         assert_eq!(runner.info(id).unwrap().restarts, 0);
-        assert_eq!(runner.info(id).unwrap().crash.value, 0);
         assert_eq!(runner.info(id).unwrap().crash.crashed, false);
     }
 
@@ -2584,7 +2596,7 @@ mod tests {
             running: false, // Start with not running
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2597,6 +2609,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2634,7 +2647,7 @@ mod tests {
             running: true, // Marked as running
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2647,6 +2660,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2684,7 +2698,7 @@ mod tests {
             running: true, // Marked as running but PID doesn't exist
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2697,6 +2711,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2736,7 +2751,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2749,6 +2764,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2782,7 +2798,7 @@ mod tests {
             running: false, // Explicitly stopped
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2795,6 +2811,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2836,7 +2853,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2849,6 +2866,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -2896,7 +2914,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 9,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2909,6 +2927,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process.clone());
@@ -2919,28 +2938,28 @@ mod tests {
         // Previous behavior: counter would go to 11 before stopping
         let max_restarts = 10;
         assert!(
-            process.crash.value < max_restarts,
+            process.restarts < max_restarts,
             "crash.value=9 should be < max_restarts=10, allowing restart"
         );
 
         // Test with crash.value = 10 (should NOT be allowed to restart if max=10 with >= check)
-        process.crash.value = 10;
+        process.restarts = 10;
         runner.list.insert(id, process.clone());
 
         // With max_restarts=10, crash.value=10 should NOT allow restart (10 >= 10)
         // This ensures counter stops at 10 when limit is 10, displaying the limit value
         assert!(
-            process.crash.value >= max_restarts,
+            process.restarts >= max_restarts,
             "crash.value=10 should be >= max_restarts=10, preventing restart (counter displays limit and stops)"
         );
 
         // Test with crash.value = 11 (should also NOT be allowed to restart if max=10)
-        process.crash.value = 11;
+        process.restarts = 11;
         runner.list.insert(id, process.clone());
 
         // With max_restarts=10, crash.value=11 should NOT allow restart (11 >= 10)
         assert!(
-            process.crash.value >= max_restarts,
+            process.restarts >= max_restarts,
             "crash.value=11 should be >= max_restarts=10, preventing restart"
         );
     }
@@ -2961,11 +2980,11 @@ mod tests {
             name: "test_process_15_crashes".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
-            restarts: 0,
+            restarts: 15, // Set to 15 to test display beyond limit
             running: false,
             crash: Crash {
                 crashed: true,
-                value: 15,
+
             },
             watch: Watch {
                 enabled: false,
@@ -2978,15 +2997,16 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process.clone());
 
-        // Test build_process_item - should display actual crash.value (15) not capped at max_restarts (10)
+        // Test build_process_item - should display actual restarts counter value (15) not capped at max_restarts (10)
         let process_item = runner.build_process_item(id, &process);
         assert_eq!(
             process_item.restarts, 15,
-            "ProcessItem should display actual crash counter value (15) even when it exceeds max_restarts (10)"
+            "ProcessItem should display actual restart counter value (15) even when it exceeds max_restarts (10)"
         );
     }
 
@@ -3009,7 +3029,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -3022,6 +3042,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3061,7 +3082,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -3074,6 +3095,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3116,7 +3138,7 @@ mod tests {
             running: false,
             crash: Crash {
                 crashed: true,
-                value: 1, // One crash
+
             },
             watch: Watch {
                 enabled: false,
@@ -3129,6 +3151,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3138,11 +3161,6 @@ mod tests {
             runner.info(id).unwrap().restarts,
             2,
             "Should start with 2 restarts"
-        );
-        assert_eq!(
-            runner.info(id).unwrap().crash.value,
-            1,
-            "Should have 1 crash"
         );
 
         // Simulate what the daemon does when it detects a crash and restarts (dead=true)
@@ -3179,7 +3197,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -3192,6 +3210,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3236,7 +3255,7 @@ mod tests {
             running: true, // Was running before restore
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -3249,6 +3268,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3271,7 +3291,7 @@ mod tests {
         // Verify that crash counter is NOT incremented by restore
         // (the daemon will increment it when it detects the crash)
         assert_eq!(
-            process.crash.value, 0,
+            process.restarts, 0,
             "Restore should not increment crash counter - daemon will do it"
         );
     }
@@ -3296,7 +3316,7 @@ mod tests {
             running: true, // Marked as running by restore command
             crash: Crash {
                 crashed: false, // Reset by restore command
-                value: 0,       // Reset by restore command
+
             },
             watch: Watch {
                 enabled: false,
@@ -3309,6 +3329,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3435,7 +3456,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: true, // Already marked as crashed, so restart will be attempted
-                value: 1,      // First crash detected by daemon
+
             },
             watch: Watch {
                 enabled: false,
@@ -3448,6 +3469,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3460,7 +3482,7 @@ mod tests {
         // Verify that crash.value was NOT double-incremented
         let process = runner.info(id).unwrap();
         assert_eq!(
-            process.crash.value, 1,
+            process.restarts, 1,
             "After daemon restart failure, counter should stay at 1 (no double increment)"
         );
         assert_eq!(
@@ -3480,7 +3502,7 @@ mod tests {
             // Daemon detects another crash and increments
             {
                 let process = runner.process(id);
-                process.crash.value += 1;
+                process.restarts += 1;
             }
 
             // Daemon tries to restart (will fail)
@@ -3488,7 +3510,7 @@ mod tests {
 
             let process = runner.info(id).unwrap();
             assert_eq!(
-                process.crash.value, expected_crash_value,
+                process.restarts, expected_crash_value,
                 "After daemon crash detection #{}, counter should be {} (single increment)",
                 expected_crash_value, expected_crash_value
             );
@@ -3501,13 +3523,13 @@ mod tests {
         // At 9, we're one away from the limit - next daemon increment to 10 should stop it
         {
             let process = runner.process(id);
-            process.crash.value += 1; // 10
+            process.restarts += 1; // 10
         }
         runner.restart(id, true, true);
 
         let process = runner.info(id).unwrap();
         assert_eq!(
-            process.crash.value, 10,
+            process.restarts, 10,
             "Crash counter should be 10 when reaching limit"
         );
         assert_eq!(
@@ -3541,7 +3563,7 @@ mod tests {
             running: false, // Stopped after reaching limit
             crash: Crash {
                 crashed: true, // Marked as crashed
-                value: 9,      // 9 crashes so far
+
             },
             watch: Watch {
                 enabled: false,
@@ -3554,12 +3576,13 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
 
         // Verify initial state: 9 crashes, crashed=true
-        assert_eq!(runner.info(id).unwrap().crash.value, 9);
+        assert_eq!(runner.info(id).unwrap().restarts, 9);
         assert_eq!(runner.info(id).unwrap().crash.crashed, true);
 
         // Now simulate a manual restart by user (this should succeed in starting the process)
@@ -3595,14 +3618,14 @@ mod tests {
             let process_info = runner.info(id).unwrap();
             if !process_info.crash.crashed {
                 let process = runner.process(id);
-                process.crash.value += 1;
+                process.restarts += 1;
                 process.crash.crashed = true;
             }
         }
 
         // Verify the counter incremented from 9 to 10
         assert_eq!(
-            runner.info(id).unwrap().crash.value,
+            runner.info(id).unwrap().restarts,
             10,
             "Crash counter should increment from 9 to 10 after process crashes again"
         );
@@ -3639,7 +3662,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -3652,6 +3675,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -3671,14 +3695,14 @@ mod tests {
                 let process_info = runner.info(id).unwrap();
                 if !process_info.crash.crashed {
                     let process = runner.process(id);
-                    process.crash.value += 1;
+                    process.restarts += 1;
                     process.crash.crashed = true;
                 }
             }
 
             // Verify crash was counted
             assert_eq!(
-                runner.info(id).unwrap().crash.value,
+                runner.info(id).unwrap().restarts,
                 expected_crash_count,
                 "After crash #{}, counter should be {}",
                 expected_crash_count,
@@ -3725,7 +3749,7 @@ mod tests {
 
         // Verify we're at 10 crashes and process is stopped
         assert_eq!(
-            runner.info(id).unwrap().crash.value,
+            runner.info(id).unwrap().restarts,
             10,
             "Counter should be at 10 after reaching the limit"
         );
@@ -3757,7 +3781,7 @@ mod tests {
             "After successful manual restart, crashed flag should be cleared"
         );
         assert_eq!(
-            runner.info(id).unwrap().crash.value,
+            runner.info(id).unwrap().restarts,
             10,
             "Manual restart does not reset crash counter (preserves history at 10)"
         );
@@ -3775,14 +3799,14 @@ mod tests {
             let process_info = runner.info(id).unwrap();
             if !process_info.crash.crashed {
                 let process = runner.process(id);
-                process.crash.value += 1;
+                process.restarts += 1;
                 process.crash.crashed = true;
             }
         }
 
         // CRITICAL VERIFICATION: Counter should increment from 10 to 11
         assert_eq!(
-            runner.info(id).unwrap().crash.value,
+            runner.info(id).unwrap().restarts,
             11,
             "After manual restart and crash, counter MUST increment from 10 to 11 (verifying fix works!)"
         );
@@ -3814,7 +3838,7 @@ mod tests {
                 running: true,
                 crash: Crash {
                     crashed: false,
-                    value: 0,
+
                 },
                 watch: Watch {
                     enabled: false,
@@ -3827,6 +3851,7 @@ mod tests {
                 agent_id: None,
                 frozen_until: None,
                 last_action_at: Utc::now(),
+                manual_stop: false,
             };
             runner.list.insert(id, process);
         }
@@ -3918,7 +3943,7 @@ mod tests {
             running: false,
             crash: Crash {
                 crashed: true,
-                value: 10,
+
             },
             watch: Watch {
                 enabled: false,
@@ -3931,6 +3956,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process.clone());
@@ -3944,25 +3970,19 @@ mod tests {
 
         // Simulate manual restart (increment_counter=true)
         let proc = runner.process(id);
-        proc.restarts += 1;
-        proc.crash.value += 1;
+        proc.restarts += 1; // Only increment once now that we have a single counter
         proc.crash.crashed = false; // Successful restart clears crashed flag
         proc.running = true;
         proc.pid = 12345;
 
-        // After successful restart with increment_counter=true, both counters should be 11
+        // After successful restart with increment_counter=true, counter should be 11
         assert_eq!(
             runner.info(id).unwrap().restarts,
             11,
             "restarts counter should be 11 after increment"
         );
-        assert_eq!(
-            runner.info(id).unwrap().crash.value,
-            11,
-            "crash.value should be 11 after increment"
-        );
 
-        // Verify ProcessItem always shows crash.value (now 11) even when not crashed
+        // Verify ProcessItem always shows restarts counter (now 11) even when not crashed
         let updated_process = runner.info(id).unwrap().clone();
         let process_item = runner.build_process_item(id, &updated_process);
         assert_eq!(
@@ -3972,14 +3992,14 @@ mod tests {
 
         // Simulate another crash (daemon detects and increments crash.value)
         let proc = runner.process(id);
-        proc.crash.value += 1;
+        proc.restarts += 1;
         proc.crash.crashed = true;
         proc.running = false;
         proc.pid = 0;
 
         // Both counters should be in sync
         assert_eq!(
-            runner.info(id).unwrap().crash.value,
+            runner.info(id).unwrap().restarts,
             12,
             "crash.value should be 12 after crash"
         );
@@ -4015,7 +4035,7 @@ mod tests {
                 running: true,
                 crash: Crash {
                     crashed: false,
-                    value: 0,
+
                 },
                 watch: Watch {
                     enabled: false,
@@ -4028,6 +4048,7 @@ mod tests {
                 agent_id: None,
                 frozen_until: None,
                 last_action_at: Utc::now(),
+                manual_stop: false,
             };
             runner.list.insert(id, process);
         }
@@ -4115,7 +4136,7 @@ mod tests {
             running: true, // Process is running
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4128,6 +4149,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4176,11 +4198,11 @@ mod tests {
             name: "test_crashed_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "exit 1".to_string(),
-            restarts: 0,
+            restarts: 1, // Had crashed once
             running: false, // Not running
             crash: Crash {
                 crashed: true, // Marked as crashed
-                value: 1,      // One crash
+
             },
             watch: Watch {
                 enabled: false,
@@ -4193,6 +4215,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4200,7 +4223,7 @@ mod tests {
         // Verify the process is marked as crashed
         let info = runner.info(id).unwrap();
         assert!(info.crash.crashed, "Process should be marked as crashed");
-        assert_eq!(info.crash.value, 1, "Crash count should be 1");
+        assert_eq!(info.restarts, 1, "Restart count should be 1");
         assert!(!info.running, "Process should not be running");
         assert_eq!(info.pid, 0, "PID should be 0");
 
@@ -4238,11 +4261,11 @@ mod tests {
             name: "tets".to_string(), // Using same name as in the issue report
             path: PathBuf::from("/tmp"),
             script: "tets".to_string(), // Non-existent command
-            restarts: 0,
+            restarts: 10, // Had restarted 10 times and hit limit
             running: false, // Daemon marked as not running after max restarts
             crash: Crash {
                 crashed: true, // Marked as crashed
-                value: 10,     // Reached max restarts (typical limit)
+
             },
             watch: Watch {
                 enabled: false,
@@ -4255,6 +4278,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4287,7 +4311,7 @@ mod tests {
         let info = runner.info(id).unwrap();
         assert!(info.crash.crashed, "Process should be marked as crashed");
         assert!(!info.running, "Process should not be running");
-        assert_eq!(info.crash.value, 10, "Crash count should be 10");
+        assert_eq!(info.restarts, 10, "Crash count should be 10");
 
         // Verify the process remains in the list even after checking multiple times
         assert!(
@@ -4314,11 +4338,11 @@ mod tests {
             name: "test_clean_exit".to_string(),
             path: PathBuf::from("/tmp"),
             script: "exit 0".to_string(),
-            restarts: 0,
+            restarts: 5, // Had restarted 5 times
             running: false, // Stopped cleanly
             crash: Crash {
                 crashed: true, // Was previously marked as crashed
-                value: 5,      // Had crashed 5 times before
+
             },
             watch: Watch {
                 enabled: false,
@@ -4331,6 +4355,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process.clone());
@@ -4341,7 +4366,7 @@ mod tests {
             info.crash.crashed,
             "Process should initially be marked as crashed"
         );
-        assert_eq!(info.crash.value, 5, "Crash count should be 5");
+        assert_eq!(info.restarts, 5, "Restart count should be 5");
 
         // Get the status - should show as "crashed" because crashed=true
         let processes = runner.fetch();
@@ -4365,7 +4390,7 @@ mod tests {
             "Crashed flag should be cleared after successful exit"
         );
         assert_eq!(
-            info_after.crash.value, 5,
+            info_after.restarts, 5,
             "Crash count should remain unchanged (preserves history)"
         );
 
@@ -4399,7 +4424,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4412,6 +4437,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4485,7 +4511,7 @@ mod tests {
             running: true, // Marked as running
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4498,6 +4524,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4571,7 +4598,7 @@ mod tests {
             running: true, // Process was just started, so running=true
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4584,6 +4611,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4632,7 +4660,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4645,6 +4673,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4695,7 +4724,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4708,6 +4737,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4742,7 +4772,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4755,6 +4785,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4794,7 +4825,7 @@ mod tests {
             running: true,
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4807,6 +4838,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: Utc::now(),
+            manual_stop: false,
         };
 
         runner.list.insert(id, process);
@@ -4826,7 +4858,7 @@ mod tests {
 
         // Verify crash counter was NOT incremented
         assert_eq!(
-            item.crash.value, 0,
+            item.restarts, 0,
             "Crash counter should NOT be incremented when PID info is missing"
         );
         assert!(
@@ -4867,7 +4899,7 @@ mod tests {
             running: true, // Was running before daemon restart
             crash: Crash {
                 crashed: false,
-                value: 0,
+
             },
             watch: Watch {
                 enabled: false,
@@ -4880,6 +4912,7 @@ mod tests {
             agent_id: None,
             frozen_until: None,
             last_action_at: unix_epoch,
+            manual_stop: false,
         };
 
         runner.list.insert(id, process_from_dump.clone());

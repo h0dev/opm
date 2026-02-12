@@ -261,6 +261,26 @@ fn restart_process() {
                 let is_new_crash = item.pid > 0;
 
                 if is_new_crash && !just_started {
+                    // Check if this is a manual stop (user-initiated via 'opm stop')
+                    // Re-read the latest process state to check the manual_stop flag
+                    // (item is a snapshot from the start of the loop, might be stale)
+                    let is_manual_stop = runner.exists(id) && runner.process(id).manual_stop;
+                    
+                    if is_manual_stop {
+                        if runner.exists(id) {
+                            let process = runner.process(id);
+                            process.running = false;
+                            process.pid = 0;
+                            process.shell_pid = None;
+                            process.crash.crashed = false;
+                            // Reset manual_stop flag after handling
+                            process.manual_stop = false;
+                            runner.save();
+                            log!("[daemon] process stopped manually (not a crash)", "name" => &item.name, "id" => id);
+                        }
+                        continue;
+                    }
+
                     let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
                     let mut exited_successfully = false;
                     let mut handle_found = false;
@@ -297,7 +317,6 @@ fn restart_process() {
                         let process = runner.process(id);
                         process.pid = 0;
                         process.shell_pid = None;
-                        process.crash.value += 1;
                         process.crash.crashed = true;
 
                         if item.running {
@@ -306,13 +325,13 @@ fn restart_process() {
                                 handle.spawn(emit_crash_event_and_notification(id, process_name));
                             }
 
-                            // Check restart limit using restarts counter (not crash.value)
+                            // Check restart limit using restarts counter
                             // This is the single source of truth displayed in `opm info`
                             if item.restarts >= daemon_config.restarts {
                                 process.running = false;
                                 log!("[daemon] process reached max restart limit", "name" => &item.name, "id" => id, "restarts" => item.restarts, "limit" => daemon_config.restarts);
                             } else {
-                                log!("[daemon] process crashed", "name" => &item.name, "id" => id, "crashes" => process.crash.value);
+                                log!("[daemon] process crashed", "name" => &item.name, "id" => id, "restarts" => item.restarts);
                             }
                         }
                         runner.save();
