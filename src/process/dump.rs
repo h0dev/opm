@@ -44,6 +44,7 @@ use macros_rs::{crashln, fmtstr, string};
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::{collections::BTreeMap, fs, sync::Mutex};
 
@@ -300,7 +301,8 @@ pub fn write(dump: &Runner) {
 
     // Atomic write: write to temp file first, then rename
     // This prevents corruption if the write is interrupted (power loss, kill -9, etc.)
-    let temp_path = format!("{}.tmp", dump_path);
+    // Use PathBuf for proper cross-platform path handling
+    let temp_path = PathBuf::from(&dump_path).with_extension("tmp");
     
     // Write to temporary file
     if let Err(err) = fs::write(&temp_path, &encoded) {
@@ -315,7 +317,9 @@ pub fn write(dump: &Runner) {
     match fs::metadata(&temp_path) {
         Ok(metadata) => {
             if metadata.len() == 0 {
-                let _ = fs::remove_file(&temp_path); // Clean up empty temp file
+                if let Err(e) = fs::remove_file(&temp_path) {
+                    log!("[dump::write] Failed to cleanup empty temp file: {}", e);
+                }
                 crashln!(
                     "{} Temporary dump file is empty (0 bytes), aborting write to prevent data loss",
                     *helpers::FAIL
@@ -323,7 +327,9 @@ pub fn write(dump: &Runner) {
             }
         }
         Err(err) => {
-            let _ = fs::remove_file(&temp_path);
+            if let Err(e) = fs::remove_file(&temp_path) {
+                log!("[dump::write] Failed to cleanup temp file after metadata error: {}", e);
+            }
             crashln!(
                 "{} Cannot verify temporary dump file.\n{}",
                 *helpers::FAIL,
@@ -335,7 +341,9 @@ pub fn write(dump: &Runner) {
     // Atomically rename temp file to actual dump file
     // On Unix, this is atomic and will never leave the dump file in a partial state
     if let Err(err) = fs::rename(&temp_path, &dump_path) {
-        let _ = fs::remove_file(&temp_path); // Clean up temp file on failure
+        if let Err(e) = fs::remove_file(&temp_path) {
+            log!("[dump::write] Failed to cleanup temp file after rename error: {}", e);
+        }
         crashln!(
             "{} Error renaming temporary dumpfile to final location.\n{}",
             *helpers::FAIL,
