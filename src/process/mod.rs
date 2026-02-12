@@ -235,8 +235,7 @@ pub struct Process {
     #[serde(default)]
     pub frozen_until: Option<DateTime<Utc>>,
     /// Timestamp of last action (start/restart/reload/restore) for per-process crash detection delay
-    /// Not persisted to dump, always starts at Unix epoch
-    #[serde(skip)]
+    /// Persisted to enable proper timing checks across daemon restarts
     pub last_action_at: DateTime<Utc>,
     /// Flag to indicate manual stop (user-initiated via 'opm stop')
     /// When true, prevents daemon from treating process exit as a crash
