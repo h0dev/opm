@@ -661,6 +661,7 @@ impl<'i> Internal<'i> {
             if let Some(home) = home::home_dir() {
                 let full_config = config::read();
                 let config = full_config.runner;
+                let daemon_config = full_config.daemon;
                 let mut runner = Runner::new();
                 let item = runner.process(self.id);
 
@@ -674,6 +675,9 @@ impl<'i> Internal<'i> {
                 let pid_alive = main_pid_alive || shell_pid_alive;
                 let process_actually_running = item.running && pid_alive;
                 let crashed_due_to_pid = item.running && pid_valid && !pid_alive;
+                
+                // Check if process has hit restart limit (error state)
+                let is_error_state = item.restarts >= daemon_config.restarts && !item.running;
 
                 let mut memory_usage: Option<MemoryInfo> = None;
                 let mut cpu_percent: Option<f64> = None;
@@ -714,6 +718,9 @@ impl<'i> Internal<'i> {
 
                 let status = if process_actually_running {
                     "online   ".green().bold()
+                } else if is_error_state {
+                    // Process hit restart limit and stopped - show as error
+                    "error    ".red().bold()
                 } else if crashed_due_to_pid {
                     // PID existed before but is no longer alive -> crash
                     "crashed   ".red().bold()
@@ -1748,6 +1755,9 @@ impl<'i> Internal<'i> {
 
             let render_list = |runner: &mut Runner, internal: bool| {
                 let mut processes: Vec<ProcessItem> = Vec::new();
+                
+                // Load daemon config to check restart limits
+                let daemon_config = config::read().daemon;
 
                 #[derive(Tabled, Debug)]
                 struct ProcessItem {
@@ -1795,6 +1805,9 @@ impl<'i> Internal<'i> {
                         let pid_alive = is_pid_alive(item.pid)
                             || item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
                         let process_actually_running = item.running && pid_alive;
+                        
+                        // Check if process has hit restart limit (error state)
+                        let is_error_state = item.restarts >= daemon_config.restarts && !item.running;
 
                         let mut cpu_percent: String = string!("0.00%");
                         let mut memory_usage: String = string!("0b");
@@ -1849,6 +1862,9 @@ impl<'i> Internal<'i> {
 
                         let status = if process_actually_running {
                             "online   ".green().bold()
+                        } else if is_error_state {
+                            // Process hit restart limit and stopped - show as error
+                            "error    ".red().bold()
                         } else if item.running {
                             // Process is marked as running but PID doesn't exist - it crashed
                             "crashed   ".red().bold()

@@ -276,8 +276,22 @@ pub fn raw() -> Vec<u8> {
     file::raw(global!("opm.dump"))
 }
 
+/// Helper function to reset restart counters for permanent storage
+/// Restart counters are volatile and should always be 0 in the permanent dump
+fn reset_restart_counters(runner: &Runner) -> Runner {
+    let mut runner_copy = runner.clone();
+    for (_, process) in runner_copy.list.iter_mut() {
+        process.restarts = 0;
+    }
+    runner_copy
+}
+
 pub fn write(dump: &Runner) {
     let dump_path = global!("opm.dump");
+
+    // Reset restart counters to 0 for permanent storage
+    // Restart counters are volatile and should not persist across daemon restarts
+    let dump_to_save = reset_restart_counters(dump);
 
     // Create backup of existing dump file before writing new one
     if Exists::check(&dump_path).file() {
@@ -289,7 +303,7 @@ pub fn write(dump: &Runner) {
         }
     }
 
-    let encoded = match ron::ser::to_string(&dump) {
+    let encoded = match ron::ser::to_string(&dump_to_save) {
         Ok(contents) => contents,
         Err(err) => crashln!(
             "{} Cannot encode dump.\n{}",
@@ -298,12 +312,43 @@ pub fn write(dump: &Runner) {
         ),
     };
 
-    if let Err(err) = fs::write(&dump_path, encoded) {
-        crashln!(
-            "{} Error writing dumpfile.\n{}",
-            *helpers::FAIL,
-            string!(err).white()
-        )
+    // Atomic file writing to prevent 0-byte corruption
+    // Write to temporary file first, then atomically rename
+    let temp_path = format!("{}.tmp", dump_path);
+    
+    // Wrap in try-catch to preserve original dump on failure
+    match (|| -> Result<(), String> {
+        // Write to temporary file
+        fs::write(&temp_path, &encoded)
+            .map_err(|e| format!("Failed to write temporary file: {}", e))?;
+        
+        // Verify the temporary file was written successfully and is not empty
+        let metadata = fs::metadata(&temp_path)
+            .map_err(|e| format!("Failed to read temporary file metadata: {}", e))?;
+        
+        if metadata.len() == 0 {
+            return Err("Temporary file is empty (0 bytes)".to_string());
+        }
+        
+        // Atomically rename temporary file to official dump file
+        // On Unix systems, fs::rename is atomic when both paths are on the same filesystem
+        fs::rename(&temp_path, &dump_path)
+            .map_err(|e| format!("Failed to rename temporary file: {}", e))?;
+        
+        log!("[dump::write] Successfully wrote dump file ({} bytes)", metadata.len());
+        Ok(())
+    })() {
+        Ok(_) => {},
+        Err(err) => {
+            // Clean up temporary file if it exists
+            let _ = fs::remove_file(&temp_path);
+            
+            crashln!(
+                "{} Error writing dumpfile.\n{}",
+                *helpers::FAIL,
+                err.white()
+            )
+        }
     }
 }
 
