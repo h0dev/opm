@@ -213,10 +213,8 @@ pub struct Process {
     pub name: String,
     pub path: PathBuf,
     pub script: String,
-    /// Restart counter - NOT persisted to dump file (always saved as 0)
-    /// Resets to 0 on daemon restart and during 'opm restore' operations
-    /// This gives processes a fresh start after system restore/reboot
-    #[serde(skip)]
+    /// Restart counter - tracks how many times process has been restarted by daemon
+    /// Persisted to enable accurate display in CLI and proper restart limit enforcement
     pub restarts: u64,
     pub running: bool,
     pub crash: Crash,
