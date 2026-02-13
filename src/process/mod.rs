@@ -5150,10 +5150,10 @@ mod tests {
 
         // Simulate daemon checking if counter should increment (the fix)
         let proc = runner.info(id).unwrap().clone();
-        let should_increment = proc.pid > 0; // Fix: only increment if pid > 0
+        let is_new_crash = proc.pid > 0; // Fix: only increment if pid > 0
 
         assert_eq!(
-            should_increment, false,
+            is_new_crash, false,
             "Should NOT increment when pid=0 (retry of failed restart)"
         );
 
@@ -5168,10 +5168,10 @@ mod tests {
         }
 
         let proc = runner.info(id).unwrap().clone();
-        let should_increment = proc.pid > 0;
+        let is_new_crash = proc.pid > 0;
 
         assert_eq!(
-            should_increment, true,
+            is_new_crash, true,
             "Should increment when pid > 0 (process was running)"
         );
     }

@@ -392,9 +392,9 @@ fn restart_process() {
                                     // This prevents double-counting when restart fails and we retry on the next cycle
                                     // - pid > 0: Process was running and crashed, this is a new restart attempt
                                     // - pid = 0: Process failed to start/restart, this is a retry of the same attempt
-                                    let should_increment = proc.pid > 0;
+                                    let is_new_crash = proc.pid > 0;
 
-                                    if should_increment {
+                                    if is_new_crash {
                                         let new_restart_count = proc.restarts + 1;
                                         if let Some(process) = runner.list.get_mut(&id) {
                                             process.restarts = new_restart_count;
