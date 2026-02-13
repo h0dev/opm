@@ -678,8 +678,8 @@ impl<'i> Internal<'i> {
                 // 1. It's marked as running but not actually running (consistent with opm ls)
                 // 2. The crash.crashed flag is explicitly set by the daemon
                 // This ensures consistent status display between opm ls and opm info
-                let crashed_due_to_status = item.running && !process_actually_running && crash_detection_enabled;
-                let crashed_due_to_flag = item.crash.crashed && crash_detection_enabled;
+                let crashed_while_running = item.running && !process_actually_running && crash_detection_enabled;
+                let crashed_by_flag = item.crash.crashed && crash_detection_enabled;
 
                 let mut memory_usage: Option<MemoryInfo> = None;
                 let mut cpu_percent: Option<f64> = None;
@@ -723,7 +723,7 @@ impl<'i> Internal<'i> {
                 } else if item.errored {
                     // Process reached restart limit - show as errored
                     "errored  ".red().bold()
-                } else if crashed_due_to_status || crashed_due_to_flag {
+                } else if crashed_while_running || crashed_by_flag {
                     // Process crashed: either marked as running but not alive, or crash flag set
                     "crashed   ".red().bold()
                 } else {
