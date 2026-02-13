@@ -1509,6 +1509,10 @@ impl<'i> Internal<'i> {
         runner.save_permanent();
 
         Internal::list(&string!("default"), &list_name);
+        
+        // Restore operation is complete - exit the restore process
+        // The daemon is now running in a separate PID and will continue independently
+        std::process::exit(0);
     }
 
     pub fn list(format: &String, server_name: &String) {
