@@ -427,12 +427,15 @@ pub fn load_permanent_into_memory() -> Runner {
 
 /// Reset restart counters for all processes in the runner
 /// This is called during restore operations to give processes a fresh start
+/// Note: Only resets the restart counter - preserves crashed and errored states
 fn reset_all_restart_counters(runner: &mut Runner) {
     for (id, process) in runner.list.iter_mut() {
         process.restarts = 0;
-        process.crash.crashed = false;
-        process.errored = false;
-        log!("[dump::reset_all_restart_counters] Reset counters for process id={} name={}", id, &process.name);
+        // Do NOT reset crashed and errored flags - preserve original state
+        // process.crash.crashed = false;  // Removed - keep original state
+        // process.errored = false;        // Removed - keep original state
+        log!("[dump::reset_all_restart_counters] Reset restart counter for process id={} name={} (preserving state: crashed={}, errored={})", 
+             id, &process.name, process.crash.crashed, process.errored);
     }
 }
 

@@ -1208,89 +1208,86 @@ impl<'i> Internal<'i> {
         // during restore operations, especially for large dump files.
         // The daemon will properly handle process state when it starts.
 
-        // Auto-start daemon if not running (Issue #3)
-        // Check if daemon is already running using PID file
-        let daemon_running = {
-            use crate::daemon::pid;
-            pid::exists() && pid::read().map(|p| pid::running(p.get())).unwrap_or(false)
-        };
+        // Read config to check if API/WebUI should be enabled (before daemon operations)
+        let config = config::read();
+        let api_enabled = config.daemon.web.api;
+        let webui_enabled = config.daemon.web.ui;
 
-        if !daemon_running {
-            println!("{} Starting OPM daemon...", *helpers::SUCCESS);
-            // Read config to check if API/WebUI should be enabled
-            let config = config::read();
-            let api_enabled = config.daemon.web.api;
-            let webui_enabled = config.daemon.web.ui;
+        // Reset daemon first to compress process IDs and clean state
+        // This must happen BEFORE starting daemon to ensure clean startup
+        println!("{} Resetting daemon state...", *helpers::SUCCESS);
+        crate::daemon::reset();
 
-            // Start the daemon with appropriate flags
-            crate::daemon::restart(&api_enabled, &webui_enabled, false);
+        // Always restart daemon (stop if running, then start)
+        // This ensures daemon starts fresh with reset state
+        println!("{} Starting OPM daemon...", *helpers::SUCCESS);
+        crate::daemon::restart(&api_enabled, &webui_enabled, false);
 
-            // Wait for daemon socket to be ready before proceeding
-            // Use socket readiness check instead of fixed sleep
-            use global_placeholders::global;
-            let socket_path = global!("opm.socket");
-            // Increased max retries to allow more time for daemon initialization
-            // This is particularly important on slower systems or during high load
-            let max_retries = 20; // Increased from 10 to give daemon more time to start
-            let mut retry_count = 0;
-            let mut socket_ready = false;
+        // Wait for daemon socket to be ready before proceeding
+        // Use socket readiness check instead of fixed sleep
+        use global_placeholders::global;
+        let socket_path = global!("opm.socket");
+        // Increased max retries to allow more time for daemon initialization
+        // This is particularly important on slower systems or during high load
+        let max_retries = 20; // Increased from 10 to give daemon more time to start
+        let mut retry_count = 0;
+        let mut socket_ready = false;
 
-            loop {
+        loop {
+            if opm::socket::is_daemon_running(&socket_path) {
+                socket_ready = true;
+                break;
+            }
+
+            if retry_count >= max_retries {
+                break;
+            }
+
+            // Start with 200ms and increase by 100ms each retry
+            // (matches SOCKET_RETRY_INITIAL_MS and SOCKET_RETRY_INCREMENT_MS in main.rs)
+            let wait_ms = 200 + (retry_count * 100);
+            std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+            retry_count += 1;
+        }
+
+        if !socket_ready {
+            // Socket not ready after initial retries, but daemon may still be starting
+            // Try a few more times with longer waits before giving up
+            eprintln!(
+                "{} Warning: Daemon socket not ready after initial attempts, retrying...",
+                *helpers::WARN
+            );
+
+            // Additional retry loop with longer waits (1 second each)
+            let additional_retries = 5;
+            for i in 0..additional_retries {
+                std::thread::sleep(std::time::Duration::from_secs(1));
                 if opm::socket::is_daemon_running(&socket_path) {
                     socket_ready = true;
                     break;
                 }
 
-                if retry_count >= max_retries {
-                    break;
-                }
-
-                // Start with 200ms and increase by 100ms each retry
-                // (matches SOCKET_RETRY_INITIAL_MS and SOCKET_RETRY_INCREMENT_MS in main.rs)
-                let wait_ms = 200 + (retry_count * 100);
-                std::thread::sleep(std::time::Duration::from_millis(wait_ms));
-                retry_count += 1;
-            }
-
-            if !socket_ready {
-                // Socket not ready after initial retries, but daemon may still be starting
-                // Try a few more times with longer waits before giving up
-                eprintln!(
-                    "{} Warning: Daemon socket not ready after initial attempts, retrying...",
-                    *helpers::WARN
-                );
-
-                // Additional retry loop with longer waits (1 second each)
-                let additional_retries = 5;
-                for i in 0..additional_retries {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    if opm::socket::is_daemon_running(&socket_path) {
-                        socket_ready = true;
-                        break;
-                    }
-
-                    if i == additional_retries - 1 {
-                        eprintln!(
-                            "{} Warning: Daemon socket may not be ready after extended wait",
-                            *helpers::WARN
-                        );
-                    }
+                if i == additional_retries - 1 {
+                    eprintln!(
+                        "{} Warning: Daemon socket may not be ready after extended wait",
+                        *helpers::WARN
+                    );
                 }
             }
+        }
 
-            // Print success message only once, after all retries are complete
-            if socket_ready {
-                println!("{} OPM daemon started", *helpers::SUCCESS);
-            } else {
-                // Socket still not ready after all retries - fail with clear error message
-                crashln!(
-                    "{} Failed to connect to OPM daemon socket after {} total retries\n{}\n{}",
-                    *helpers::FAIL,
-                    max_retries + 5,
-                    "The daemon may have failed to start or the socket is not accessible.".white(),
-                    "Try running 'opm daemon --no-daemonize' to see error messages.".white()
-                );
-            }
+        // Print success message only once, after all retries are complete
+        if socket_ready {
+            println!("{} OPM daemon started", *helpers::SUCCESS);
+        } else {
+            // Socket still not ready after all retries - fail with clear error message
+            crashln!(
+                "{} Failed to connect to OPM daemon socket after {} total retries\n{}\n{}",
+                *helpers::FAIL,
+                max_retries + 5,
+                "The daemon may have failed to start or the socket is not accessible.".white(),
+                "Try running 'opm daemon --no-daemonize' to see error messages.".white()
+            );
         }
 
         // Clean up all stale timestamp files before restore to ensure fresh start
@@ -1298,8 +1295,7 @@ impl<'i> Internal<'i> {
         crate::daemon::cleanup_all_timestamp_files();
 
         // Load permanent dump into daemon memory for restore operations
-        use global_placeholders::global;
-        let socket_path = global!("opm.socket");
+        // socket_path already defined above
         match opm::socket::send_request(&socket_path, opm::socket::SocketRequest::LoadPermanent) {
             Ok(opm::socket::SocketResponse::Success) => {}
             Ok(opm::socket::SocketResponse::Error(message)) => {
