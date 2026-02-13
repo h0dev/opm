@@ -411,15 +411,29 @@ pub fn write_memory(dump: &Runner) {
 }
 
 pub fn load_permanent_into_memory() -> Runner {
-    let runner = read_permanent_dump();
+    let mut runner = read_permanent_dump();
     
-    // Restart counters are NOT preserved during restore (they have #[serde(skip)])
-    // This means counters reset to 0, giving processes a fresh start after restore
-    // This is intentional behavior - restore should provide a clean slate
-    log!("[dump::load_permanent_into_memory] Loaded permanent dump, restart counters reset to 0");
+    // Explicitly reset restart counters for all processes during restore
+    // This gives processes a fresh start after system restore/reboot
+    // Note: Counters are NOT persisted (they have #[serde(skip)]), but we
+    // explicitly reset them here to make the behavior clear and consistent
+    reset_all_restart_counters(&mut runner);
+    
+    log!("[dump::load_permanent_into_memory] Loaded permanent dump, restart counters explicitly reset to 0");
     
     write_memory_direct(&runner);
     runner
+}
+
+/// Reset restart counters for all processes in the runner
+/// This is called during restore operations to give processes a fresh start
+fn reset_all_restart_counters(runner: &mut Runner) {
+    for (id, process) in runner.list.iter_mut() {
+        process.restarts = 0;
+        process.crash.crashed = false;
+        process.errored = false;
+        log!("[dump::reset_all_restart_counters] Reset counters for process id={} name={}", id, &process.name);
+    }
 }
 
 /// Clear memory cache
