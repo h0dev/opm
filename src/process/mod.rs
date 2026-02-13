@@ -5099,4 +5099,62 @@ mod tests {
             processes[0].status
         );
     }
+
+    #[test]
+    fn test_restart_counter_persisted_in_serialization() {
+        // Test that restart counters are properly persisted when serializing/deserializing processes
+        // This is critical for maintaining accurate restart counts across daemon restarts and restore operations
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        let process = Process {
+            id,
+            pid: 12345,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_process".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'test'".to_string(),
+            restarts: 7, // Set a non-zero restart counter
+            running: true,
+            crash: Crash {
+                crashed: false,
+            },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: Utc::now(),
+            manual_stop: false,
+            errored: false,
+        };
+
+        runner.list.insert(id, process);
+
+        // Serialize the runner to RON format
+        let serialized = ron::ser::to_string(&runner).expect("Failed to serialize runner");
+
+        // Deserialize back to a runner
+        let deserialized: Runner = ron::from_str(&serialized).expect("Failed to deserialize runner");
+
+        // Verify the restart counter was preserved
+        let original_process = runner.info(id).unwrap();
+        let deserialized_process = deserialized.info(id).unwrap();
+        
+        assert_eq!(
+            deserialized_process.restarts, 7,
+            "Restart counter should be preserved during serialization, got {}",
+            deserialized_process.restarts
+        );
+        assert_eq!(
+            original_process.restarts, deserialized_process.restarts,
+            "Restart counter should match before and after serialization"
+        );
+    }
 }
