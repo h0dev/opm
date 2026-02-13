@@ -668,12 +668,18 @@ impl<'i> Internal<'i> {
                 // Check both the actual PID and shell PID (if present) to determine if process is alive.
                 // For shell-wrapped processes, either PID being alive means the process is running.
                 // This is consistent with the daemon monitoring logic and prevents false crash detection.
+                let crash_detection_enabled = full_config.daemon.crash_detection;
                 let pid_valid = item.pid > 0;
                 let main_pid_alive = pid_valid && is_pid_alive(item.pid);
                 let shell_pid_alive = item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
                 let pid_alive = main_pid_alive || shell_pid_alive;
                 let process_actually_running = item.running && pid_alive;
-                let crashed_due_to_pid = item.running && pid_valid && !pid_alive;
+                // Process is crashed if:
+                // 1. It's marked as running but not actually running (consistent with opm ls)
+                // 2. The crash.crashed flag is explicitly set by the daemon
+                // This ensures consistent status display between opm ls and opm info
+                let crashed_due_to_status = item.running && !process_actually_running && crash_detection_enabled;
+                let crashed_due_to_flag = item.crash.crashed && crash_detection_enabled;
 
                 let mut memory_usage: Option<MemoryInfo> = None;
                 let mut cpu_percent: Option<f64> = None;
@@ -717,8 +723,8 @@ impl<'i> Internal<'i> {
                 } else if item.errored {
                     // Process reached restart limit - show as errored
                     "errored  ".red().bold()
-                } else if crashed_due_to_pid {
-                    // PID existed before but is no longer alive -> crash
+                } else if crashed_due_to_status || crashed_due_to_flag {
+                    // Process crashed: either marked as running but not alive, or crash flag set
                     "crashed   ".red().bold()
                 } else {
                     // Process is not running (running=false) - always show as stopped
