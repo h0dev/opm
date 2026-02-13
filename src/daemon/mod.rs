@@ -393,7 +393,7 @@ fn restart_process() {
                                     // - pid > 0: Process was running and crashed, this is a new restart attempt
                                     // - pid = 0: Process failed to start/restart, this is a retry of the same attempt
                                     let should_increment = proc.pid > 0;
-                                    
+
                                     if should_increment {
                                         let new_restart_count = proc.restarts + 1;
                                         if let Some(process) = runner.list.get_mut(&id) {
@@ -403,7 +403,7 @@ fn restart_process() {
                                     } else {
                                         log!("[daemon] retrying failed restart (counter not incremented)", "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "backoff_secs" => backoff_delay);
                                     }
-                                    
+
                                     runner.restart(id, true, true);
                                     // Save state after restart to persist PID, counters, and cleared crashed flag
                                     runner.save_direct();
