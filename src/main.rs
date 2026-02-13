@@ -795,10 +795,6 @@ fn remove_agent_config() -> Result<(), std::io::Error> {
 
 // Time to wait for daemon to initialize after starting (in seconds)
 const DAEMON_INIT_WAIT_SECS: u64 = 2;
-// Socket readiness retry parameters
-const SOCKET_RETRY_MAX: u32 = 10;
-const SOCKET_RETRY_INITIAL_MS: u64 = 200;
-const SOCKET_RETRY_INCREMENT_MS: u64 = 100;
 
 fn start_agent_daemon() {
     use nix::unistd::{fork, setsid, ForkResult};
@@ -946,59 +942,11 @@ fn main() {
         Commands::Stop { items, server } => cli::stop(items, &defaults(server)),
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => {
-            // Unconditionally reset and restart the daemon silently before restore
-            let config = opm::config::read();
-            daemon::reset();
-            daemon::restart(&config.daemon.web.api, &config.daemon.web.ui, false);
-
-            // Wait for daemon socket to be ready before proceeding with restore
-            // This prevents "Connection refused" errors when restore tries to read from daemon
-            {
-                use global_placeholders::global;
-                let socket_path = global!("opm.socket");
-                let mut retry_count = 0;
-                let mut socket_ready = false;
-
-                // Calculate total max wait time for warning message
-                let total_wait_ms: u64 = (0..SOCKET_RETRY_MAX)
-                    .map(|i| SOCKET_RETRY_INITIAL_MS + (i as u64 * SOCKET_RETRY_INCREMENT_MS))
-                    .sum();
-                let total_wait_secs = total_wait_ms as f64 / 1000.0;
-
-                // Always use full retry count for socket readiness checks
-                // Even if daemon was already running, socket might be reinitializing
-                // (e.g., during container restarts or daemon recovery)
-                let max_retries = SOCKET_RETRY_MAX;
-
-                loop {
-                    if opm::socket::is_daemon_running(&socket_path) {
-                        socket_ready = true;
-                        break;
-                    }
-
-                    if retry_count >= max_retries {
-                        break;
-                    }
-
-                    // Exponential backoff: start with SOCKET_RETRY_INITIAL_MS and increase by SOCKET_RETRY_INCREMENT_MS each retry
-                    let wait_ms =
-                        SOCKET_RETRY_INITIAL_MS + (retry_count as u64 * SOCKET_RETRY_INCREMENT_MS);
-                    std::thread::sleep(std::time::Duration::from_millis(wait_ms));
-                    retry_count += 1;
-                }
-
-                if !socket_ready {
-                    crashln!(
-                        "{} Daemon socket not ready after ~{:.1} seconds. Restore cannot proceed.\n\
-                         {} Please ensure the daemon is running correctly and try again.",
-                        *opm::helpers::FAIL,
-                        total_wait_secs,
-                        " ".repeat(4) // Indent the second line
-                    );
-                }
-            }
-
-            // Auto-start agent if config exists
+            // Restore is a separate one-time operation that should not restart OPM daemon
+            // The Internal::restore() function will handle OPM daemon startup if needed
+            // This ensures daemon and restore are separate processes as designed
+            
+            // Auto-start agent daemon (separate from OPM daemon) if agent config exists
             if load_agent_config().is_ok() {
                 start_agent_daemon();
             }
