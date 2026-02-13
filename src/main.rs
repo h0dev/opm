@@ -942,11 +942,11 @@ fn main() {
         Commands::Stop { items, server } => cli::stop(items, &defaults(server)),
         Commands::Remove { items, server } => cli::remove(items, &defaults(server)),
         Commands::Restore { server } => {
-            // Restore is a separate one-time operation that should not restart daemon
-            // The Internal::restore() function will handle daemon startup if needed
+            // Restore is a separate one-time operation that should not restart OPM daemon
+            // The Internal::restore() function will handle OPM daemon startup if needed
             // This ensures daemon and restore are separate processes as designed
             
-            // Auto-start agent if config exists
+            // Auto-start agent daemon (separate from OPM daemon) if agent config exists
             if load_agent_config().is_ok() {
                 start_agent_daemon();
             }
