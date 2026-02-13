@@ -388,13 +388,22 @@ fn restart_process() {
                                 } else if runner.is_frozen(id) {
                                     log!("[daemon] process is frozen, skipping restart", "name" => &proc.name, "id" => id);
                                 } else {
-                                    // Increment restarts counter before calling restart()
-                                    // Note: restart() crashes the program on failure (crashln!), so this is safe
-                                    let new_restart_count = proc.restarts + 1;
-                                    if let Some(process) = runner.list.get_mut(&id) {
-                                        process.restarts = new_restart_count;
+                                    // Only increment the counter if the process has a valid PID (was actually running)
+                                    // This prevents double-counting when restart fails and we retry on the next cycle
+                                    // - pid > 0: Process was running and crashed, this is a new restart attempt
+                                    // - pid = 0: Process failed to start/restart, this is a retry of the same attempt
+                                    let is_new_crash = proc.pid > 0;
+
+                                    if is_new_crash {
+                                        let new_restart_count = proc.restarts + 1;
+                                        if let Some(process) = runner.list.get_mut(&id) {
+                                            process.restarts = new_restart_count;
+                                        }
+                                        log!("[daemon] restarting crashed process", "name" => &proc.name, "id" => id, "restarts" => new_restart_count, "backoff_secs" => backoff_delay);
+                                    } else {
+                                        log!("[daemon] retrying failed restart (counter not incremented)", "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "backoff_secs" => backoff_delay);
                                     }
-                                    log!("[daemon] restarting crashed process", "name" => &proc.name, "id" => id, "restarts" => new_restart_count, "backoff_secs" => backoff_delay);
+
                                     runner.restart(id, true, true);
                                     // Save state after restart to persist PID, counters, and cleared crashed flag
                                     runner.save_direct();

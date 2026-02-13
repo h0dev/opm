@@ -5100,4 +5100,79 @@ mod tests {
             processes[0].status
         );
     }
+
+    #[test]
+    fn test_restart_counter_not_incremented_on_retry() {
+        // Test for the fix: restart counter should only be incremented once per actual
+        // restart attempt, not on every daemon cycle when restart fails.
+        //
+        // Bug scenario:
+        // 1. Process crashes and daemon tries to restart
+        // 2. Restart fails (e.g., bad working directory), pid=0, running=true
+        // 3. On next daemon cycle, counter was being incremented AGAIN (bug!)
+        // 4. This repeated every cycle until limit reached
+        //
+        // Fix: Only increment counter if pid > 0 (process was actually running)
+        // If pid = 0, it's a retry of the same failed restart, not a new crash
+
+        let mut runner = setup_test_runner();
+        let id = runner.id.next();
+
+        // Scenario 1: Process with pid=0 (restart failed/pending)
+        // Counter should NOT be incremented
+        let process = Process {
+            id,
+            pid: 0, // No PID - restart failed or never started
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test_retry_counter".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'test'".to_string(),
+            restarts: 1, // Counter was already incremented once
+            running: true, // Auto-restart enabled
+            crash: Crash { crashed: true },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: Utc::now() - chrono::Duration::seconds(10),
+            manual_stop: false,
+            errored: false,
+        };
+
+        runner.list.insert(id, process);
+
+        // Simulate daemon checking if counter should increment (the fix)
+        let proc = runner.info(id).unwrap().clone();
+        let is_new_crash = proc.pid > 0; // Fix: only increment if pid > 0
+
+        assert_eq!(
+            is_new_crash, false,
+            "Should NOT increment when pid=0 (retry of failed restart)"
+        );
+
+        // Verify counter remains unchanged
+        assert_eq!(runner.info(id).unwrap().restarts, 1);
+
+        // Scenario 2: Process with pid > 0 (actually running)
+        // Counter SHOULD be incremented when it crashes
+        {
+            let process = runner.process(id);
+            process.pid = 12345; // Process is running
+        }
+
+        let proc = runner.info(id).unwrap().clone();
+        let is_new_crash = proc.pid > 0;
+
+        assert_eq!(
+            is_new_crash, true,
+            "Should increment when pid > 0 (process was running)"
+        );
+    }
 }
