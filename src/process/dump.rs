@@ -411,23 +411,10 @@ pub fn write_memory(dump: &Runner) {
 }
 
 pub fn load_permanent_into_memory() -> Runner {
-    let mut runner = read_permanent_dump();
+    let runner = read_permanent_dump();
     
-    // Preserve restart counters from memory cache if it exists
-    // This is critical because restart counters have #[serde(skip)] and are not persisted to permanent dump
-    // When loading permanent dump (e.g., during restore), we must preserve the runtime counters
-    // that the daemon has been maintaining in memory, otherwise they reset to 0 and auto-restart breaks
-    if let Some(memory) = read_memory_direct_option() {
-        log!("[dump::load_permanent_into_memory] Preserving restart counters from memory cache");
-        for (id, process) in runner.list.iter_mut() {
-            if let Some(mem_process) = memory.list.get(id) {
-                // Preserve the restart counter that was in memory
-                process.restarts = mem_process.restarts;
-                log!("[dump::load_permanent_into_memory] Preserved restart counter for process {} (id={}): {}", 
-                    process.name, id, process.restarts);
-            }
-        }
-    }
+    // Restart counters are now persisted in the permanent dump, so no special preservation is needed
+    // The permanent dump contains the accurate restart counts from the last save
     
     write_memory_direct(&runner);
     runner
@@ -621,8 +608,8 @@ pub fn init_on_startup() -> Runner {
 
     // Note: We preserve both the crash.crashed flag and running state
     // so restore command can properly handle processes across daemon restarts.
-    // The restart counter is not persisted (marked with #[serde(skip)]),
-    // so it automatically resets to 0 on daemon startup.
+    // Restart counters are now persisted in the permanent dump to maintain
+    // accurate restart counts and prevent broken processes from getting unlimited retries.
 
     // Populate memory cache with loaded state to keep processes in RAM
     // This ensures the daemon has the process state immediately available in memory
@@ -631,7 +618,7 @@ pub fn init_on_startup() -> Runner {
     // This is a one-time startup operation, so the clone overhead is negligible.
     let mut cache = MEMORY_CACHE.lock().unwrap();
     *cache = Some(permanent.clone());
-    log!("[dump::init_on_startup] Populated memory cache with loaded state (restart counters reset to 0)");
+    log!("[dump::init_on_startup] Populated memory cache with loaded state (restart counters preserved from permanent dump)");
 
     permanent
 }
