@@ -27,7 +27,8 @@ use opm::{
     helpers::{self, ColoredString},
     process::{
         dump, get_process_cpu_usage_with_children_from_process, hash, Runner,
-        COOLDOWN_LOG_INTERVAL_SECS, FAILED_RESTART_COOLDOWN_SECS, RESTART_COOLDOWN_SECS,
+        COOLDOWN_LOG_INTERVAL_SECS, FAILED_RESTART_COOLDOWN_SECS, PROCESS_CLEANUP_WAIT_MS,
+        RESTART_COOLDOWN_SECS,
     },
 };
 
@@ -1005,37 +1006,39 @@ pub fn start(verbose: bool) {
 
     // FEATURE: Atomic lock file to prevent concurrent daemon starts
     // Check for lock file and ensure no other daemon is starting
-    let lock_path = format!("{}/.opm/daemon.lock", home::home_dir().unwrap().display());
-    
-    // Check if lock file exists and contains a valid PID
-    if std::path::Path::new(&lock_path).exists() {
-        if let Ok(lock_content) = std::fs::read_to_string(&lock_path) {
-            if let Ok(lock_pid) = lock_content.trim().parse::<i32>() {
-                // Check if the process holding the lock is still running
-                if pid::running(lock_pid) {
-                    // Another daemon is currently starting or running
-                    // Try to kill it to ensure clean state
-                    log!("[daemon] found lock file with running process, attempting to kill", "pid" => lock_pid);
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(lock_pid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                } else {
-                    log!("[daemon] removing stale lock file", "pid" => lock_pid);
+    if let Some(home_dir) = home::home_dir() {
+        let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
+        
+        // Check if lock file exists and contains a valid PID
+        if std::path::Path::new(&lock_path).exists() {
+            if let Ok(lock_content) = std::fs::read_to_string(&lock_path) {
+                if let Ok(lock_pid) = lock_content.trim().parse::<i32>() {
+                    // Check if the process holding the lock is still running
+                    if pid::running(lock_pid) {
+                        // Another daemon is currently starting or running
+                        // Try to kill it to ensure clean state
+                        log!("[daemon] found lock file with running process, attempting to kill", "pid" => lock_pid);
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(lock_pid),
+                            nix::sys::signal::Signal::SIGKILL,
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(PROCESS_CLEANUP_WAIT_MS));
+                    } else {
+                        log!("[daemon] removing stale lock file", "pid" => lock_pid);
+                    }
                 }
             }
+            // Remove stale lock file
+            let _ = std::fs::remove_file(&lock_path);
         }
-        // Remove stale lock file
-        let _ = std::fs::remove_file(&lock_path);
-    }
-    
-    // Create lock file with current PID
-    let current_pid = std::process::id();
-    if let Err(e) = std::fs::write(&lock_path, current_pid.to_string()) {
-        log!("[daemon] failed to create lock file", "error" => e);
-    } else {
-        log!("[daemon] created lock file", "pid" => current_pid);
+        
+        // Create lock file with current PID
+        let current_pid = std::process::id();
+        if let Err(e) = std::fs::write(&lock_path, current_pid.to_string()) {
+            log!("[daemon] failed to create lock file", "error" => e);
+        } else {
+            log!("[daemon] created lock file", "pid" => current_pid);
+        }
     }
 
     #[inline]

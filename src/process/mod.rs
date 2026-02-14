@@ -54,6 +54,8 @@ pub const RESTART_COOLDOWN_SECS: u64 = 5;
 pub const FAILED_RESTART_COOLDOWN_SECS: u64 = 10;
 // Interval for periodic cooldown logging to reduce log noise
 pub const COOLDOWN_LOG_INTERVAL_SECS: i64 = 5;
+// Wait time after killing processes to allow OS resource cleanup
+pub const PROCESS_CLEANUP_WAIT_MS: u64 = 500;
 
 /// Write timestamp file durably to disk with fsync
 /// This ensures the timestamp is persisted before the function returns,
@@ -2357,8 +2359,8 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String)]) -> Resul
     
     // Wait 500ms for OS to clean up resources
     if !killed_pids.is_empty() {
-        ::log::info!("Killed {} old processes, waiting 500ms for resource cleanup", killed_pids.len());
-        thread::sleep(Duration::from_millis(500));
+        ::log::info!("Killed {} old processes, waiting {}ms for resource cleanup", killed_pids.len(), PROCESS_CLEANUP_WAIT_MS);
+        thread::sleep(Duration::from_millis(PROCESS_CLEANUP_WAIT_MS));
     }
     
     Ok(())
@@ -2366,6 +2368,22 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String)]) -> Resul
 
 /// Extract a search pattern from a command for process matching
 /// Looks for distinctive parts like JAR files, script names, executables
+///
+/// # Examples
+/// ```
+/// // JAR file extraction
+/// extract_search_pattern_from_command("java -jar Stirling-PDF.jar") // => "Stirling-PDF.jar"
+///
+/// // Script file extraction
+/// extract_search_pattern_from_command("python script.py") // => "script.py"
+/// extract_search_pattern_from_command("node server.js") // => "server.js"
+///
+/// // Executable extraction
+/// extract_search_pattern_from_command("caddy run") // => "caddy"
+///
+/// // Shell commands are skipped
+/// extract_search_pattern_from_command("bash start.sh") // => "start.sh" (not "bash")
+/// ```
 fn extract_search_pattern_from_command(command: &str) -> String {
     // Look for patterns that uniquely identify the process
     // Priority: JAR files, then .py/.js/.sh files, then first word
@@ -2398,11 +2416,12 @@ fn extract_search_pattern_from_command(command: &str) -> String {
     }
 
     // Fall back to the first word if it looks like an executable
-    let first_word = command.split_whitespace().next().unwrap_or("");
-    if !first_word.is_empty() && !first_word.starts_with('-') {
-        // Skip common shells
-        if !matches!(first_word, "sh" | "bash" | "zsh" | "fish" | "dash") {
-            return first_word.to_string();
+    if let Some(first_word) = command.split_whitespace().next() {
+        if !first_word.is_empty() && !first_word.starts_with('-') {
+            // Skip common shells
+            if !matches!(first_word, "sh" | "bash" | "zsh" | "fish" | "dash") {
+                return first_word.to_string();
+            }
         }
     }
 
@@ -2757,9 +2776,15 @@ pub fn get_process_uptime_sysinfo(pid: i64) -> u64 {
     }
 
     let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
-
     let sysinfo_pid = Pid::from_u32(pid as u32);
+    
+    // Refresh only the specific process we need for efficiency
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        ProcessRefreshKind::new(),
+    );
+
     if let Some(process) = system.process(sysinfo_pid) {
         // Get system boot time to calculate absolute uptime
         let boot_time = System::boot_time();
