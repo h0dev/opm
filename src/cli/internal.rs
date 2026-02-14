@@ -37,6 +37,53 @@ lazy_static! {
     static ref SIMPLE_PATH_PATTERN: Regex = Regex::new(r"^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$").unwrap();
 }
 
+/// Extract a search pattern from a command for process adoption during restore
+/// Looks for distinctive parts like JAR files, script names, executables
+/// This is a copy of the logic from daemon/mod.rs to avoid circular dependencies
+fn extract_search_pattern_for_restore(command: &str) -> String {
+    // Look for patterns that uniquely identify the process
+    // Priority: JAR files, then .py/.js/.sh files, then first word
+    
+    // Check for JAR files (e.g., "java -jar Stirling-PDF.jar")
+    if let Some(jar_pos) = command.find(".jar") {
+        // Find the start of the filename (after last space or slash)
+        let before_jar = &command[..jar_pos];
+        if let Some(start) = before_jar.rfind(|c: char| c == ' ' || c == '/') {
+            let end = (jar_pos + 4).min(command.len());
+            if start + 1 < end {
+                let jar_name = &command[start+1..end];
+                return jar_name.trim().to_string();
+            }
+        }
+    }
+    
+    // Check for common script extensions
+    for ext in &[".py", ".js", ".sh", ".rb", ".pl"] {
+        if let Some(ext_pos) = command.find(ext) {
+            let before_ext = &command[..ext_pos];
+            if let Some(start) = before_ext.rfind(|c: char| c == ' ' || c == '/') {
+                let end = (ext_pos + ext.len()).min(command.len());
+                if start + 1 < end {
+                    let script_name = &command[start+1..end];
+                    return script_name.trim().to_string();
+                }
+            }
+        }
+    }
+    
+    // Fall back to the first word if it looks like an executable
+    let first_word = command.split_whitespace().next().unwrap_or("");
+    if !first_word.is_empty() && !first_word.starts_with('-') {
+        // Skip common shells
+        if !matches!(first_word, "sh" | "bash" | "zsh" | "fish" | "dash") {
+            return first_word.to_string();
+        }
+    }
+    
+    // If all else fails, return empty (no adoption will occur)
+    String::new()
+}
+
 fn ensure_daemon_running() {
     use global_placeholders::global;
 
@@ -1437,6 +1484,12 @@ impl<'i> Internal<'i> {
             return;
         }
 
+        // FIX #3: UPTIME JUMP & SYNC
+        // Capture a single timestamp for all restored processes to synchronize uptimes
+        // This ensures processes started in the same batch have the same start time
+        use chrono::Utc;
+        let batch_start_time = Utc::now();
+
         // PARALLEL RESTORATION: Spawn all processes concurrently
         // This dramatically reduces restore time for multiple processes
         use std::sync::{Arc, Mutex};
@@ -1453,7 +1506,8 @@ impl<'i> Internal<'i> {
             let runner_arc_clone = Arc::clone(&runner_arc);
             
             let handle = thread::spawn(move || {
-                // Restart the process in this thread
+                // FIX #4: SYSTEM-WIDE "RUNNING" CHECK (Anti-Duplication)
+                // Before spawning a new process, check if one is already running
                 let mut runner_guard = match runner_arc_clone.lock() {
                     Ok(guard) => guard,
                     Err(poisoned) => {
@@ -1462,6 +1516,43 @@ impl<'i> Internal<'i> {
                         poisoned.into_inner()
                     }
                 };
+                
+                // Check if a process matching this command is already running in the system
+                if runner_guard.exists(id) {
+                    let process = runner_guard.process(id);
+                    let command_pattern = extract_search_pattern_for_restore(&process.script);
+                    
+                    if !command_pattern.is_empty() {
+                        if let Some(existing_pid) = opm::process::find_process_by_command(&command_pattern) {
+                            ::log::info!(
+                                "Found existing process for '{}' (id={}) with PID {}, attaching instead of spawning",
+                                name,
+                                id,
+                                existing_pid
+                            );
+                            
+                            // Attach to the existing process instead of spawning new one
+                            process.pid = existing_pid;
+                            process.shell_pid = None; // No shell wrapper for existing process
+                            process.running = true;
+                            process.crash.crashed = false;
+                            
+                            // Update session ID for the attached process
+                            #[cfg(any(target_os = "linux", target_os = "macos"))]
+                            {
+                                process.session_id = opm::process::unix::get_session_id(existing_pid as i32);
+                            }
+                            
+                            // Save the state with attached PID
+                            runner_guard.save_direct();
+                            
+                            // Return early - no need to spawn
+                            return (id, name);
+                        }
+                    }
+                }
+                
+                // No existing process found, proceed with normal restart
                 *runner_guard = Internal {
                     id,
                     server_name: &server_name,
@@ -1513,6 +1604,18 @@ impl<'i> Internal<'i> {
         // Wait 1 second for all processes to stabilize after parallel spawning
         // This gives the OS time to register all process trees before verification
         std::thread::sleep(std::time::Duration::from_secs(1));
+        
+        // FIX #3: Apply synchronized start time to all successfully restored processes
+        // This ensures processes started in the same batch show consistent uptimes
+        for (id, _name) in &spawn_results {
+            if runner.exists(*id) {
+                let process = runner.process(*id);
+                if process.running && process.pid > 0 {
+                    // Only update start time for successfully running processes
+                    process.started = batch_start_time;
+                }
+            }
+        }
         
         // Verify each process started successfully
         for (id, name) in spawn_results {
@@ -1574,9 +1677,30 @@ impl<'i> Internal<'i> {
         // This must be done after all processes have been started to prevent duplicates
         crate::daemon::clear_restore_in_progress();
 
-        // Print final success message with count of restored processes
-        let restored_count = restored_ids.len();
-        println!("{} Success: {} processes restored.", *helpers::SUCCESS, restored_count);
+        // FIX #2: RESTORE COUNT DISCREPANCY
+        // Calculate the final count based on actual process states, not the loop counter
+        // Count processes that are actually online (running=true and process is alive)
+        let final_online_count = runner
+            .list()
+            .filter(|(_id, p)| {
+                if !p.running {
+                    return false;
+                }
+                
+                // Check if the process is actually alive (same logic as status display)
+                let process_alive = if p.pid > 0 {
+                    opm::process::is_pid_alive(p.pid)
+                } else if let Some(shell_pid) = p.shell_pid {
+                    shell_pid > 0 && opm::process::is_pid_alive(shell_pid)
+                } else {
+                    false
+                };
+                
+                process_alive
+            })
+            .count();
+        
+        println!("{} Success: {} processes restored.", *helpers::SUCCESS, final_online_count);
         
         // Display the process list immediately after restore
         // This allows users to see the current status without manually running 'opm ls'

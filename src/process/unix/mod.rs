@@ -99,6 +99,72 @@ fn find_immediate_children_linux(parent_pid: i64) -> Vec<i64> {
         .collect()
 }
 
+// Find orphaned children by tracing parent lineage using sysinfo
+// This function searches for processes that were recently spawned by a parent PID
+// even if the parent has already exited. It uses sysinfo to scan all processes
+// and finds those that match timing patterns (created shortly after parent spawn).
+#[cfg(target_os = "linux")]
+fn find_orphaned_children_by_parent_trace(dead_parent_pid: i64) -> Option<i64> {
+    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};
+    use std::time::SystemTime;
+    
+    let shell_names = ["sh", "bash", "zsh", "fish", "dash", "opm"];
+    
+    // Refresh all processes using sysinfo
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    
+    // Look for processes that might have been spawned by the dead parent
+    // We can't check parent PID directly since parent is dead (children get re-parented to init)
+    // Instead, look for recently created processes (within last 2 seconds)
+    let now = SystemTime::now();
+    let mut candidates = Vec::new();
+    
+    for (sysinfo_pid, process) in system.processes() {
+        let pid = sysinfo_pid.as_u32() as i64;
+        
+        // Skip the dead parent itself
+        if pid == dead_parent_pid {
+            continue;
+        }
+        
+        // Check if process was created recently (within last 2 seconds)
+        let process_age = now.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+            - process.start_time() as i64;
+            
+        if process_age <= 2 {
+            let name = process.name().to_string_lossy().to_string();
+            let name_lower = name.to_lowercase();
+            let is_shell = shell_names.iter().any(|s| name_lower.contains(s));
+            
+            // Prefer non-shell processes
+            if !is_shell {
+                log::debug!(
+                    "Found potential orphaned child: {} (PID {}, age {}s)",
+                    name,
+                    pid,
+                    process_age
+                );
+                candidates.push((pid, false)); // false = not a shell
+            } else {
+                candidates.push((pid, true)); // true = is a shell
+            }
+        }
+    }
+    
+    // Sort: prefer non-shell processes first
+    candidates.sort_by_key(|(_, is_shell)| *is_shell);
+    
+    // Return the first (best) candidate
+    candidates.first().map(|(pid, _)| *pid)
+}
+
 // Find the first long-running child (skip shells, find actual service process)
 #[cfg(target_os = "linux")]
 fn find_first_long_running_child_linux(parent_pid: i64) -> Option<i64> {
@@ -206,33 +272,68 @@ pub fn find_alive_process_in_group_for_pid(pid: i64) -> Option<i64> {
 
 #[cfg(target_os = "linux")]
 pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
-    // Retry logic with shorter intervals and immediate first check
-    // Poll more frequently to catch the child before the shell exits
-    const MAX_RETRIES: u32 = 20; // Increased from 6
-    const RETRY_DELAY_MS: u64 = 50; // Reduced from 500ms to 50ms
-
-    // Immediate first check (no sleep) to catch fast-spawning children
+    // FIX #1: ACCURATE PID ADOPTION with Deep Child Search
+    // Initial wait of 500ms to allow shell to spawn children
+    // This is critical for detecting the actual application PID (e.g., Stirling-PDF issue)
+    thread::sleep(Duration::from_millis(500));
+    
     log::debug!(
-        "Looking for actual child of shell PID {} (immediate check)",
+        "Looking for actual child of shell PID {} after 500ms stability wait",
         shell_pid
     );
 
-    for attempt in 0..MAX_RETRIES {
-        // Only sleep after the first attempt
-        if attempt > 0 {
-            thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-        }
-
+    // First attempt: look for children while shell is still alive
+    if let Some(long_running) = find_first_long_running_child_linux(shell_pid) {
         log::debug!(
-            "Looking for actual child of shell PID {} (attempt {}/{})",
+            "Found long-running child PID {} for shell PID {} (shell alive)",
+            long_running,
+            shell_pid
+        );
+        return long_running;
+    }
+
+    // Check if shell exited but left children (common pattern for wrapper scripts)
+    if !crate::process::is_pid_alive(shell_pid) {
+        log::debug!(
+            "Shell PID {} has exited, performing deep child search using sysinfo",
+            shell_pid
+        );
+        
+        // Use sysinfo to scan for orphaned children that were spawned by the shell
+        // This handles cases where the shell spawns a process and immediately exits
+        if let Some(orphaned_child) = find_orphaned_children_by_parent_trace(shell_pid) {
+            log::debug!(
+                "Found orphaned child PID {} after shell PID {} exited (deep search)",
+                orphaned_child,
+                shell_pid
+            );
+            return orphaned_child;
+        }
+        
+        log::debug!(
+            "Shell PID {} exited without spawning a detectable child, using shell PID as fallback",
+            shell_pid
+        );
+        return shell_pid; // Return shell PID as fallback (will be handled as crashed by daemon)
+    }
+
+    // Fallback: retry with shorter intervals for remaining time
+    const ADDITIONAL_RETRIES: u32 = 10;
+    const RETRY_DELAY_MS: u64 = 50;
+    
+    for attempt in 0..ADDITIONAL_RETRIES {
+        thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+        
+        log::debug!(
+            "Looking for actual child of shell PID {} (retry {}/{})",
             shell_pid,
             attempt + 1,
-            MAX_RETRIES
+            ADDITIONAL_RETRIES
         );
 
         if let Some(long_running) = find_first_long_running_child_linux(shell_pid) {
             log::debug!(
-                "Found long-running child PID {} for shell PID {} after {} attempts",
+                "Found long-running child PID {} for shell PID {} after {} retries",
                 long_running,
                 shell_pid,
                 attempt + 1
@@ -240,31 +341,28 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
             return long_running;
         }
 
-        // Check if shell is still alive
+        // Check again if shell exited during retry
         if !crate::process::is_pid_alive(shell_pid) {
-            // Shell has exited without spawning a detectable child
-            // This typically means the command crashed immediately or doesn't exist
-            // Process group fallback has been removed as it could adopt unrelated PIDs
-            // that happen to be in the same process group (e.g., other opm processes)
+            if let Some(orphaned_child) = find_orphaned_children_by_parent_trace(shell_pid) {
+                log::debug!(
+                    "Found orphaned child PID {} after shell PID {} exited during retry",
+                    orphaned_child,
+                    shell_pid
+                );
+                return orphaned_child;
+            }
+            
             log::debug!(
-                "Shell PID {} exited without spawning a detectable child, using shell PID as fallback",
+                "Shell PID {} exited during retry without detectable child",
                 shell_pid
             );
-            return shell_pid; // Return shell PID as fallback (will be handled as crashed by daemon)
-        }
-
-        // If this is not the last attempt, continue retrying
-        if attempt < MAX_RETRIES - 1 {
-            log::debug!("No child found yet, retrying in {}ms...", RETRY_DELAY_MS);
+            return shell_pid;
         }
     }
 
     // Ultimate fallback: use shell PID
-    // Process group fallback has been removed as it could adopt unrelated PIDs
-    // that happen to be in the same process group (e.g., other opm processes)
     log::debug!(
-        "No child found after {} attempts, using shell PID {} as fallback",
-        MAX_RETRIES,
+        "No child found after all attempts, using shell PID {} as fallback",
         shell_pid
     );
     shell_pid
@@ -358,10 +456,11 @@ fn calculate_depth_macos(
 
 #[cfg(target_os = "macos")]
 pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
-    // Wait for shell to spawn the actual command
-    thread::sleep(Duration::from_millis(PROCESS_OPERATION_DELAY_MS));
+    // FIX #1: ACCURATE PID ADOPTION with Deep Child Search
+    // Initial wait of 500ms to allow shell to spawn children
+    thread::sleep(Duration::from_millis(500));
 
-    log::debug!("Looking for actual child of shell PID {}", shell_pid);
+    log::debug!("Looking for actual child of shell PID {} after 500ms stability wait", shell_pid);
 
     if let Some(deepest) = find_deepest_child_macos(shell_pid) {
         log::debug!(
@@ -372,6 +471,75 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
         return deepest;
     }
 
+    // Check if shell exited but left children
+    if !crate::process::is_pid_alive(shell_pid) {
+        log::debug!(
+            "Shell PID {} has exited, performing deep child search",
+            shell_pid
+        );
+        
+        // For macOS, we can try to find orphaned children
+        // This is a best-effort approach since macOS doesn't have /proc
+        if let Some(orphaned) = find_orphaned_children_macos(shell_pid) {
+            log::debug!(
+                "Found orphaned child PID {} after shell PID {} exited",
+                orphaned,
+                shell_pid
+            );
+            return orphaned;
+        }
+    }
+
     log::debug!("No child found, using shell PID {}", shell_pid);
     shell_pid
+}
+
+// Find orphaned children for macOS using process timing
+#[cfg(target_os = "macos")]
+fn find_orphaned_children_macos(dead_parent_pid: i64) -> Option<i64> {
+    use std::time::SystemTime;
+    
+    let shell_names = ["sh", "bash", "zsh", "fish", "dash", "opm"];
+    let processes = native_processes().ok()?;
+    
+    let now = SystemTime::now();
+    let mut candidates = Vec::new();
+    
+    for process in &processes {
+        let pid = process.pid() as i64;
+        
+        // Skip the dead parent itself
+        if pid == dead_parent_pid {
+            continue;
+        }
+        
+        // Check if process was created recently (within last 2 seconds)
+        let process_age = now.duration_since(process.create_time)
+            .unwrap_or_default()
+            .as_secs();
+            
+        if process_age <= 2 {
+            let name = process.name.to_lowercase();
+            let is_shell = shell_names.iter().any(|s| name.contains(s));
+            
+            // Prefer non-shell processes
+            if !is_shell {
+                log::debug!(
+                    "Found potential orphaned child: {} (PID {}, age {}s)",
+                    process.name,
+                    pid,
+                    process_age
+                );
+                candidates.push((pid, false)); // false = not a shell
+            } else {
+                candidates.push((pid, true)); // true = is a shell
+            }
+        }
+    }
+    
+    // Sort: prefer non-shell processes first
+    candidates.sort_by_key(|(_, is_shell)| *is_shell);
+    
+    // Return the first (best) candidate
+    candidates.first().map(|(pid, _)| *pid)
 }
