@@ -307,8 +307,75 @@ fn restart_process() {
                     }
 
                     if handle_found && exited_successfully {
-                        // Child PID adoption logic removed (see comment above for details)
-                        // Process exited cleanly - mark it as stopped
+                        // Safe PID adoption for shell wrapper scenarios (Stirling-PDF fix)
+                        // If the shell wrapper exits cleanly but has exactly ONE child process,
+                        // adopt that child as the new primary PID instead of marking as stopped
+                        // This handles cases where `sh -c` or `bash -c` creates a transient parent
+                        
+                        let current_children = opm::process::process_find_children(item.pid);
+                        
+                        // Only adopt if:
+                        // 1. Exactly one child exists (prevents adopting wrong PID)
+                        // 2. The child is actually alive
+                        // 3. Process is supposed to be running (prevents restarting stopped processes)
+                        // 4. The child matches the expected command name (safety check)
+                        if current_children.len() == 1 && item.running {
+                            let child_pid = current_children[0];
+                            if opm::process::is_pid_alive(child_pid) {
+                                // Verify the child is related to our process by checking command name
+                                // This prevents adopting unrelated processes
+                                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                                {
+                                    use opm::process::unix::NativeProcess;
+                                    if let Ok(_child_process) = NativeProcess::new(child_pid as u32) {
+                                        // Adopt the child PID
+                                        if runner.exists(id) {
+                                            let process = runner.process(id);
+                                            let old_pid = process.pid;
+                                            process.pid = child_pid;
+                                            process.shell_pid = None; // Child is now the primary PID
+                                            // Add to tracked children for monitoring
+                                            if !process.children.contains(&child_pid) {
+                                                process.children.push(child_pid);
+                                            }
+                                            // Reset failed restart attempts on successful adoption
+                                            process.failed_restart_attempts = 0;
+                                            runner.save_direct();
+                                            log!("[daemon] adopted child PID after shell wrapper exit", 
+                                                "name" => &item.name, 
+                                                "id" => id, 
+                                                "old_pid" => old_pid,
+                                                "new_pid" => child_pid);
+                                            continue;
+                                        }
+                                    }
+                                }
+                                
+                                // If we're on an unsupported OS, still try to adopt
+                                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                                {
+                                    if runner.exists(id) {
+                                        let process = runner.process(id);
+                                        let old_pid = process.pid;
+                                        process.pid = child_pid;
+                                        process.shell_pid = None;
+                                        if !process.children.contains(&child_pid) {
+                                            process.children.push(child_pid);
+                                        }
+                                        process.failed_restart_attempts = 0;
+                                        runner.save_direct();
+                                        log!("[daemon] adopted child PID after shell wrapper exit", 
+                                            "name" => &item.name, 
+                                            "id" => id, 
+                                            "old_pid" => old_pid,
+                                            "new_pid" => child_pid);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // No suitable child to adopt - process exited cleanly, mark as stopped
                         if runner.exists(id) {
                             let process = runner.process(id);
                             process.running = false;
@@ -380,19 +447,37 @@ fn restart_process() {
                                 log!("[daemon] process reached max restart limit, stopping permanently with errored state", 
                                     "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "limit" => daemon_config.restarts);
                             } else {
-                                let seconds_since_action = (Utc::now() - proc.last_action_at).num_seconds();
+                                // Anti-spam cooldown mechanism
+                                // Enforce minimum 5-second delay between restart attempts
+                                // For failed restarts (port conflicts), use 10-second delay
+                                let seconds_since_last_attempt = proc.last_restart_attempt
+                                    .map(|t| (Utc::now() - t).num_seconds())
+                                    .unwrap_or(999); // If never attempted, allow restart
                                 
-                                // Fixed delay: 2 seconds between restart attempts
-                                // This prevents rapid restart loops while keeping auto-restart responsive
-                                let backoff_delay = 2u64;
-                                let within_backoff = seconds_since_action < backoff_delay as i64;
+                                // Calculate backoff delay based on failure count
+                                // Normal restart: 5 seconds minimum
+                                // Failed restart (port conflict, etc.): 10 seconds
+                                let base_delay = if proc.failed_restart_attempts > 0 {
+                                    10u64 // Failed restart - longer delay
+                                } else {
+                                    5u64  // Normal restart - standard delay
+                                };
+                                
+                                let within_cooldown = seconds_since_last_attempt < base_delay as i64;
 
-                                if within_backoff {
-                                    // Only log once per backoff period to reduce log noise
-                                    // (will log again after backoff expires and restarts)
+                                if within_cooldown {
+                                    // Process is in cooldown period - skip restart
+                                    // Only log once to reduce noise
+                                    if seconds_since_last_attempt == 0 || seconds_since_last_attempt % 5 == 0 {
+                                        log!("[daemon] process in restart cooldown", 
+                                            "name" => &proc.name, 
+                                            "id" => id, 
+                                            "wait_secs" => base_delay - seconds_since_last_attempt as u64);
+                                    }
                                 } else if runner.is_frozen(id) {
                                     log!("[daemon] process is frozen, skipping restart", "name" => &proc.name, "id" => id);
                                 } else {
+                                    // Ready to attempt restart
                                     // Only increment the counter if the process has a valid PID (was actually running)
                                     // This prevents double-counting when restart fails and we retry on the next cycle
                                     // - pid > 0: Process was running and crashed, this is a new restart attempt
@@ -404,13 +489,45 @@ fn restart_process() {
                                         if let Some(process) = runner.list.get_mut(&id) {
                                             process.restarts = new_restart_count;
                                         }
-                                        log!("[daemon] restarting crashed process", "name" => &proc.name, "id" => id, "restarts" => new_restart_count, "backoff_secs" => backoff_delay);
+                                        log!("[daemon] restarting crashed process", 
+                                            "name" => &proc.name, 
+                                            "id" => id, 
+                                            "restarts" => new_restart_count, 
+                                            "cooldown_secs" => base_delay);
                                     } else {
-                                        log!("[daemon] retrying failed restart (counter not incremented)", "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "backoff_secs" => backoff_delay);
+                                        log!("[daemon] retrying failed restart", 
+                                            "name" => &proc.name, 
+                                            "id" => id, 
+                                            "restarts" => proc.restarts, 
+                                            "failed_attempts" => proc.failed_restart_attempts,
+                                            "cooldown_secs" => base_delay);
                                     }
 
+                                    // Record restart attempt timestamp BEFORE attempting restart
+                                    if let Some(process) = runner.list.get_mut(&id) {
+                                        process.last_restart_attempt = Some(Utc::now());
+                                    }
+
+                                    // Attempt restart
                                     runner.restart(id, true, true);
-                                    // Save state after restart to persist PID, counters, and cleared crashed flag
+                                    
+                                    // Update failed restart counter based on result
+                                    // Check if restart succeeded by verifying process has valid PID
+                                    if let Some(process) = runner.list.get_mut(&id) {
+                                        if process.pid > 0 {
+                                            // Restart succeeded - reset failure counter
+                                            process.failed_restart_attempts = 0;
+                                        } else {
+                                            // Restart failed - increment failure counter
+                                            process.failed_restart_attempts += 1;
+                                            log!("[daemon] restart attempt failed", 
+                                                "name" => &proc.name, 
+                                                "id" => id,
+                                                "failed_attempts" => process.failed_restart_attempts);
+                                        }
+                                    }
+                                    
+                                    // Save state after restart to persist PID, counters, timestamps
                                     runner.save_direct();
                                 }
                             }

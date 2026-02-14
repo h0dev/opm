@@ -246,6 +246,14 @@ pub struct Process {
     /// Reset when user manually starts/restarts the process
     #[serde(default)]
     pub errored: bool,
+    /// Timestamp of last restart attempt for anti-spam cooldown
+    /// Used to prevent rapid restart loops by enforcing minimum delay between attempts
+    #[serde(default)]
+    pub last_restart_attempt: Option<DateTime<Utc>>,
+    /// Count of consecutive failed restart attempts (port conflicts, etc.)
+    /// Reset to 0 on successful restart. Used to implement exponential backoff
+    #[serde(default)]
+    pub failed_restart_attempts: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -580,6 +588,8 @@ impl Runner {
                     last_action_at: Utc::now(),
                     manual_stop: false, // Not manually stopped by default
                     errored: false,     // Not in error state by default
+                    last_restart_attempt: None, // No restart attempt yet
+                    failed_restart_attempts: 0, // No failures yet
                 },
             );
 
@@ -2558,6 +2568,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -2613,6 +2625,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -2703,6 +2717,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -2869,6 +2885,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -2921,6 +2939,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -2973,6 +2993,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3027,6 +3049,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3075,6 +3099,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3131,6 +3157,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3193,6 +3221,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process.clone());
@@ -3264,6 +3294,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process.clone());
@@ -3310,6 +3342,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3364,6 +3398,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3421,6 +3457,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3481,6 +3519,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3540,6 +3580,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3602,6 +3644,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3743,6 +3787,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3851,6 +3897,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -3951,6 +3999,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4128,6 +4178,8 @@ mod tests {
                 last_action_at: Utc::now(),
                 manual_stop: false,
                 errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
             };
             runner.list.insert(id, process);
         }
@@ -4234,6 +4286,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process.clone());
@@ -4327,6 +4381,8 @@ mod tests {
                 last_action_at: Utc::now(),
                 manual_stop: false,
                 errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
             };
             runner.list.insert(id, process);
         }
@@ -4429,6 +4485,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4496,6 +4554,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4560,6 +4620,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4638,6 +4700,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process.clone());
@@ -4721,6 +4785,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4809,6 +4875,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4897,6 +4965,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -4960,6 +5030,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -5025,6 +5097,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -5074,6 +5148,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -5128,6 +5204,8 @@ mod tests {
             last_action_at: Utc::now(),
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
@@ -5203,6 +5281,8 @@ mod tests {
             last_action_at: unix_epoch,
             manual_stop: false,
                 errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process_from_dump.clone());
@@ -5331,6 +5411,8 @@ mod tests {
             last_action_at: Utc::now() - chrono::Duration::seconds(10),
             manual_stop: false,
             errored: false,
+        last_restart_attempt: None,
+        failed_restart_attempts: 0,
         };
 
         runner.list.insert(id, process);
