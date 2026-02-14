@@ -1280,16 +1280,30 @@ impl<'i> Internal<'i> {
             crashln!("{} Cannot restore on remote servers", *helpers::FAIL)
         }
 
+        // FEATURE: AUTO-KILL ON RESTORE (CLEAN STATE)
         // Kill any running processes before restoring to ensure clean state
         // This prevents port conflicts and resource issues
-        // Note: This is primarily for backward compatibility with old dump files
-        // that still have PIDs saved. New dumps won't have PIDs (they're skipped).
-        //
-        // OPTIMIZATION: We no longer load the full dump file into RAM here.
-        // Instead, we rely on the daemon's init_on_startup() to handle any
-        // cleanup needed. This avoids unnecessary memory usage and file I/O
-        // during restore operations, especially for large dump files.
-        // The daemon will properly handle process state when it starts.
+        // Load processes that will be restored to extract their command patterns
+        let mut runner_temp = Runner::new();
+        let processes_to_check: Vec<(usize, String)> = runner_temp
+            .list()
+            .filter_map(|(id, p)| {
+                // Only check processes that will be restored (running=true)
+                if p.running {
+                    Some((*id, p.script.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Kill old processes matching the command patterns
+        if !processes_to_check.is_empty() {
+            ::log::info!("Searching for old processes to kill before restore");
+            if let Err(e) = opm::process::kill_old_processes_before_restore(&processes_to_check) {
+                ::log::warn!("Error during process cleanup: {}", e);
+            }
+        }
 
         // Read config to check if API/WebUI should be enabled (before daemon operations)
         let config = config::read();
