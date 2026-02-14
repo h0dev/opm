@@ -1839,6 +1839,13 @@ impl<'i> Internal<'i> {
                     // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
                     let restarts_value = item.restarts;
+                    
+                    // Add tree indicator for process wrappers
+                    let name_display = if item.is_process_tree {
+                        format!("{}(t)   ", item.name.clone())
+                    } else {
+                        format!("{}   ", item.name.clone())
+                    };
 
                     processes.push(ProcessItem {
                         status: status.into(),
@@ -1846,7 +1853,7 @@ impl<'i> Internal<'i> {
                         mem: format!("{memory_usage}   "),
                         id: id.to_string().cyan().bold().into(),
                         restarts: format!("{}  ", restarts_value),
-                        name: format!("{}   ", item.name.clone()),
+                        name: name_display,
                         pid: ternary!(
                             process_actually_running,
                             format!("{}  ", item.pid),
@@ -2070,6 +2077,13 @@ impl<'i> Internal<'i> {
                         } else {
                             string!("none  ")
                         };
+                        
+                        // Add tree indicator for process wrappers
+                        let name_display = if item.is_process_tree {
+                            format!("{}(t)   ", item.name.clone())
+                        } else {
+                            format!("{}   ", item.name.clone())
+                        };
 
                         processes.push(ProcessItem {
                             status: status.into(),
@@ -2077,7 +2091,7 @@ impl<'i> Internal<'i> {
                             mem: format!("{memory_usage}   "),
                             id: id.to_string().cyan().bold().into(),
                             restarts: format!("{}  ", item.restarts),
-                            name: format!("{}   ", item.name.clone()),
+                            name: name_display,
                             pid: ternary!(
                                 process_actually_running,
                                 format!("{}  ", item.pid),

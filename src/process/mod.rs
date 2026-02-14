@@ -266,6 +266,14 @@ pub struct Process {
     /// Used to detect if any process in the session is still alive
     #[serde(default)]
     pub session_id: Option<i64>,
+    /// Process start time (system uptime seconds) for PID reuse detection
+    /// Persisted to detect when PID has been recycled by OS
+    #[serde(default)]
+    pub process_start_time: Option<u64>,
+    /// Indicates this process is a wrapper/tree (bash script with children)
+    /// Used to display tree indicator in UI
+    #[serde(default)]
+    pub is_process_tree: bool,
 }
 
 impl Process {
@@ -621,6 +629,8 @@ impl Runner {
                     last_restart_attempt: None, // No restart attempt yet
                     failed_restart_attempts: 0, // No failures yet
                     session_id: result.session_id, // Store session ID for tracking
+                    process_start_time: result.start_time, // Store for PID reuse detection
+                    is_process_tree: result.shell_pid.is_some(), // Mark as tree if has shell wrapper
                 },
             );
 
@@ -827,6 +837,8 @@ impl Runner {
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
             process.session_id = result.session_id;
+            process.process_start_time = result.start_time;
+            process.is_process_tree = result.shell_pid.is_some();
             process.running = true;
             process.started = Utc::now();
             // Clear crashed flag after successful restart
@@ -1056,6 +1068,8 @@ impl Runner {
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
             process.session_id = result.session_id;
+            process.process_start_time = result.start_time;
+            process.is_process_tree = result.shell_pid.is_some();
             process.running = true;
             process.children = vec![];
             process.started = Utc::now();
@@ -2077,6 +2091,82 @@ pub fn get_process_cpu_usage_with_children(pid: i64) -> f64 {
     parent_cpu + children_cpu
 }
 
+/// Get recursive CPU/Memory aggregation for entire process tree using sysinfo
+/// This is the PM2-style aggregation that shows total resources for bash wrappers
+/// Returns (cpu_percent, rss_bytes, vms_bytes) or None if process not found
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn get_aggregate_process_tree_usage_sysinfo(root_pid: i64) -> Option<(f64, u64, u64)> {
+    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};
+    use std::collections::HashSet;
+    
+    if root_pid <= 0 {
+        return None;
+    }
+    
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    
+    let mut total_cpu: f64 = 0.0;
+    let mut total_rss: u64 = 0;
+    let mut total_vms: u64 = 0;
+    let mut found_root = false;
+    
+    // Build parent-child map for recursive traversal
+    let mut parent_map: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for (pid, process) in system.processes() {
+        let pid_i64 = pid.as_u32() as i64;
+        if let Some(parent) = process.parent() {
+            let parent_i64 = parent.as_u32() as i64;
+            parent_map.entry(parent_i64).or_insert_with(Vec::new).push(pid_i64);
+        }
+    }
+    
+    // Recursively aggregate resources for root and all descendants
+    let mut to_process = vec![root_pid];
+    let mut processed = HashSet::new();
+    
+    while let Some(current_pid) = to_process.pop() {
+        if processed.contains(&current_pid) {
+            continue;
+        }
+        processed.insert(current_pid);
+        
+        let sysinfo_pid = sysinfo::Pid::from_u32(current_pid as u32);
+        if let Some(process) = system.process(sysinfo_pid) {
+            if current_pid == root_pid {
+                found_root = true;
+            }
+            
+            // Aggregate CPU and memory
+            total_cpu += process.cpu_usage() as f64;
+            total_rss += process.memory();
+            total_vms += process.virtual_memory();
+            
+            // Add children to processing queue
+            if let Some(children) = parent_map.get(&current_pid) {
+                for &child_pid in children {
+                    to_process.push(child_pid);
+                }
+            }
+        }
+    }
+    
+    if found_root {
+        Some((total_cpu, total_rss, total_vms))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn get_aggregate_process_tree_usage_sysinfo(_root_pid: i64) -> Option<(f64, u64, u64)> {
+    None
+}
+
 /// Get the total memory usage of the process and its children
 pub fn get_process_memory_with_children(pid: i64) -> Option<MemoryInfo> {
     let parent_memory = unix::NativeProcess::new_fast(pid as u32)
@@ -2391,6 +2481,113 @@ pub fn is_process_actually_alive(pid: i64, shell_pid: Option<i64>) -> bool {
     }
 }
 
+/// Validate process state using sysinfo with PID reuse detection
+/// Returns (is_valid, Option<start_time>) where:
+/// - is_valid: true if process exists and matches expected parameters
+/// - start_time: current process start time if found, for PID reuse detection
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn validate_process_with_sysinfo(
+    pid: i64,
+    expected_command_pattern: Option<&str>,
+    expected_start_time: Option<u64>,
+) -> (bool, Option<u64>) {
+    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate, Pid};
+    
+    if pid <= 0 {
+        return (false, None);
+    }
+    
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    
+    let sysinfo_pid = Pid::from_u32(pid as u32);
+    if let Some(process) = system.process(sysinfo_pid) {
+        let current_start_time = process.start_time();
+        
+        // Check if PID has been reused by comparing start times
+        if let Some(expected_time) = expected_start_time {
+            if current_start_time != expected_time {
+                log::warn!(
+                    "PID {} has been reused (expected start time: {}, actual: {})",
+                    pid, expected_time, current_start_time
+                );
+                return (false, Some(current_start_time));
+            }
+        }
+        
+        // Validate command pattern if provided
+        if let Some(pattern) = expected_command_pattern {
+            // Try to get full command line
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                if let Some(cmdline) = unix::get_process_cmdline(pid as i32) {
+                    if !cmdline.contains(pattern) {
+                        let proc_name = process.name().to_string_lossy().to_string();
+                        if !proc_name.contains(pattern) && !pattern.contains(&proc_name) {
+                            log::warn!(
+                                "PID {} command mismatch (pattern: '{}', cmdline: '{}', name: '{}')",
+                                pid, pattern, cmdline, proc_name
+                            );
+                            return (false, Some(current_start_time));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process is valid and matches expected parameters
+        return (true, Some(current_start_time));
+    }
+    
+    // Process not found
+    (false, None)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn validate_process_with_sysinfo(
+    _pid: i64,
+    _expected_command_pattern: Option<&str>,
+    _expected_start_time: Option<u64>,
+) -> (bool, Option<u64>) {
+    (false, None)
+}
+
+/// Get comprehensive process metrics using sysinfo
+/// Returns None if process not found or metrics unavailable
+/// This is used to properly display "0b" memory and "offline" status
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn get_process_metrics_sysinfo(pid: i64) -> Option<(f64, u64, u64)> {
+    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate, Pid};
+    
+    if pid <= 0 {
+        return None;
+    }
+    
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    
+    let sysinfo_pid = Pid::from_u32(pid as u32);
+    system.process(sysinfo_pid).map(|process| {
+        let cpu = process.cpu_usage() as f64;
+        let memory = process.memory();
+        let virtual_memory = process.virtual_memory();
+        (cpu, memory, virtual_memory)
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn get_process_metrics_sysinfo(_pid: i64) -> Option<(f64, u64, u64)> {
+    None
+}
+
 #[cfg(target_os = "linux")]
 pub fn find_alive_process_in_group(pid: i64) -> Option<i64> {
     unix::find_alive_process_in_group_for_pid(pid)
@@ -2407,6 +2604,7 @@ pub struct ProcessRunResult {
     pub pid: i64,
     pub shell_pid: Option<i64>,
     pub session_id: Option<i64>,
+    pub start_time: Option<u64>,
 }
 
 /// Check if a command contains shell-specific features that require shell interpretation
@@ -2656,11 +2854,17 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
     
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let session_id: Option<i64> = None;
+    
+    // Capture process start time for PID reuse detection
+    // Wait a bit to ensure process is registered in the OS
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let start_time = validate_process_with_sysinfo(actual_pid, None, None).1;
 
     Ok(ProcessRunResult {
         pid: actual_pid,
         shell_pid: shell_pid_opt,
         session_id,
+        start_time,
     })
 }
 

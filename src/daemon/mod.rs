@@ -201,30 +201,73 @@ fn restart_process() {
             continue;
         }
 
+        // Treat PID=0 as dead (it's not a valid process PID for managed processes)
+        // PID 0 is reserved for the kernel scheduler and should never be assigned to user processes
+        let has_valid_pid = item.pid > 0;
+
         // Check if any descendant is alive (root PID + tracked children)
         let shell_alive = item
             .shell_pid
             .map_or(false, |pid| opm::process::is_pid_alive(pid));
-
-        // Treat PID=0 as dead (it's not a valid process PID for managed processes)
-        // PID 0 is reserved for the kernel scheduler and should never be assigned to user processes
-        let has_valid_pid = item.pid > 0;
         
         // Check if session is alive (more robust than individual PID checks)
         // This handles process forking where the main PID exits but children continue running
         let session_alive = item.session_id
             .map_or(false, |sid| opm::process::is_session_alive(sid));
+
+        // PM2-STYLE VALIDATION: Check for PID reuse and command mismatch
+        // This is the "single source of truth" validation that prevents ghost processes
+        let mut validation_failed = false;
+        if has_valid_pid {
+            let search_pattern = extract_search_pattern(&item.script);
+            let expected_pattern = if !search_pattern.is_empty() {
+                Some(search_pattern.as_str())
+            } else {
+                None
+            };
+            
+            let (is_valid, current_start_time) = opm::process::validate_process_with_sysinfo(
+                item.pid,
+                expected_pattern,
+                item.process_start_time,
+            );
+            
+            if !is_valid && item.running {
+                validation_failed = true;
+                // PID has been reused or command mismatch detected
+                ::log::warn!(
+                    "[daemon] PID {} validation failed for process {} ({}). PID may have been reused or command mismatch.",
+                    item.pid, item.name, id
+                );
+                
+                // Update start time if process exists but with different start time
+                if let Some(new_start_time) = current_start_time {
+                    if runner.exists(id) {
+                        runner.process(id).process_start_time = Some(new_start_time);
+                    }
+                }
+            }
+        }
         
         // Use enhanced sysinfo-based detection for more robust process tree checking
         // This handles cases where shell wrapper exits but children are still running
-        let any_descendant_alive = has_valid_pid 
-            && (opm::process::is_process_or_children_alive_sysinfo(item.pid, &item.children) 
-                || shell_alive 
-                || session_alive);
+        // If validation failed, treat process as dead
+        let any_descendant_alive = if validation_failed {
+            false
+        } else {
+            has_valid_pid 
+                && (opm::process::is_process_or_children_alive_sysinfo(item.pid, &item.children) 
+                    || shell_alive 
+                    || session_alive)
+        };
 
         // Check if the main process (PID or shell_pid) is alive
         // This is the primary indicator of process health
-        let main_process_alive = has_valid_pid && (opm::process::is_pid_alive(item.pid) || shell_alive || session_alive);
+        let main_process_alive = if validation_failed {
+            false
+        } else {
+            has_valid_pid && (opm::process::is_pid_alive(item.pid) || shell_alive || session_alive)
+        };
 
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
