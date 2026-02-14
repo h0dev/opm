@@ -11,8 +11,8 @@ pub use cpu::{get_cpu_percent, get_cpu_percent_fast, get_effective_cpu_count};
 pub use env::{env, Vars};
 pub use memory::{get_memory_info, NativeMemoryInfo};
 pub use process_info::{
-    get_parent_pid, get_process_name, get_process_start_time, is_process_zombie,
-    get_session_id, get_process_cmdline,
+    get_parent_pid, get_process_cmdline, get_process_name, get_process_start_time, get_session_id,
+    is_process_zombie,
 };
 pub use process_list::native_processes;
 
@@ -113,17 +113,13 @@ fn find_immediate_children_linux(parent_pid: i64) -> Vec<i64> {
 // and finds those that match timing patterns (created shortly after parent spawn).
 #[cfg(target_os = "linux")]
 fn find_orphaned_children_by_parent_trace(dead_parent_pid: i64) -> Option<i64> {
-    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};
-    use std::time::{SystemTime, Duration};
-    
+    use std::time::{Duration, SystemTime};
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+
     // Refresh all processes using sysinfo
     let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::new(),
-    );
-    
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
+
     // Look for processes that might have been spawned by the dead parent
     // We can't check parent PID directly since parent is dead (children get re-parented to init)
     // Instead, look for recently created processes (within orphan detection window)
@@ -132,15 +128,15 @@ fn find_orphaned_children_by_parent_trace(dead_parent_pid: i64) -> Option<i64> {
         .unwrap_or(Duration::from_secs(0))
         .as_secs();
     let mut candidates = Vec::new();
-    
+
     for (sysinfo_pid, process) in system.processes() {
         let pid = sysinfo_pid.as_u32() as i64;
-        
+
         // Skip the dead parent itself
         if pid == dead_parent_pid {
             continue;
         }
-        
+
         // Check if process was created recently (within orphan detection window)
         // start_time() returns seconds since UNIX epoch
         let process_start = process.start_time();
@@ -148,18 +144,20 @@ fn find_orphaned_children_by_parent_trace(dead_parent_pid: i64) -> Option<i64> {
             // Clock skew detected - process start time is in the future
             log::warn!(
                 "Process {} has start time in the future (now={}, start={}), skipping",
-                pid, now_secs, process_start
+                pid,
+                now_secs,
+                process_start
             );
             continue;
         }
-        
+
         let process_age = now_secs - process_start;
-            
+
         if process_age <= ORPHAN_DETECTION_WINDOW_SECS {
             let name = process.name().to_string_lossy().to_string();
             let name_lower = name.to_lowercase();
             let is_shell = SHELL_NAMES.iter().any(|s| name_lower.contains(s));
-            
+
             // Prefer non-shell processes
             if !is_shell {
                 log::debug!(
@@ -174,10 +172,10 @@ fn find_orphaned_children_by_parent_trace(dead_parent_pid: i64) -> Option<i64> {
             }
         }
     }
-    
+
     // Sort: prefer non-shell processes first
     candidates.sort_by_key(|(_, is_shell)| *is_shell);
-    
+
     // Return the first (best) candidate
     candidates.first().map(|(pid, _)| *pid)
 }
@@ -291,7 +289,7 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     // Initial wait of 500ms to allow shell to spawn children
     // This is critical for detecting the actual application PID (e.g., Stirling-PDF issue)
     thread::sleep(Duration::from_millis(500));
-    
+
     log::debug!(
         "Looking for actual child of shell PID {} after 500ms stability wait",
         shell_pid
@@ -313,7 +311,7 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
             "Shell PID {} has exited, performing deep child search using sysinfo",
             shell_pid
         );
-        
+
         // Use sysinfo to scan for orphaned children that were spawned by the shell
         // This handles cases where the shell spawns a process and immediately exits
         if let Some(orphaned_child) = find_orphaned_children_by_parent_trace(shell_pid) {
@@ -324,7 +322,7 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
             );
             return orphaned_child;
         }
-        
+
         log::debug!(
             "Shell PID {} exited without spawning a detectable child, using shell PID as fallback",
             shell_pid
@@ -335,10 +333,10 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     // Fallback: retry with shorter intervals for remaining time
     const ADDITIONAL_RETRIES: u32 = 10;
     const RETRY_DELAY_MS: u64 = 50;
-    
+
     for attempt in 0..ADDITIONAL_RETRIES {
         thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-        
+
         log::debug!(
             "Looking for actual child of shell PID {} (retry {}/{})",
             shell_pid,
@@ -366,7 +364,7 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
                 );
                 return orphaned_child;
             }
-            
+
             log::debug!(
                 "Shell PID {} exited during retry without detectable child",
                 shell_pid
@@ -475,7 +473,10 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
     // Initial wait of 500ms to allow shell to spawn children
     thread::sleep(Duration::from_millis(500));
 
-    log::debug!("Looking for actual child of shell PID {} after 500ms stability wait", shell_pid);
+    log::debug!(
+        "Looking for actual child of shell PID {} after 500ms stability wait",
+        shell_pid
+    );
 
     if let Some(deepest) = find_deepest_child_macos(shell_pid) {
         log::debug!(
@@ -492,7 +493,7 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
             "Shell PID {} has exited, performing deep child search",
             shell_pid
         );
-        
+
         // For macOS, we can try to find orphaned children
         // This is a best-effort approach since macOS doesn't have /proc
         if let Some(orphaned) = find_orphaned_children_macos(shell_pid) {
@@ -513,20 +514,20 @@ pub fn get_actual_child_pid(shell_pid: i64) -> i64 {
 #[cfg(target_os = "macos")]
 fn find_orphaned_children_macos(dead_parent_pid: i64) -> Option<i64> {
     use std::time::SystemTime;
-    
+
     let processes = native_processes().ok()?;
-    
+
     let now = SystemTime::now();
     let mut candidates = Vec::new();
-    
+
     for process in &processes {
         let pid = process.pid() as i64;
-        
+
         // Skip the dead parent itself
         if pid == dead_parent_pid {
             continue;
         }
-        
+
         // Check if process was created recently (within orphan detection window)
         let process_age = match now.duration_since(process.create_time) {
             Ok(duration) => duration.as_secs(),
@@ -534,16 +535,17 @@ fn find_orphaned_children_macos(dead_parent_pid: i64) -> Option<i64> {
                 // Clock skew detected - process start time is in the future
                 log::warn!(
                     "Process {} has start time in the future (error: {}), skipping",
-                    pid, e
+                    pid,
+                    e
                 );
                 continue;
             }
         };
-            
+
         if process_age <= ORPHAN_DETECTION_WINDOW_SECS {
             let name = process.name.to_lowercase();
             let is_shell = SHELL_NAMES.iter().any(|s| name.contains(s));
-            
+
             // Prefer non-shell processes
             if !is_shell {
                 log::debug!(
@@ -558,10 +560,10 @@ fn find_orphaned_children_macos(dead_parent_pid: i64) -> Option<i64> {
             }
         }
     }
-    
+
     // Sort: prefer non-shell processes first
     candidates.sort_by_key(|(_, is_shell)| *is_shell);
-    
+
     // Return the first (best) candidate
     candidates.first().map(|(pid, _)| *pid)
 }

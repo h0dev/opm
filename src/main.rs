@@ -945,7 +945,7 @@ fn main() {
             // Restore is a separate one-time operation that should not restart OPM daemon
             // The Internal::restore() function will handle OPM daemon startup if needed
             // This ensures daemon and restore are separate processes as designed
-            
+
             // Auto-start agent daemon (separate from OPM daemon) if agent config exists
             if load_agent_config().is_ok() {
                 start_agent_daemon();

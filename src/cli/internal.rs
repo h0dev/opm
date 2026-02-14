@@ -39,14 +39,14 @@ lazy_static! {
 
 /// Extract a search pattern from a command for process adoption during restore
 /// Looks for distinctive parts like JAR files, script names, executables
-/// 
+///
 /// NOTE: This is a copy of the logic from daemon/mod.rs::extract_search_pattern to avoid circular dependencies.
 /// TODO: Consider moving this to a shared utility module (e.g., opm::process::search_pattern) that both
 /// daemon and cli can import, eliminating the duplication while avoiding circular dependencies.
 fn extract_search_pattern_for_restore(command: &str) -> String {
     // Look for patterns that uniquely identify the process
     // Priority: JAR files, then .py/.js/.sh files, then first word
-    
+
     // Check for JAR files (e.g., "java -jar Stirling-PDF.jar")
     if let Some(jar_pos) = command.find(".jar") {
         // Find the start of the filename (after last space or slash)
@@ -54,12 +54,12 @@ fn extract_search_pattern_for_restore(command: &str) -> String {
         if let Some(start) = before_jar.rfind(|c: char| c == ' ' || c == '/') {
             let end = (jar_pos + 4).min(command.len());
             if start + 1 < end {
-                let jar_name = &command[start+1..end];
+                let jar_name = &command[start + 1..end];
                 return jar_name.trim().to_string();
             }
         }
     }
-    
+
     // Check for common script extensions
     for ext in &[".py", ".js", ".sh", ".rb", ".pl"] {
         if let Some(ext_pos) = command.find(ext) {
@@ -67,13 +67,13 @@ fn extract_search_pattern_for_restore(command: &str) -> String {
             if let Some(start) = before_ext.rfind(|c: char| c == ' ' || c == '/') {
                 let end = (ext_pos + ext.len()).min(command.len());
                 if start + 1 < end {
-                    let script_name = &command[start+1..end];
+                    let script_name = &command[start + 1..end];
                     return script_name.trim().to_string();
                 }
             }
         }
     }
-    
+
     // Fall back to the first word if it looks like an executable
     let first_word = command.split_whitespace().next().unwrap_or("");
     if !first_word.is_empty() && !first_word.starts_with('-') {
@@ -82,7 +82,7 @@ fn extract_search_pattern_for_restore(command: &str) -> String {
             return first_word.to_string();
         }
     }
-    
+
     // If all else fails, return empty (no adoption will occur)
     String::new()
 }
@@ -721,7 +721,7 @@ impl<'i> Internal<'i> {
                 // This is consistent with the daemon monitoring logic and prevents false crash detection.
                 let crash_detection_enabled = full_config.daemon.crash_detection;
                 let pid_valid = item.pid > 0;
-                
+
                 // Validate PID to prevent ghost processes
                 let pid_validated = if pid_valid && item.running {
                     let search_pattern = extract_search_pattern_for_restore(&item.script);
@@ -730,7 +730,7 @@ impl<'i> Internal<'i> {
                     } else {
                         None
                     };
-                    
+
                     let (is_valid, _) = opm::process::validate_process_with_sysinfo(
                         item.pid,
                         expected_pattern,
@@ -740,7 +740,7 @@ impl<'i> Internal<'i> {
                 } else {
                     false
                 };
-                
+
                 let main_pid_alive = pid_valid && is_pid_alive(item.pid);
                 let shell_pid_alive = item.shell_pid.map_or(false, |pid| is_pid_alive(pid));
                 let pid_alive = main_pid_alive || shell_pid_alive;
@@ -749,7 +749,8 @@ impl<'i> Internal<'i> {
                 // 1. It's marked as running but not actually running (consistent with opm ls)
                 // 2. The crash.crashed flag is explicitly set by the daemon
                 // This ensures consistent status display between opm ls and opm info
-                let crashed_while_running = item.running && !process_actually_running && crash_detection_enabled;
+                let crashed_while_running =
+                    item.running && !process_actually_running && crash_detection_enabled;
                 let crashed_by_flag = item.crash.crashed && crash_detection_enabled;
 
                 let mut memory_usage: Option<MemoryInfo> = None;
@@ -1272,8 +1273,6 @@ impl<'i> Internal<'i> {
             crashln!("{} Cannot restore on remote servers", *helpers::FAIL)
         }
 
-
-
         // Kill any running processes before restoring to ensure clean state
         // This prevents port conflicts and resource issues
         // Note: This is primarily for backward compatibility with old dump files
@@ -1518,50 +1517,57 @@ impl<'i> Internal<'i> {
         // This dramatically reduces restore time for multiple processes
         use std::sync::{Arc, Mutex};
         use std::thread;
-        
+
         let runner_arc = Arc::new(Mutex::new(runner.clone()));
         let mut handles = vec![];
-        
+
         for (id, name, _was_running, _was_crashed) in &processes_to_restore {
             let id = *id;
             let name = name.clone();
             let server_name = server_name.clone();
             let kind = kind.clone();
             let runner_arc_clone = Arc::clone(&runner_arc);
-            
+
             let handle = thread::spawn(move || {
                 // FIX #4: SYSTEM-WIDE "RUNNING" CHECK (Anti-Duplication)
                 // Before spawning a new process, check if one is already running
                 let mut runner_guard = match runner_arc_clone.lock() {
                     Ok(guard) => guard,
                     Err(poisoned) => {
-                        ::log::error!("Mutex poisoned during restore for process {}: {}", id, poisoned);
+                        ::log::error!(
+                            "Mutex poisoned during restore for process {}: {}",
+                            id,
+                            poisoned
+                        );
                         // Recover from poison by taking ownership of the data
                         poisoned.into_inner()
                     }
                 };
-                
+
                 // Check if a process matching this command is already running in the system
                 if runner_guard.exists(id) {
                     let process = runner_guard.process(id);
                     let search_identifier = extract_search_pattern_for_restore(&process.script);
-                    
+
                     if !search_identifier.is_empty() {
-                        if let Some(existing_pid) = opm::process::find_process_by_command(&search_identifier) {
+                        if let Some(existing_pid) =
+                            opm::process::find_process_by_command(&search_identifier)
+                        {
                             ::log::info!(
                                 "Found existing process for '{}' (id={}) with PID {}, attaching instead of spawning",
                                 name,
                                 id,
                                 existing_pid
                             );
-                            
+
                             // Validate and capture start time of existing process
-                            let (is_valid, start_time) = opm::process::validate_process_with_sysinfo(
-                                existing_pid,
-                                Some(&search_identifier),
-                                None,
-                            );
-                            
+                            let (is_valid, start_time) =
+                                opm::process::validate_process_with_sysinfo(
+                                    existing_pid,
+                                    Some(&search_identifier),
+                                    None,
+                                );
+
                             if is_valid {
                                 // Attach to the existing process instead of spawning new one
                                 process.pid = existing_pid;
@@ -1570,16 +1576,17 @@ impl<'i> Internal<'i> {
                                 process.crash.crashed = false;
                                 process.process_start_time = start_time; // Store start time for PID reuse detection
                                 process.is_process_tree = false; // Existing process is not a wrapper
-                                
+
                                 // Update session ID for the attached process
                                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                                 {
-                                    process.session_id = opm::process::unix::get_session_id(existing_pid as i32);
+                                    process.session_id =
+                                        opm::process::unix::get_session_id(existing_pid as i32);
                                 }
-                                
+
                                 // Save the state with attached PID
                                 runner_guard.save_direct();
-                                
+
                                 // Return early - no need to spawn
                                 return (id, name);
                             } else {
@@ -1601,7 +1608,7 @@ impl<'i> Internal<'i> {
                     runner: runner_guard.clone(),
                 }
                 .restart(&None, &None, false, true, false);
-                
+
                 // Create timestamp file for this restore action
                 if let Err(e) = opm::process::write_action_timestamp(id) {
                     ::log::warn!(
@@ -1610,20 +1617,18 @@ impl<'i> Internal<'i> {
                         e
                     );
                 }
-                
+
                 // Return the ID and name for tracking
                 (id, name)
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all spawns to complete
-        let spawn_results: Vec<(usize, String)> = handles
-            .into_iter()
-            .filter_map(|h| h.join().ok())
-            .collect();
-        
+        let spawn_results: Vec<(usize, String)> =
+            handles.into_iter().filter_map(|h| h.join().ok()).collect();
+
         // Get the updated runner state after all parallel spawns
         runner = match Arc::try_unwrap(runner_arc) {
             Ok(mutex) => match mutex.into_inner() {
@@ -1641,11 +1646,11 @@ impl<'i> Internal<'i> {
                 }
             },
         };
-        
+
         // Wait 1 second for all processes to stabilize after parallel spawning
         // This gives the OS time to register all process trees before verification
         std::thread::sleep(std::time::Duration::from_secs(1));
-        
+
         // FIX #3: Apply synchronized start time to all successfully restored processes
         // This ensures processes started in the same batch show consistent uptimes
         for (id, _name) in &spawn_results {
@@ -1657,7 +1662,7 @@ impl<'i> Internal<'i> {
                 }
             }
         }
-        
+
         // Verify each process started successfully
         for (id, name) in spawn_results {
             // Check if the restart was successful
@@ -1667,7 +1672,8 @@ impl<'i> Internal<'i> {
                 // This ensures consistent behavior between restore and daemon monitoring
                 // The daemon checks: is_pid_alive(item.pid) || shell_alive
                 // So we should also check pid first, then shell_pid
-                let process_alive = opm::process::is_process_actually_alive(process.pid, process.shell_pid);
+                let process_alive =
+                    opm::process::is_process_actually_alive(process.pid, process.shell_pid);
 
                 // Small startup grace period to avoid falsely reporting as crashed
                 let recently_started =
@@ -1721,18 +1727,22 @@ impl<'i> Internal<'i> {
                 if !p.running {
                     return false;
                 }
-                
+
                 // Check if the process is actually alive using shared helper method
                 opm::process::is_process_actually_alive(p.pid, p.shell_pid)
             })
             .count();
-        
-        println!("{} Success: {} processes restored.", *helpers::SUCCESS, final_online_count);
-        
+
+        println!(
+            "{} Success: {} processes restored.",
+            *helpers::SUCCESS,
+            final_online_count
+        );
+
         // Display the process list immediately after restore
         // This allows users to see the current status without manually running 'opm ls'
         Internal::list(&"default".to_string(), &"local".to_string());
-        
+
         // Restore operation is complete - exit the restore process
         // The daemon is now running in a separate PID and will continue independently
         std::process::exit(0);
@@ -1785,7 +1795,7 @@ impl<'i> Internal<'i> {
             } else {
                 for (id, item) in runner.items() {
                     let crash_detection_enabled = config::read().daemon.crash_detection;
-                    
+
                     // PM2-STYLE VALIDATION: Validate PID with sysinfo
                     // This prevents showing "online" status for ghost/reused PIDs
                     let has_valid_pid = item.pid > 0;
@@ -1796,7 +1806,7 @@ impl<'i> Internal<'i> {
                         } else {
                             None
                         };
-                        
+
                         let (is_valid, _) = opm::process::validate_process_with_sysinfo(
                             item.pid,
                             expected_pattern,
@@ -1806,19 +1816,20 @@ impl<'i> Internal<'i> {
                     } else {
                         false
                     };
-                    
+
                     // Check if process actually exists before reporting as online
                     // Include shell PID and tracked descendants to avoid false crashed status
                     let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children)
                         || item
                             .shell_pid
                             .map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
-                    
+
                     // Process is actually running ONLY if:
                     // 1. It's marked as running
                     // 2. PID validation passed (or not required)
                     // 3. Descendants are alive
-                    let process_actually_running = item.running && pid_validated && any_descendant_alive;
+                    let process_actually_running =
+                        item.running && pid_validated && any_descendant_alive;
 
                     let mut cpu_percent: String = string!("0.00%");
                     let mut memory_usage: String = string!("0b");
@@ -1904,7 +1915,7 @@ impl<'i> Internal<'i> {
                     // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
                     let restarts_value = item.restarts;
-                    
+
                     // Add tree indicator for process wrappers
                     let name_display = if item.is_process_tree {
                         format!("{}(t)   ", item.name.clone())
@@ -2142,7 +2153,7 @@ impl<'i> Internal<'i> {
                         } else {
                             string!("none  ")
                         };
-                        
+
                         // Add tree indicator for process wrappers
                         let name_display = if item.is_process_tree {
                             format!("{}(t)   ", item.name.clone())

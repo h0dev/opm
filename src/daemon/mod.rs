@@ -25,8 +25,10 @@ use std::{process, thread::sleep, time::Duration};
 use opm::{
     config,
     helpers::{self, ColoredString},
-    process::{dump, get_process_cpu_usage_with_children_from_process, hash, Runner, 
-              RESTART_COOLDOWN_SECS, FAILED_RESTART_COOLDOWN_SECS, COOLDOWN_LOG_INTERVAL_SECS},
+    process::{
+        dump, get_process_cpu_usage_with_children_from_process, hash, Runner,
+        COOLDOWN_LOG_INTERVAL_SECS, FAILED_RESTART_COOLDOWN_SECS, RESTART_COOLDOWN_SECS,
+    },
 };
 
 use tabled::{
@@ -95,11 +97,12 @@ async fn emit_crash_event_and_notification(id: usize, name: String) {
 /// This function should be called periodically (e.g., at the start of each monitoring cycle)
 /// to prevent zombie process accumulation
 fn reap_zombie_processes() {
-    let handles_snapshot: Vec<(i64, Arc<Mutex<std::process::Child>>)> = opm::process::PROCESS_HANDLES
-        .iter()
-        .map(|entry| (*entry.key(), entry.value().clone()))
-        .collect();
-    
+    let handles_snapshot: Vec<(i64, Arc<Mutex<std::process::Child>>)> =
+        opm::process::PROCESS_HANDLES
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+
     for (pid, handle_ref) in handles_snapshot {
         if let Ok(mut child) = handle_ref.try_lock() {
             // Non-blocking check if the child has exited
@@ -128,7 +131,7 @@ fn reap_zombie_processes() {
 fn extract_search_pattern(command: &str) -> String {
     // Look for patterns that uniquely identify the process
     // Priority: JAR files, then .py/.js/.sh files, then quoted strings, then first word
-    
+
     // Check for JAR files (e.g., "java -jar Stirling-PDF.jar")
     if let Some(jar_pos) = command.find(".jar") {
         // Find the start of the filename (after last space or slash)
@@ -136,12 +139,12 @@ fn extract_search_pattern(command: &str) -> String {
         if let Some(start) = before_jar.rfind(|c: char| c == ' ' || c == '/') {
             let end = (jar_pos + 4).min(command.len());
             if start + 1 < end {
-                let jar_name = &command[start+1..end];
+                let jar_name = &command[start + 1..end];
                 return jar_name.trim().to_string();
             }
         }
     }
-    
+
     // Check for common script extensions
     for ext in &[".py", ".js", ".sh", ".rb", ".pl"] {
         if let Some(ext_pos) = command.find(ext) {
@@ -149,13 +152,13 @@ fn extract_search_pattern(command: &str) -> String {
             if let Some(start) = before_ext.rfind(|c: char| c == ' ' || c == '/') {
                 let end = (ext_pos + ext.len()).min(command.len());
                 if start + 1 < end {
-                    let script_name = &command[start+1..end];
+                    let script_name = &command[start + 1..end];
                     return script_name.trim().to_string();
                 }
             }
         }
     }
-    
+
     // Fall back to the first word if it looks like an executable
     let first_word = command.split_whitespace().next().unwrap_or("");
     if !first_word.is_empty() && !first_word.starts_with('-') {
@@ -164,18 +167,18 @@ fn extract_search_pattern(command: &str) -> String {
             return first_word.to_string();
         }
     }
-    
+
     // If all else fails, return empty (no adoption will occur)
     String::new()
 }
 
 fn restart_process() {
     log!("[DAEMON_V2_CHECK] Monitoring cycle initiated", "fingerprint" => "v2_fix");
-    
+
     // Reap zombie processes at the start of each monitoring cycle
     // This prevents zombie accumulation by calling try_wait() on all child process handles
     reap_zombie_processes();
-    
+
     // Load daemon config once at the start to avoid repeated I/O operations
     let daemon_config = config::read().daemon;
 
@@ -209,10 +212,11 @@ fn restart_process() {
         let shell_alive = item
             .shell_pid
             .map_or(false, |pid| opm::process::is_pid_alive(pid));
-        
+
         // Check if session is alive (more robust than individual PID checks)
         // This handles process forking where the main PID exits but children continue running
-        let session_alive = item.session_id
+        let session_alive = item
+            .session_id
             .map_or(false, |sid| opm::process::is_session_alive(sid));
 
         // PM2-STYLE VALIDATION: Check for PID reuse and command mismatch
@@ -225,13 +229,13 @@ fn restart_process() {
             } else {
                 None
             };
-            
+
             let (is_valid, current_start_time) = opm::process::validate_process_with_sysinfo(
                 item.pid,
                 expected_pattern,
                 item.process_start_time,
             );
-            
+
             if !is_valid && item.running {
                 validation_failed = true;
                 // PID has been reused or command mismatch detected
@@ -239,7 +243,7 @@ fn restart_process() {
                     "[daemon] PID {} validation failed for process {} ({}). PID may have been reused or command mismatch.",
                     item.pid, item.name, id
                 );
-                
+
                 // Update start time if process exists but with different start time
                 if let Some(new_start_time) = current_start_time {
                     if runner.exists(id) {
@@ -248,16 +252,16 @@ fn restart_process() {
                 }
             }
         }
-        
+
         // Use enhanced sysinfo-based detection for more robust process tree checking
         // This handles cases where shell wrapper exits but children are still running
         // If validation failed, treat process as dead
         let any_descendant_alive = if validation_failed {
             false
         } else {
-            has_valid_pid 
-                && (opm::process::is_process_or_children_alive_sysinfo(item.pid, &item.children) 
-                    || shell_alive 
+            has_valid_pid
+                && (opm::process::is_process_or_children_alive_sysinfo(item.pid, &item.children)
+                    || shell_alive
                     || session_alive)
         };
 
@@ -272,7 +276,7 @@ fn restart_process() {
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
         // However, if the main process itself is alive, we should treat it as online
-        let all_children_are_zombies = !item.children.is_empty() 
+        let all_children_are_zombies = !item.children.is_empty()
             && item.children.iter().all(|&child_pid| {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
@@ -352,21 +356,22 @@ fn restart_process() {
                 // Extract key parts of the command for searching
                 // Look for unique identifiers like JAR files, script names, etc.
                 let command_pattern = extract_search_pattern(&item.script);
-                
+
                 if !command_pattern.is_empty() {
                     log!("[daemon] searching for existing process before restart", 
                         "name" => &item.name, 
                         "id" => id,
                         "pattern" => &command_pattern);
-                    
-                    if let Some(found_pid) = opm::process::find_process_by_command(&command_pattern) {
+
+                    if let Some(found_pid) = opm::process::find_process_by_command(&command_pattern)
+                    {
                         // Validate the found process before adopting
                         let (is_valid, start_time) = opm::process::validate_process_with_sysinfo(
                             found_pid,
                             Some(&command_pattern),
                             None,
                         );
-                        
+
                         if is_valid {
                             // Found a matching and valid process - adopt it instead of restarting
                             log!("[daemon] ADOPTING existing process instead of restarting", 
@@ -375,7 +380,7 @@ fn restart_process() {
                                 "old_pid" => item.pid,
                                 "new_pid" => found_pid,
                                 "pattern" => &command_pattern);
-                            
+
                             if runner.exists(id) {
                                 let process = runner.process(id);
                                 let old_pid = process.pid;
@@ -385,18 +390,19 @@ fn restart_process() {
                                 process.failed_restart_attempts = 0; // Reset failure count
                                 process.process_start_time = start_time; // Store start time for PID reuse detection
                                 process.is_process_tree = false; // Adopted process is not a wrapper
-                                
+
                                 // Update session ID for the adopted process
                                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                                 {
-                                    process.session_id = opm::process::unix::get_session_id(found_pid as i32);
+                                    process.session_id =
+                                        opm::process::unix::get_session_id(found_pid as i32);
                                 }
-                                
+
                                 // Add to tracked children for monitoring
                                 if !process.children.contains(&found_pid) {
                                     process.children.push(found_pid);
                                 }
-                                
+
                                 runner.save_direct();
                                 log!("[daemon] successfully adopted process",
                                     "name" => &item.name,
@@ -432,161 +438,163 @@ fn restart_process() {
                     let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
                     let is_new_crash = item.pid > 0;
 
-                if is_new_crash && !just_started {
-                    // Check if this is a manual stop (user-initiated via 'opm stop')
-                    // Re-read the latest process state to check the manual_stop flag
-                    // (item is a snapshot from the start of the loop, might be stale)
-                    let is_manual_stop = runner.exists(id) && runner.process(id).manual_stop;
-                    
-                    if is_manual_stop {
-                        if runner.exists(id) {
-                            let process = runner.process(id);
-                            process.running = false;
-                            process.pid = 0;
-                            process.shell_pid = None;
-                            process.crash.crashed = false;
-                            // Reset manual_stop flag after handling
-                            process.manual_stop = false;
-                            runner.save_direct();
-                            log!("[daemon] process stopped manually (not a crash)", "name" => &item.name, "id" => id);
+                    if is_new_crash && !just_started {
+                        // Check if this is a manual stop (user-initiated via 'opm stop')
+                        // Re-read the latest process state to check the manual_stop flag
+                        // (item is a snapshot from the start of the loop, might be stale)
+                        let is_manual_stop = runner.exists(id) && runner.process(id).manual_stop;
+
+                        if is_manual_stop {
+                            if runner.exists(id) {
+                                let process = runner.process(id);
+                                process.running = false;
+                                process.pid = 0;
+                                process.shell_pid = None;
+                                process.crash.crashed = false;
+                                // Reset manual_stop flag after handling
+                                process.manual_stop = false;
+                                runner.save_direct();
+                                log!("[daemon] process stopped manually (not a crash)", "name" => &item.name, "id" => id);
+                            }
+                            continue;
                         }
-                        continue;
-                    }
 
-                    let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
-                    let mut exited_successfully = false;
-                    let mut handle_found = false;
+                        let process_handle_pid = item.shell_pid.unwrap_or(item.pid);
+                        let mut exited_successfully = false;
+                        let mut handle_found = false;
 
-                    if let Some((_, handle_ref)) =
-                        opm::process::PROCESS_HANDLES.remove(&process_handle_pid)
-                    {
-                        handle_found = true;
-                        if let Ok(mut child) = handle_ref.lock() {
-                            if let Ok(Some(status)) = child.try_wait() {
-                                exited_successfully = status.success();
-                                log!("[daemon] reaped exited process", "name" => &item.name, "id" => id, "success" => exited_successfully);
+                        if let Some((_, handle_ref)) =
+                            opm::process::PROCESS_HANDLES.remove(&process_handle_pid)
+                        {
+                            handle_found = true;
+                            if let Ok(mut child) = handle_ref.lock() {
+                                if let Ok(Some(status)) = child.try_wait() {
+                                    exited_successfully = status.success();
+                                    log!("[daemon] reaped exited process", "name" => &item.name, "id" => id, "success" => exited_successfully);
+                                }
                             }
                         }
-                    }
 
-                    if handle_found && exited_successfully {
-                        // Safe PID adoption for shell wrapper scenarios (Stirling-PDF fix)
-                        // If the shell wrapper exits cleanly but has exactly ONE child process,
-                        // adopt that child as the new primary PID instead of marking as stopped
-                        // This handles cases where `sh -c` or `bash -c` creates a transient parent
-                        
-                        let current_children = opm::process::process_find_children(item.pid);
-                        
-                        // Only adopt if:
-                        // 1. Exactly one child exists (prevents adopting wrong PID)
-                        // 2. The child is actually alive
-                        // 3. Process is supposed to be running (prevents restarting stopped processes)
-                        if current_children.len() == 1 && item.running {
-                            let child_pid = current_children[0];
-                            if opm::process::is_pid_alive(child_pid) {
-                                // Verify we can access the child process (basic safety check)
-                                #[cfg(any(target_os = "linux", target_os = "macos"))]
-                                {
-                                    use opm::process::unix::NativeProcess;
-                                    // Try to create process handle - if successful, we can safely adopt
-                                    if let Ok(_child_process) = NativeProcess::new(child_pid as u32) {
-                                        // Validate and capture start time
-                                        let (_is_valid, start_time) = opm::process::validate_process_with_sysinfo(
-                                            child_pid,
-                                            None,
-                                            None,
-                                        );
-                                        
-                                        // Adopt the child PID
-                                        if runner.exists(id) {
-                                            let process = runner.process(id);
-                                            let old_pid = process.pid;
-                                            process.pid = child_pid;
-                                            process.shell_pid = None; // Child is now the primary PID
-                                            process.process_start_time = start_time; // Store start time
-                                            process.is_process_tree = false; // No longer a wrapper
-                                            // Add to tracked children for monitoring
-                                            if !process.children.contains(&child_pid) {
-                                                process.children.push(child_pid);
-                                            }
-                                            // Reset failed restart attempts on successful adoption
-                                            process.failed_restart_attempts = 0;
-                                            runner.save_direct();
-                                            log!("[daemon] adopted child PID after shell wrapper exit", 
+                        if handle_found && exited_successfully {
+                            // Safe PID adoption for shell wrapper scenarios (Stirling-PDF fix)
+                            // If the shell wrapper exits cleanly but has exactly ONE child process,
+                            // adopt that child as the new primary PID instead of marking as stopped
+                            // This handles cases where `sh -c` or `bash -c` creates a transient parent
+
+                            let current_children = opm::process::process_find_children(item.pid);
+
+                            // Only adopt if:
+                            // 1. Exactly one child exists (prevents adopting wrong PID)
+                            // 2. The child is actually alive
+                            // 3. Process is supposed to be running (prevents restarting stopped processes)
+                            if current_children.len() == 1 && item.running {
+                                let child_pid = current_children[0];
+                                if opm::process::is_pid_alive(child_pid) {
+                                    // Verify we can access the child process (basic safety check)
+                                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                                    {
+                                        use opm::process::unix::NativeProcess;
+                                        // Try to create process handle - if successful, we can safely adopt
+                                        if let Ok(_child_process) =
+                                            NativeProcess::new(child_pid as u32)
+                                        {
+                                            // Validate and capture start time
+                                            let (_is_valid, start_time) =
+                                                opm::process::validate_process_with_sysinfo(
+                                                    child_pid, None, None,
+                                                );
+
+                                            // Adopt the child PID
+                                            if runner.exists(id) {
+                                                let process = runner.process(id);
+                                                let old_pid = process.pid;
+                                                process.pid = child_pid;
+                                                process.shell_pid = None; // Child is now the primary PID
+                                                process.process_start_time = start_time; // Store start time
+                                                process.is_process_tree = false; // No longer a wrapper
+                                                                                 // Add to tracked children for monitoring
+                                                if !process.children.contains(&child_pid) {
+                                                    process.children.push(child_pid);
+                                                }
+                                                // Reset failed restart attempts on successful adoption
+                                                process.failed_restart_attempts = 0;
+                                                runner.save_direct();
+                                                log!("[daemon] adopted child PID after shell wrapper exit", 
                                                 "name" => &item.name, 
                                                 "id" => id, 
                                                 "old_pid" => old_pid,
                                                 "new_pid" => child_pid);
-                                            continue;
+                                                continue;
+                                            }
                                         }
                                     }
-                                }
-                                
-                                // If we're on an unsupported OS, still try to adopt
-                                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-                                {
-                                    if runner.exists(id) {
-                                        let process = runner.process(id);
-                                        let old_pid = process.pid;
-                                        process.pid = child_pid;
-                                        process.shell_pid = None;
-                                        process.is_process_tree = false; // No longer a wrapper
-                                        if !process.children.contains(&child_pid) {
-                                            process.children.push(child_pid);
-                                        }
-                                        process.failed_restart_attempts = 0;
-                                        runner.save_direct();
-                                        log!("[daemon] adopted child PID after shell wrapper exit", 
+
+                                    // If we're on an unsupported OS, still try to adopt
+                                    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                                    {
+                                        if runner.exists(id) {
+                                            let process = runner.process(id);
+                                            let old_pid = process.pid;
+                                            process.pid = child_pid;
+                                            process.shell_pid = None;
+                                            process.is_process_tree = false; // No longer a wrapper
+                                            if !process.children.contains(&child_pid) {
+                                                process.children.push(child_pid);
+                                            }
+                                            process.failed_restart_attempts = 0;
+                                            runner.save_direct();
+                                            log!("[daemon] adopted child PID after shell wrapper exit", 
                                             "name" => &item.name, 
                                             "id" => id, 
                                             "old_pid" => old_pid,
                                             "new_pid" => child_pid);
-                                        continue;
+                                            continue;
+                                        }
                                     }
                                 }
                             }
+
+                            // No suitable child to adopt - process exited cleanly, mark as stopped
+                            if runner.exists(id) {
+                                let process = runner.process(id);
+                                process.running = false;
+                                process.pid = 0;
+                                process.shell_pid = None;
+                                process.crash.crashed = false;
+                                runner.save_direct();
+                                log!("[daemon] process stopped cleanly", "name" => &item.name, "id" => id);
+                            }
+                            continue;
                         }
-                        
-                        // No suitable child to adopt - process exited cleanly, mark as stopped
+
+                        // If handle not found, or it exited with an error, it's a crash.
                         if runner.exists(id) {
                             let process = runner.process(id);
-                            process.running = false;
                             process.pid = 0;
                             process.shell_pid = None;
-                            process.crash.crashed = false;
+                            process.crash.crashed = true;
+
+                            if item.running {
+                                let process_name = item.name.clone();
+                                if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
+                                    handle
+                                        .spawn(emit_crash_event_and_notification(id, process_name));
+                                }
+
+                                // Check restart limit using restarts counter
+                                // This is the single source of truth displayed in `opm info`
+                                if item.restarts >= daemon_config.restarts {
+                                    process.running = false;
+                                    process.errored = true;
+                                    log!("[daemon] process reached max restart limit, setting errored state", "name" => &item.name, "id" => id, "restarts" => item.restarts, "limit" => daemon_config.restarts);
+                                } else {
+                                    log!("[daemon] process crashed", "name" => &item.name, "id" => id, "restarts" => item.restarts);
+                                }
+                            }
                             runner.save_direct();
-                            log!("[daemon] process stopped cleanly", "name" => &item.name, "id" => id);
                         }
-                        continue;
                     }
-
-                    // If handle not found, or it exited with an error, it's a crash.
-                    if runner.exists(id) {
-                        let process = runner.process(id);
-                        process.pid = 0;
-                        process.shell_pid = None;
-                        process.crash.crashed = true;
-
-                        if item.running {
-                            let process_name = item.name.clone();
-                            if let Some(handle) = tokio::runtime::Handle::try_current().ok() {
-                                handle.spawn(emit_crash_event_and_notification(id, process_name));
-                            }
-
-                            // Check restart limit using restarts counter
-                            // This is the single source of truth displayed in `opm info`
-                            if item.restarts >= daemon_config.restarts {
-                                process.running = false;
-                                process.errored = true;
-                                log!("[daemon] process reached max restart limit, setting errored state", "name" => &item.name, "id" => id, "restarts" => item.restarts, "limit" => daemon_config.restarts);
-                            } else {
-                                log!("[daemon] process crashed", "name" => &item.name, "id" => id, "restarts" => item.restarts);
-                            }
-                        }
-                        runner.save_direct();
-                    }
-                }
-            } // End of !within_action_delay check for crash detection
+                } // End of !within_action_delay check for crash detection
 
                 // --- AUTO-RESTART LOGIC ---
                 // Attempt to restart any process that is supposed to be running but is dead.
@@ -622,10 +630,11 @@ fn restart_process() {
                                 // Anti-spam cooldown mechanism with exponential backoff
                                 // Enforce minimum delay between restart attempts
                                 // Implements exponential backoff: crashes within 10s trigger 30s wait
-                                let seconds_since_last_attempt = proc.last_restart_attempt
+                                let seconds_since_last_attempt = proc
+                                    .last_restart_attempt
                                     .map(|t| (Utc::now() - t).num_seconds())
                                     .unwrap_or(i64::MAX); // Never attempted - allow restart immediately
-                                
+
                                 // Calculate backoff delay based on failure count (exponential backoff)
                                 // Formula: base_delay * (2 ^ min(failed_attempts, 3))
                                 // This gives: 10s, 20s, 40s, 80s, 80s... capped at 80s
@@ -633,13 +642,14 @@ fn restart_process() {
                                 // runs when a process needs restart (rare), not on every monitoring cycle
                                 let base_delay = if proc.failed_restart_attempts > 0 {
                                     // Process failed to restart - use exponential backoff
-                                    let exponential_factor = 2u64.pow(proc.failed_restart_attempts.min(3));
+                                    let exponential_factor =
+                                        2u64.pow(proc.failed_restart_attempts.min(3));
                                     FAILED_RESTART_COOLDOWN_SECS * exponential_factor
                                 } else {
                                     // First restart after successful start
                                     RESTART_COOLDOWN_SECS
                                 };
-                                
+
                                 // Check if process has exceeded maximum restart attempts
                                 const MAX_RESTART_ATTEMPTS: u32 = 5;
                                 if proc.failed_restart_attempts >= MAX_RESTART_ATTEMPTS {
@@ -656,13 +666,17 @@ fn restart_process() {
                                         "max_attempts" => MAX_RESTART_ATTEMPTS);
                                     continue; // Skip restart - requires manual intervention
                                 }
-                                
-                                let within_cooldown = seconds_since_last_attempt < base_delay as i64;
+
+                                let within_cooldown =
+                                    seconds_since_last_attempt < base_delay as i64;
 
                                 if within_cooldown {
                                     // Process is in cooldown period - skip restart
                                     // Log periodically to reduce noise (but not at 0 to avoid race with restart log)
-                                    if seconds_since_last_attempt > 0 && seconds_since_last_attempt % COOLDOWN_LOG_INTERVAL_SECS == 0 {
+                                    if seconds_since_last_attempt > 0
+                                        && seconds_since_last_attempt % COOLDOWN_LOG_INTERVAL_SECS
+                                            == 0
+                                    {
                                         log!("[daemon] process in restart cooldown", 
                                             "name" => &proc.name, 
                                             "id" => id, 
@@ -704,12 +718,14 @@ fn restart_process() {
 
                                     // Attempt restart
                                     runner.restart(id, true, true);
-                                    
+
                                     // Update failed restart counter based on result
                                     // Verify process is actually running by checking PID > 0 AND process is alive
                                     // Also check if this was a quick crash (within 10 seconds) to detect flapping
                                     if let Some(process) = runner.list.get_mut(&id) {
-                                        if process.pid > 0 && opm::process::is_pid_alive(process.pid) {
+                                        if process.pid > 0
+                                            && opm::process::is_pid_alive(process.pid)
+                                        {
                                             // Restart succeeded - process has valid PID and is alive
                                             // Check if previous process crashed quickly (within 10s of start)
                                             // This indicates a flapping process that needs exponential backoff
@@ -717,7 +733,8 @@ fn restart_process() {
                                                 // Use the process's started time which was updated by restart()
                                                 // Calculate how long the PREVIOUS instance ran before crashing
                                                 let previous_started = item.started;
-                                                let crash_time = (Utc::now() - previous_started).num_seconds();
+                                                let crash_time =
+                                                    (Utc::now() - previous_started).num_seconds();
                                                 if crash_time < 10 {
                                                     // Quick crash detected - this counts as a failed restart
                                                     process.failed_restart_attempts += 1;
@@ -744,7 +761,7 @@ fn restart_process() {
                                                 "failed_attempts" => process.failed_restart_attempts);
                                         }
                                     }
-                                    
+
                                     // Save state after restart to persist PID, counters, timestamps
                                     runner.save_direct();
                                 }
@@ -762,7 +779,7 @@ fn restart_process() {
         if item.running && item.pid == 0 && !item.crash.crashed && !is_restore_in_progress() {
             log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
             runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
-            // Save state after restart to persist PID and state changes
+                                             // Save state after restart to persist PID and state changes
             runner.save_direct();
             continue;
         }
@@ -1541,15 +1558,15 @@ mod tests {
     fn test_restore_in_progress_flag() {
         // Initially should be false
         assert!(!is_restore_in_progress());
-        
+
         // Set the flag
         set_restore_in_progress();
         assert!(is_restore_in_progress());
-        
+
         // Clear the flag
         clear_restore_in_progress();
         assert!(!is_restore_in_progress());
-        
+
         // Can set and clear multiple times
         set_restore_in_progress();
         assert!(is_restore_in_progress());
@@ -1561,18 +1578,18 @@ mod tests {
     fn test_restore_in_progress_flag_concurrent() {
         // Test thread-safety of atomic flag operations under concurrent access
         // This verifies the flag works correctly when multiple threads check/set it simultaneously
-        
+
         // Start with clean state
         clear_restore_in_progress();
         assert!(!is_restore_in_progress());
-        
+
         // Use Arc to share state transition counter across threads
-        use std::sync::Arc;
         use std::sync::atomic::AtomicUsize;
-        
+        use std::sync::Arc;
+
         let true_reads = Arc::new(AtomicUsize::new(0));
         let false_reads = Arc::new(AtomicUsize::new(0));
-        
+
         // Spawn multiple reader threads that will check the flag
         let readers: Vec<_> = (0..10)
             .map(|_| {
@@ -1592,7 +1609,7 @@ mod tests {
                 })
             })
             .collect();
-        
+
         // Spawn writer thread that toggles the flag
         let writer = thread::spawn(|| {
             for _ in 0..50 {
@@ -1602,25 +1619,38 @@ mod tests {
                 thread::yield_now();
             }
         });
-        
+
         // Wait for all threads to complete
         writer.join().expect("Writer thread panicked");
         for reader in readers {
             reader.join().expect("Reader thread panicked");
         }
-        
+
         // Verify we observed both states (flag was toggled successfully)
         let true_count = true_reads.load(Ordering::Relaxed);
         let false_count = false_reads.load(Ordering::Relaxed);
-        
+
         // Total reads should be 10 threads * 100 iterations = 1000
-        assert_eq!(true_count + false_count, 1000, "All reads should be accounted for");
-        
+        assert_eq!(
+            true_count + false_count,
+            1000,
+            "All reads should be accounted for"
+        );
+
         // Both states should have been observed (writer toggled 50 times)
-        assert!(true_count > 0, "Flag should have been observed as true at least once");
-        assert!(false_count > 0, "Flag should have been observed as false at least once");
-        
+        assert!(
+            true_count > 0,
+            "Flag should have been observed as true at least once"
+        );
+        assert!(
+            false_count > 0,
+            "Flag should have been observed as false at least once"
+        );
+
         // After writer completes (50 set/clear pairs), flag should be cleared
-        assert!(!is_restore_in_progress(), "Flag should be cleared after all operations");
+        assert!(
+            !is_restore_in_progress(),
+            "Flag should be cleared after all operations"
+        );
     }
 }

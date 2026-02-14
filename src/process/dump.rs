@@ -78,19 +78,32 @@ fn read_permanent_dump() -> Runner {
             let dump_path = global!("opm.dump");
             let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
             let corrupted_backup = format!("{}.corrupted.{}", dump_path, timestamp);
-            
+
             if let Err(e) = fs::copy(&dump_path, &corrupted_backup) {
                 log!("[dump] ERROR: Failed to backup corrupted dump file: {}", e);
             } else {
-                log!("[dump] Corrupted dump file backed up to: {}", corrupted_backup);
+                log!(
+                    "[dump] Corrupted dump file backed up to: {}",
+                    corrupted_backup
+                );
                 println!("{}", format!("\n⚠️  Warning: OPM dump file could not be read (likely due to structure changes after upgrade)").yellow());
-                println!("{}", format!("   Backup created at: {}", corrupted_backup).yellow());
-                println!("{}", format!("   Your old process data is preserved in the backup file.").yellow());
-                println!("{}", format!("   Starting with empty process list. Use 'opm restore' if needed.\n").yellow());
+                println!(
+                    "{}",
+                    format!("   Backup created at: {}", corrupted_backup).yellow()
+                );
+                println!(
+                    "{}",
+                    format!("   Your old process data is preserved in the backup file.").yellow()
+                );
+                println!(
+                    "{}",
+                    format!("   Starting with empty process list. Use 'opm restore' if needed.\n")
+                        .yellow()
+                );
             }
-            
+
             log!("[dump] Failed to read permanent dump: {err}");
-            
+
             // Return empty runner WITHOUT writing to disk
             // This prevents overwriting the backup we just created
             empty_runner()
@@ -320,7 +333,7 @@ pub fn write(dump: &Runner) {
     // This prevents corruption if the write is interrupted (power loss, kill -9, etc.)
     // Use PathBuf for proper cross-platform path handling
     let temp_path = PathBuf::from(&dump_path).with_extension("tmp");
-    
+
     // Write to temporary file
     if let Err(err) = fs::write(&temp_path, &encoded) {
         crashln!(
@@ -345,7 +358,10 @@ pub fn write(dump: &Runner) {
         }
         Err(err) => {
             if let Err(e) = fs::remove_file(&temp_path) {
-                log!("[dump::write] Failed to cleanup temp file after metadata error: {}", e);
+                log!(
+                    "[dump::write] Failed to cleanup temp file after metadata error: {}",
+                    e
+                );
             }
             crashln!(
                 "{} Cannot verify temporary dump file.\n{}",
@@ -359,7 +375,10 @@ pub fn write(dump: &Runner) {
     // On Unix, this is atomic and will never leave the dump file in a partial state
     if let Err(err) = fs::rename(&temp_path, &dump_path) {
         if let Err(e) = fs::remove_file(&temp_path) {
-            log!("[dump::write] Failed to cleanup temp file after rename error: {}", e);
+            log!(
+                "[dump::write] Failed to cleanup temp file after rename error: {}",
+                e
+            );
         }
         crashln!(
             "{} Error renaming temporary dumpfile to final location.\n{}",
@@ -412,15 +431,15 @@ pub fn write_memory(dump: &Runner) {
 
 pub fn load_permanent_into_memory() -> Runner {
     let mut runner = read_permanent_dump();
-    
+
     // Explicitly reset restart counters for all processes during restore
     // This gives processes a fresh start after system restore/reboot
     // Note: Counters ARE now persisted to dump file, but we reset them during
     // restore to give processes a clean slate after reboot/restore operations
     reset_all_restart_counters(&mut runner);
-    
+
     log!("[dump::load_permanent_into_memory] Loaded permanent dump, restart counters explicitly reset to 0");
-    
+
     write_memory_direct(&runner);
     runner
 }

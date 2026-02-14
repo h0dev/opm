@@ -78,7 +78,7 @@ pub fn get_process_name(pid: u32) -> Result<String, String> {
 #[cfg(target_os = "linux")]
 pub fn get_session_id(pid: i32) -> Option<i64> {
     use std::fs;
-    
+
     let stat_path = format!("/proc/{}/stat", pid);
     if let Ok(stat_content) = fs::read_to_string(&stat_path) {
         // Parse /proc/pid/stat format: pid (comm) state ppid pgrp session ...
@@ -109,7 +109,7 @@ pub fn get_session_id(pid: i32) -> Option<i64> {
 #[cfg(target_os = "linux")]
 pub fn get_process_cmdline(pid: i32) -> Option<String> {
     use std::fs;
-    
+
     let cmdline_path = format!("/proc/{}/cmdline", pid);
     if let Ok(cmdline_raw) = fs::read_to_string(&cmdline_path) {
         // cmdline is null-separated, convert to space-separated
