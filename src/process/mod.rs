@@ -2288,6 +2288,11 @@ pub fn is_process_or_children_alive_sysinfo(root_pid: i64, tracked_children: &[i
 
 /// Check if any process in the same session is alive (using session ID)
 /// This is more robust than tracking individual PIDs as it handles process forking
+/// 
+/// Note: This function refreshes all processes which is expensive, but:
+/// 1. It's only called when the main PID is dead (rare case)
+/// 2. Session-based checks are critical for correct process tracking
+/// 3. The monitoring interval (default 1s) limits how often this runs
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn is_session_alive(session_id: i64) -> bool {
     use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};
@@ -2322,6 +2327,11 @@ pub fn is_session_alive(_session_id: i64) -> bool {
 
 /// Search for a process by command pattern
 /// Returns the PID of the first matching process, or None if not found
+/// 
+/// Note: This function refreshes all processes which is expensive, but:
+/// 1. It's only called when attempting process adoption (rare case, after crash)
+/// 2. Process adoption is critical to prevent duplicate processes
+/// 3. The cost is acceptable given it prevents severe issues like multiple service instances
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn find_process_by_command(command_pattern: &str) -> Option<i64> {
     use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};

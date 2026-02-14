@@ -82,12 +82,13 @@ pub fn get_session_id(pid: i32) -> Option<i64> {
     let stat_path = format!("/proc/{}/stat", pid);
     if let Ok(stat_content) = fs::read_to_string(&stat_path) {
         // Parse /proc/pid/stat format: pid (comm) state ppid pgrp session ...
-        // The session ID is the 6th field (index 5)
+        // After the command in parentheses: state (0), ppid (1), pgrp (2), session (3)
+        // The session ID is the 4th field (index 3)
         if let Some(paren_end) = stat_content.rfind(')') {
             let after_comm = &stat_content[paren_end + 1..];
             let parts: Vec<&str> = after_comm.split_whitespace().collect();
-            if parts.len() > 5 {
-                if let Ok(sid) = parts[5].parse::<i64>() {
+            if parts.len() > 3 {
+                if let Ok(sid) = parts[3].parse::<i64>() {
                     return Some(sid);
                 }
             }

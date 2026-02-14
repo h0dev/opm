@@ -134,8 +134,11 @@ fn extract_search_pattern(command: &str) -> String {
         // Find the start of the filename (after last space or slash)
         let before_jar = &command[..jar_pos];
         if let Some(start) = before_jar.rfind(|c: char| c == ' ' || c == '/') {
-            let jar_name = &command[start+1..jar_pos+4];
-            return jar_name.trim().to_string();
+            let end = (jar_pos + 4).min(command.len());
+            if start + 1 < end {
+                let jar_name = &command[start+1..end];
+                return jar_name.trim().to_string();
+            }
         }
     }
     
@@ -144,8 +147,11 @@ fn extract_search_pattern(command: &str) -> String {
         if let Some(ext_pos) = command.find(ext) {
             let before_ext = &command[..ext_pos];
             if let Some(start) = before_ext.rfind(|c: char| c == ' ' || c == '/') {
-                let script_name = &command[start+1..ext_pos+ext.len()];
-                return script_name.trim().to_string();
+                let end = (ext_pos + ext.len()).min(command.len());
+                if start + 1 < end {
+                    let script_name = &command[start+1..end];
+                    return script_name.trim().to_string();
+                }
             }
         }
     }
@@ -559,6 +565,8 @@ fn restart_process() {
                                 // Calculate backoff delay based on failure count (exponential backoff)
                                 // Formula: base_delay * (2 ^ min(failed_attempts, 3))
                                 // This gives: 10s, 20s, 40s, 80s, 80s... capped at 80s
+                                // Note: This calculation is very cheap (single exponentiation) and only
+                                // runs when a process needs restart (rare), not on every monitoring cycle
                                 let base_delay = if proc.failed_restart_attempts > 0 {
                                     // Process failed to restart - use exponential backoff
                                     let exponential_factor = 2u64.pow(proc.failed_restart_attempts.min(3));
@@ -642,7 +650,10 @@ fn restart_process() {
                                             // Check if previous process crashed quickly (within 10s of start)
                                             // This indicates a flapping process that needs exponential backoff
                                             if is_new_crash {
-                                                let crash_time = (Utc::now() - item.started).num_seconds();
+                                                // Use the process's started time which was updated by restart()
+                                                // Calculate how long the PREVIOUS instance ran before crashing
+                                                let previous_started = item.started;
+                                                let crash_time = (Utc::now() - previous_started).num_seconds();
                                                 if crash_time < 10 {
                                                     // Quick crash detected - this counts as a failed restart
                                                     process.failed_restart_attempts += 1;
