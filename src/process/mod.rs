@@ -2378,6 +2378,19 @@ pub fn is_pid_info_missing(pid: i64, children: &[i64]) -> bool {
     pid <= 0 && children.is_empty()
 }
 
+/// Check if a process is actually alive by checking PID and shell_pid
+/// This checks the actual process PID first (long-running), then shell_pid (transient)
+/// Returns true if either the main PID or shell PID is alive
+pub fn is_process_actually_alive(pid: i64, shell_pid: Option<i64>) -> bool {
+    if pid > 0 {
+        is_pid_alive(pid)
+    } else if let Some(shell_pid) = shell_pid {
+        shell_pid > 0 && is_pid_alive(shell_pid)
+    } else {
+        false
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn find_alive_process_in_group(pid: i64) -> Option<i64> {
     unix::find_alive_process_in_group_for_pid(pid)
