@@ -818,9 +818,16 @@ impl<'i> Internal<'i> {
                 };
 
                 // Only count uptime when the process is actually running
+                // Use OS-level uptime from sysinfo for accurate uptime calculation
                 // Crashed or stopped processes should show "none" uptime
                 let uptime = if process_actually_running {
-                    format!("{}", helpers::format_duration(item.started))
+                    let uptime_secs = opm::process::get_process_uptime_sysinfo(item.pid);
+                    if uptime_secs > 0 {
+                        helpers::format_uptime_seconds(uptime_secs)
+                    } else {
+                        // If sysinfo returns 0, process doesn't exist - show as none
+                        string!("none")
+                    }
                 } else {
                     string!("none")
                 };
@@ -1905,9 +1912,16 @@ impl<'i> Internal<'i> {
                     };
 
                     // Only count uptime when the process is actually running
-                    // Crashed or stopped processes should show "none" uptime
+                    // Use OS-level uptime from sysinfo for accurate uptime calculation
+                    // This prevents ghost data after daemon restarts
                     let uptime = if process_actually_running {
-                        format!("{}  ", helpers::format_duration(item.started))
+                        let uptime_secs = opm::process::get_process_uptime_sysinfo(item.pid);
+                        if uptime_secs > 0 {
+                            format!("{}  ", helpers::format_uptime_seconds(uptime_secs))
+                        } else {
+                            // If sysinfo returns 0, process doesn't exist - show as offline
+                            string!("none  ")
+                        }
                     } else {
                         string!("none  ")
                     };
@@ -2147,9 +2161,15 @@ impl<'i> Internal<'i> {
                         };
 
                         // Only count uptime when the process is actually running
+                        // Use OS-level uptime from sysinfo for accurate uptime calculation
                         // Crashed or stopped processes should show "none" uptime
                         let uptime = if process_actually_running {
-                            format!("{}  ", helpers::format_duration(item.started))
+                            let uptime_secs = opm::process::get_process_uptime_sysinfo(item.pid);
+                            if uptime_secs > 0 {
+                                format!("{}  ", helpers::format_uptime_seconds(uptime_secs))
+                            } else {
+                                string!("none  ")
+                            }
                         } else {
                             string!("none  ")
                         };

@@ -1750,8 +1750,14 @@ impl Runner {
             }
         };
 
+        // Use OS-level uptime from sysinfo for accurate uptime calculation
         let uptime = if process_actually_running {
-            helpers::format_duration(item.started)
+            let uptime_secs = get_process_uptime_sysinfo(item.pid);
+            if uptime_secs > 0 {
+                helpers::format_uptime_seconds(uptime_secs)
+            } else {
+                string!("0s")
+            }
         } else {
             string!("0s")
         };
@@ -1969,10 +1975,16 @@ impl ProcessWrapper {
             }
         };
 
+        // Use OS-level uptime from sysinfo for accurate uptime calculation
         // Only count uptime when the process is actually running
         // Crashed or stopped processes should show "0s" uptime
         let uptime = if process_actually_running {
-            helpers::format_duration(item.started)
+            let uptime_secs = get_process_uptime_sysinfo(item.pid);
+            if uptime_secs > 0 {
+                helpers::format_uptime_seconds(uptime_secs)
+            } else {
+                string!("0s")
+            }
         } else {
             string!("0s")
         };
@@ -2580,6 +2592,48 @@ pub fn get_process_metrics_sysinfo(pid: i64) -> Option<(f64, u64, u64)> {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn get_process_metrics_sysinfo(_pid: i64) -> Option<(f64, u64, u64)> {
     None
+}
+
+/// Get OS-level uptime for a process using sysinfo
+/// Returns uptime in seconds, or 0 if process not found
+/// This is the authoritative source for uptime calculation - it uses the OS's actual
+/// process start time, not application timestamps that can be stale after daemon restarts
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn get_process_uptime_sysinfo(pid: i64) -> u64 {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    if pid <= 0 {
+        return 0;
+    }
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
+
+    let sysinfo_pid = Pid::from_u32(pid as u32);
+    if let Some(process) = system.process(sysinfo_pid) {
+        // Get system boot time to calculate absolute uptime
+        let boot_time = System::boot_time();
+        let process_start_time = process.start_time();
+        
+        // Calculate uptime: current_time - (boot_time + process_start_time)
+        // process.start_time() returns seconds since boot
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        
+        let absolute_start_time = boot_time + process_start_time;
+        if current_time > absolute_start_time {
+            return current_time - absolute_start_time;
+        }
+    }
+
+    0 // Process not found or invalid time calculation
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn get_process_uptime_sysinfo(_pid: i64) -> u64 {
+    0
 }
 
 #[cfg(target_os = "linux")]

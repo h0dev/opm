@@ -53,6 +53,19 @@ pub fn format_duration(datetime: DateTime<Utc>) -> String {
     }
 }
 
+/// Format uptime from seconds (OS-level data)
+/// This is used for displaying absolute uptime from sysinfo
+pub fn format_uptime_seconds(seconds: u64) -> String {
+    let s = seconds as i64;
+    match s {
+        s if s >= SECONDS_IN_YEAR => format!("{}y", s / SECONDS_IN_YEAR),
+        s if s >= SECONDS_IN_DAY => format!("{}d", s / SECONDS_IN_DAY),
+        s if s >= SECONDS_IN_HOUR => format!("{}h", s / SECONDS_IN_HOUR),
+        s if s >= SECONDS_IN_MINUTE => format!("{}m", s / SECONDS_IN_MINUTE),
+        s => format!("{}s", s),
+    }
+}
+
 pub fn format_memory(bytes: u64) -> String {
     const UNIT: f64 = 1024.0;
     const SUFFIX: [&str; 4] = ["b", "kb", "mb", "gb"];
