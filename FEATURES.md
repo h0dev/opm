@@ -103,3 +103,75 @@ The crash counter is automatically reset for ALL processes when the restore comm
 - Applies to **all processes in the system** (both running and stopped)
 - Ensures every process gets a clean slate after system restore/reboot
 - Already implemented - no user action required
+
+## 4. PM2-like Direct Execution Strategy
+
+OPM now intelligently chooses between direct process execution and shell-wrapped execution based on command complexity, similar to PM2's behavior.
+
+### How It Works
+
+**Simple Commands (Direct Execution):**
+- Commands without shell operators spawn directly without a shell wrapper
+- Eliminates the "intermediate shell PID" problem
+- Examples:
+  ```bash
+  opm start "node server.js"        # Spawns directly as: node server.js
+  opm start "python app.py"         # Spawns directly as: python app.py
+  opm start "./binary --flag value" # Spawns directly as: ./binary --flag value
+  ```
+
+**Complex Commands (Shell Execution):**
+- Commands with shell operators use the configured shell (sh/bash from config)
+- Shell operators detected: `&&`, `||`, `|`, `>`, `>>`, `<`, `;`, `&`, `` ` ``, `$()`, `~`, `*`, `export`, `source`, `alias`
+- Examples:
+  ```bash
+  opm start "node app.js | grep error"          # Uses shell due to pipe
+  opm start "echo hello && node server.js"      # Uses shell due to &&
+  opm start "node app.js > output.log"          # Uses shell due to redirect
+  ```
+
+### Benefits
+- **Better PID tracking**: Simple commands have no shell wrapper, making PID management cleaner
+- **Performance**: Direct execution is slightly faster (no shell overhead)
+- **Compatibility**: Complex commands still work exactly as before with full shell support
+- **Configuration**: Shell selection (`sh` or `bash`) still respects your `config.toml` settings
+
+### Configuration
+The shell used for complex commands is configured in `~/.opm/config.toml`:
+```toml
+[runner]
+shell = "/bin/sh"     # or "/bin/bash"
+args = ["-c"]
+```
+
+## 5. Parallel Process Restoration
+
+The `opm restore` command now spawns all processes concurrently instead of sequentially, dramatically reducing restore time.
+
+### Performance Improvements
+- **Before**: Processes spawned sequentially with 1-second wait between each
+  - 3 processes = ~3+ seconds
+  - 10 processes = ~10+ seconds
+- **After**: All processes spawn in parallel with single 1-second stabilization wait
+  - Any number of processes = ~1-2 seconds
+
+### How It Works
+1. All processes are spawned concurrently using thread pool
+2. System waits 1 second for all processes to stabilize
+3. Verification checks run to confirm successful startup
+4. Process list automatically displayed
+
+### Benefits
+- **Faster restores**: Multi-process restores complete 3-10x faster
+- **Better resource utilization**: CPU cores used efficiently
+- **Improved reliability**: Proper synchronization prevents race conditions
+- **Same guarantees**: All safety checks and PID tracking still work correctly
+
+### Example
+```bash
+# Before (sequential): ~10 seconds for 10 processes
+# After (parallel): ~1-2 seconds for 10 processes
+opm restore
+```
+
+The parallel restoration is automatic and requires no configuration changes.
