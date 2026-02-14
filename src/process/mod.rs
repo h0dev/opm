@@ -2270,13 +2270,16 @@ pub struct ProcessRunResult {
 /// Check if a command contains shell-specific features that require shell interpretation
 /// Returns true if the command needs to be run through a shell (sh/bash)
 /// Returns false if the command can be spawned directly for PM2-like behavior
+/// 
+/// Note: This is a heuristic check and may have false positives for complex edge cases
+/// (e.g., backticks in quoted strings, & in URLs). For critical use cases where direct
+/// execution must be guaranteed, prefer explicit command construction.
 fn command_needs_shell(command: &str) -> bool {
     // Shell operators and features that require shell interpretation
     let shell_features = [
         "&&", "||", "|",  // Logical operators and pipes
         ">", ">>", "<",   // Redirection
         ";",              // Command separator
-        "&",              // Background execution
         "`", "$(",        // Command substitution
         "~",              // Home directory expansion
         "*", "?", "[",    // Glob patterns
@@ -2288,6 +2291,13 @@ fn command_needs_shell(command: &str) -> bool {
 
 /// Parse command into program and arguments for direct execution
 /// Returns None if parsing fails or command is complex
+/// 
+/// Note: This uses simple whitespace-based splitting and does NOT handle:
+/// - Quoted arguments with spaces (e.g., program "arg with spaces")
+/// - Escaped characters
+/// - Complex shell quoting rules
+/// For commands requiring such features, they will be detected by command_needs_shell()
+/// and executed through a shell instead.
 fn parse_direct_command(command: &str) -> Option<(String, Vec<String>)> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -2471,9 +2481,12 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
 
     let shell_pid = child.id() as i64;
     
-    // Wait briefly (200ms) to allow OS to register process tree
+    // For shell-wrapped processes, wait briefly to allow OS to register process tree
     // This ensures sysinfo can discover child processes during PID stability checks
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // For direct spawns, no wait needed as there's no shell wrapper to track
+    if !use_direct_spawn {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
     
     let actual_pid = unix::get_actual_child_pid(shell_pid);
 
@@ -5360,7 +5373,7 @@ mod tests {
         assert!(command_needs_shell("echo hello >> output.txt"), "Append redirect should need shell");
         assert!(command_needs_shell("cat < input.txt"), "Input redirect should need shell");
         assert!(command_needs_shell("echo hello; echo world"), "Semicolon should need shell");
-        assert!(command_needs_shell("echo hello &"), "Background should need shell");
+        // Note: Single & removed from detection to avoid false positives with URLs/hex values
         assert!(command_needs_shell("echo `date`"), "Command substitution (backticks) should need shell");
         assert!(command_needs_shell("echo $(date)"), "Command substitution ($()) should need shell");
         assert!(command_needs_shell("cd ~/projects"), "Tilde expansion should need shell");

@@ -1448,7 +1448,14 @@ impl<'i> Internal<'i> {
             
             let handle = thread::spawn(move || {
                 // Restart the process in this thread
-                let mut runner_guard = runner_arc_clone.lock().unwrap();
+                let mut runner_guard = match runner_arc_clone.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => {
+                        ::log::error!("Mutex poisoned during restore for process {}: {}", id, poisoned);
+                        // Recover from poison by taking ownership of the data
+                        poisoned.into_inner()
+                    }
+                };
                 *runner_guard = Internal {
                     id,
                     server_name: &server_name,
@@ -1481,8 +1488,20 @@ impl<'i> Internal<'i> {
         
         // Get the updated runner state after all parallel spawns
         runner = match Arc::try_unwrap(runner_arc) {
-            Ok(mutex) => mutex.into_inner().unwrap(),
-            Err(arc) => arc.lock().unwrap().clone(),
+            Ok(mutex) => match mutex.into_inner() {
+                Ok(inner) => inner,
+                Err(poisoned) => {
+                    ::log::warn!("Mutex poisoned during restore, recovering data");
+                    poisoned.into_inner()
+                }
+            },
+            Err(arc) => match arc.lock() {
+                Ok(guard) => guard.clone(),
+                Err(poisoned) => {
+                    ::log::warn!("Mutex poisoned during restore, recovering data");
+                    poisoned.into_inner().clone()
+                }
+            },
         };
         
         // Wait 1 second for all processes to stabilize after parallel spawning
@@ -1513,7 +1532,8 @@ impl<'i> Internal<'i> {
                 if process.running && process_alive {
                     restored_ids.push(id);
                 } else if process.running && recently_started {
-                    // Still starting up; assume success (will be verified by daemon)
+                    // Still starting up - give it the benefit of the doubt for initial report
+                    // The daemon will verify and handle any issues during its monitoring cycle
                     restored_ids.push(id);
                 } else {
                     failed_ids.push((id, name.clone()));
