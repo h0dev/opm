@@ -27,7 +27,8 @@ use opm::{
     helpers::{self, ColoredString},
     process::{
         dump, get_process_cpu_usage_with_children_from_process, hash, Runner,
-        COOLDOWN_LOG_INTERVAL_SECS, FAILED_RESTART_COOLDOWN_SECS, RESTART_COOLDOWN_SECS,
+        COOLDOWN_LOG_INTERVAL_SECS, FAILED_RESTART_COOLDOWN_SECS, PROCESS_CLEANUP_WAIT_MS,
+        RESTART_COOLDOWN_SECS,
     },
 };
 
@@ -55,6 +56,12 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
     // Don't save process state on daemon shutdown - users should explicitly use 'opm save'
     // if they want to persist process state across daemon restarts.
     // This prevents unexpected process.dump writes when daemon is stopped/restarted.
+
+    // Clean up lock file before exiting
+    if let Some(home_dir) = home::home_dir() {
+        let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
+        let _ = std::fs::remove_file(&lock_path);
+    }
 
     pid::remove();
     log!("[daemon] killed", "pid" => process::id());
@@ -997,42 +1004,90 @@ pub fn start(verbose: bool) {
         }
     }
 
+    // FEATURE: Atomic lock file to prevent concurrent daemon starts
+    // Check for lock file and ensure no other daemon is starting
+    if let Some(home_dir) = home::home_dir() {
+        let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
+        
+        // Check if lock file exists and contains a valid PID
+        if std::path::Path::new(&lock_path).exists() {
+            if let Ok(lock_content) = std::fs::read_to_string(&lock_path) {
+                if let Ok(lock_pid) = lock_content.trim().parse::<i32>() {
+                    // Check if the process holding the lock is still running
+                    if pid::running(lock_pid) {
+                        // Another daemon is currently starting or running
+                        // Try to kill it to ensure clean state
+                        log!("[daemon] found lock file with running process, attempting to kill", "pid" => lock_pid);
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(lock_pid),
+                            nix::sys::signal::Signal::SIGKILL,
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(PROCESS_CLEANUP_WAIT_MS));
+                    } else {
+                        log!("[daemon] removing stale lock file", "pid" => lock_pid);
+                    }
+                }
+            }
+            // Remove stale lock file
+            let _ = std::fs::remove_file(&lock_path);
+        }
+        
+        // Create lock file with current PID
+        let current_pid = std::process::id();
+        if let Err(e) = std::fs::write(&lock_path, current_pid.to_string()) {
+            log!("[daemon] failed to create lock file", "error" => e);
+        } else {
+            log!("[daemon] created lock file", "pid" => current_pid);
+        }
+    }
+
     #[inline]
     extern "C" fn init() {
-        // Create a tokio runtime for async operations
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(runtime) => runtime,
-            Err(err) => {
-                log!("[daemon] Failed to create tokio runtime", "error" => format!("{:?}", err));
-                eprintln!(
-                    "[daemon] Fatal error: Failed to create tokio runtime: {:?}",
-                    err
+        // Wrap initialization in panic::catch_unwind to prevent silent crashes
+        let result = std::panic::catch_unwind(|| {
+            // Create a tokio runtime for async operations
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    log!("[daemon] Failed to create tokio runtime", "error" => format!("{:?}", err));
+                    eprintln!(
+                        "[daemon] Fatal error: Failed to create tokio runtime: {:?}",
+                        err
+                    );
+                    panic!("Failed to create tokio runtime: {:?}", err);
+                }
+            };
+
+            // Enter the runtime context so all async operations work correctly
+            let _guard = rt.enter();
+
+            pid::name("OPM Restart Handler Daemon");
+
+            let config = config::read().daemon;
+            let api_enabled = ENABLE_API.load(Ordering::Acquire);
+            let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
+
+            unsafe {
+                libc::signal(
+                    libc::SIGTERM,
+                    handle_termination_signal as *const () as usize,
                 );
-                panic!("Failed to create tokio runtime: {:?}", err);
+                libc::signal(libc::SIGPIPE, handle_sigpipe as *const () as usize);
+            };
+
+            DAEMON_START_TIME.set(Utc::now().timestamp_millis() as f64);
+
+            pid::write(process::id());
+            log!("[daemon] new fork", "pid" => process::id());
+            
+            // Clean up old lock file and create new one
+            if let Some(home_dir) = home::home_dir() {
+                let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
+                let _ = std::fs::remove_file(&lock_path);
+                if let Err(e) = std::fs::write(&lock_path, process::id().to_string()) {
+                    log!("[daemon] failed to update lock file", "error" => e);
+                }
             }
-        };
-
-        // Enter the runtime context so all async operations work correctly
-        let _guard = rt.enter();
-
-        pid::name("OPM Restart Handler Daemon");
-
-        let config = config::read().daemon;
-        let api_enabled = ENABLE_API.load(Ordering::Acquire);
-        let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
-
-        unsafe {
-            libc::signal(
-                libc::SIGTERM,
-                handle_termination_signal as *const () as usize,
-            );
-            libc::signal(libc::SIGPIPE, handle_sigpipe as *const () as usize);
-        };
-
-        DAEMON_START_TIME.set(Utc::now().timestamp_millis() as f64);
-
-        pid::write(process::id());
-        log!("[daemon] new fork", "pid" => process::id());
 
         if api_enabled {
             log!(
@@ -1179,6 +1234,29 @@ pub fn start(verbose: bool) {
             }
 
             sleep(Duration::from_millis(config.interval));
+        }
+        });
+
+        // Handle panic result from catch_unwind
+        match result {
+            Ok(_) => {
+                // Normal termination (shouldn't reach here in daemon loop)
+                ::log::info!("[daemon] init completed normally");
+            }
+            Err(e) => {
+                // Panic occurred during initialization
+                ::log::error!("[daemon] FATAL: init panicked: {:?}", e);
+                eprintln!("[daemon] FATAL ERROR: Daemon initialization failed: {:?}", e);
+                
+                // Clean up lock file before exiting
+                if let Some(home_dir) = home::home_dir() {
+                    let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
+                    let _ = std::fs::remove_file(&lock_path);
+                }
+                
+                pid::remove();
+                std::process::exit(1);
+            }
         }
     }
 

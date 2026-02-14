@@ -43,8 +43,18 @@ impl fmt::Display for ColoredString {
 pub fn format_duration(datetime: DateTime<Utc>) -> String {
     let current_time = Utc::now();
     let duration = current_time.signed_duration_since(datetime);
+    format_duration_from_seconds(duration.num_seconds())
+}
 
-    match duration.num_seconds() {
+/// Format uptime from seconds (OS-level data)
+/// This is used for displaying absolute uptime from sysinfo
+pub fn format_uptime_seconds(seconds: u64) -> String {
+    format_duration_from_seconds(seconds as i64)
+}
+
+/// Internal helper to format duration from seconds
+fn format_duration_from_seconds(seconds: i64) -> String {
+    match seconds {
         s if s >= SECONDS_IN_YEAR => format!("{}y", s / SECONDS_IN_YEAR),
         s if s >= SECONDS_IN_DAY => format!("{}d", s / SECONDS_IN_DAY),
         s if s >= SECONDS_IN_HOUR => format!("{}h", s / SECONDS_IN_HOUR),

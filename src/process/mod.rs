@@ -54,6 +54,8 @@ pub const RESTART_COOLDOWN_SECS: u64 = 5;
 pub const FAILED_RESTART_COOLDOWN_SECS: u64 = 10;
 // Interval for periodic cooldown logging to reduce log noise
 pub const COOLDOWN_LOG_INTERVAL_SECS: i64 = 5;
+// Wait time after killing processes to allow OS resource cleanup
+pub const PROCESS_CLEANUP_WAIT_MS: u64 = 500;
 
 /// Write timestamp file durably to disk with fsync
 /// This ensures the timestamp is persisted before the function returns,
@@ -1750,8 +1752,14 @@ impl Runner {
             }
         };
 
+        // Use OS-level uptime from sysinfo for accurate uptime calculation
         let uptime = if process_actually_running {
-            helpers::format_duration(item.started)
+            let uptime_secs = get_process_uptime_sysinfo(item.pid);
+            if uptime_secs > 0 {
+                helpers::format_uptime_seconds(uptime_secs)
+            } else {
+                string!("0s")
+            }
         } else {
             string!("0s")
         };
@@ -1969,10 +1977,16 @@ impl ProcessWrapper {
             }
         };
 
+        // Use OS-level uptime from sysinfo for accurate uptime calculation
         // Only count uptime when the process is actually running
         // Crashed or stopped processes should show "0s" uptime
         let uptime = if process_actually_running {
-            helpers::format_duration(item.started)
+            let uptime_secs = get_process_uptime_sysinfo(item.pid);
+            if uptime_secs > 0 {
+                helpers::format_uptime_seconds(uptime_secs)
+            } else {
+                string!("0s")
+            }
         } else {
             string!("0s")
         };
@@ -2227,6 +2241,34 @@ pub fn process_stop(pid: i64) -> Result<(), String> {
     }
 }
 
+/// Force kill a process and all its children using SIGKILL
+/// This is more aggressive than process_stop and ensures termination
+/// Used during restore to clean up old processes
+pub fn force_kill_process_tree(pid: i64) -> Result<(), String> {
+    if pid <= 0 {
+        return Ok(());
+    }
+
+    // Get all children before killing parent
+    let children = process_find_children(pid);
+
+    // Kill all children first with SIGKILL
+    for child_pid in children {
+        let _ = kill(Pid::from_raw(child_pid as i32), Signal::SIGKILL);
+        // Continue even if killing child processes fails
+    }
+
+    // Kill parent process with SIGKILL
+    match kill(Pid::from_raw(pid as i32), Signal::SIGKILL) {
+        Ok(_) => Ok(()),
+        Err(nix::errno::Errno::ESRCH) => {
+            // Process already terminated
+            Ok(())
+        }
+        Err(err) => Err(format!("Failed to force kill process {}: {:?}", pid, err)),
+    }
+}
+
 /// Find children of a potentially dead parent by scanning all processes
 /// This is more reliable for adoption scenarios than process_find_children,
 /// as it works even after the parent process has exited.
@@ -2246,6 +2288,145 @@ pub fn find_children_of_dead_parent(parent_pid: i64) -> Vec<i64> {
         }
     }
     children
+}
+
+/// Search for processes matching a command pattern and return their PIDs
+/// Used during restore to find and kill old processes before spawning new ones
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn find_processes_by_command_pattern(pattern: &str) -> Vec<i64> {
+    let mut matching_pids = Vec::new();
+    
+    if pattern.is_empty() {
+        return matching_pids;
+    }
+
+    if let Ok(processes) = unix::native_processes() {
+        for process in processes {
+            let pid = process.pid() as i64;
+            
+            // Try to get command line from /proc or system
+            if let Some(cmdline) = unix::get_process_cmdline(pid as i32) {
+                if cmdline.contains(pattern) {
+                    matching_pids.push(pid);
+                }
+            }
+        }
+    }
+
+    matching_pids
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn find_processes_by_command_pattern(_pattern: &str) -> Vec<i64> {
+    Vec::new()
+}
+
+/// Kill all processes matching command patterns before restore
+/// This prevents port conflicts and resource issues
+pub fn kill_old_processes_before_restore(processes: &[(usize, String)]) -> Result<(), String> {
+    use std::thread;
+    use std::time::Duration;
+    
+    let mut killed_pids = Vec::new();
+    
+    for (_id, script) in processes {
+        // Extract search pattern from command (same logic as daemon adoption)
+        let pattern = extract_search_pattern_from_command(script);
+        
+        if pattern.is_empty() {
+            continue;
+        }
+        
+        // Find all processes matching this pattern
+        let matching_pids = find_processes_by_command_pattern(&pattern);
+        
+        for pid in matching_pids {
+            // Skip if we already killed this PID
+            if killed_pids.contains(&pid) {
+                continue;
+            }
+            
+            ::log::info!("Killing old process PID {} matching pattern '{}'", pid, pattern);
+            
+            // Force kill the process tree
+            if let Err(e) = force_kill_process_tree(pid) {
+                ::log::warn!("Failed to kill process {}: {}", pid, e);
+            } else {
+                killed_pids.push(pid);
+            }
+        }
+    }
+    
+    // Wait 500ms for OS to clean up resources
+    if !killed_pids.is_empty() {
+        ::log::info!("Killed {} old processes, waiting {}ms for resource cleanup", killed_pids.len(), PROCESS_CLEANUP_WAIT_MS);
+        thread::sleep(Duration::from_millis(PROCESS_CLEANUP_WAIT_MS));
+    }
+    
+    Ok(())
+}
+
+/// Extract a search pattern from a command for process matching
+/// Looks for distinctive parts like JAR files, script names, executables
+///
+/// # Examples
+/// ```
+/// // JAR file extraction
+/// extract_search_pattern_from_command("java -jar Stirling-PDF.jar") // => "Stirling-PDF.jar"
+///
+/// // Script file extraction
+/// extract_search_pattern_from_command("python script.py") // => "script.py"
+/// extract_search_pattern_from_command("node server.js") // => "server.js"
+///
+/// // Executable extraction
+/// extract_search_pattern_from_command("caddy run") // => "caddy"
+///
+/// // Shell commands are skipped
+/// extract_search_pattern_from_command("bash start.sh") // => "start.sh" (not "bash")
+/// ```
+fn extract_search_pattern_from_command(command: &str) -> String {
+    // Look for patterns that uniquely identify the process
+    // Priority: JAR files, then .py/.js/.sh files, then first word
+
+    // Check for JAR files (e.g., "java -jar Stirling-PDF.jar")
+    if let Some(jar_pos) = command.find(".jar") {
+        // Find the start of the filename (after last space or slash)
+        let before_jar = &command[..jar_pos];
+        if let Some(start) = before_jar.rfind(|c: char| c == ' ' || c == '/') {
+            let end = (jar_pos + 4).min(command.len());
+            if start + 1 < end {
+                let jar_name = &command[start + 1..end];
+                return jar_name.trim().to_string();
+            }
+        }
+    }
+
+    // Check for common script extensions
+    for ext in &[".py", ".js", ".sh", ".rb", ".pl", ".php", ".lua"] {
+        if let Some(ext_pos) = command.find(ext) {
+            let before_ext = &command[..ext_pos];
+            if let Some(start) = before_ext.rfind(|c: char| c == ' ' || c == '/') {
+                let end = (ext_pos + ext.len()).min(command.len());
+                if start + 1 < end {
+                    let script_name = &command[start + 1..end];
+                    return script_name.trim().to_string();
+                }
+            }
+        }
+    }
+
+    // Fall back to the first word if it looks like an executable
+    if let Some(first_word) = command.split_whitespace().next() {
+        if !first_word.is_empty() && !first_word.starts_with('-') {
+            // Skip common shells
+            if !matches!(first_word, "sh" | "bash" | "zsh" | "fish" | "dash") {
+                return first_word.to_string();
+            }
+        }
+    }
+
+    // If all else fails, return empty (no matching will occur)
+    String::new()
 }
 
 /// Find the children of the process
@@ -2580,6 +2761,54 @@ pub fn get_process_metrics_sysinfo(pid: i64) -> Option<(f64, u64, u64)> {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn get_process_metrics_sysinfo(_pid: i64) -> Option<(f64, u64, u64)> {
     None
+}
+
+/// Get OS-level uptime for a process using sysinfo
+/// Returns uptime in seconds, or 0 if process not found
+/// This is the authoritative source for uptime calculation - it uses the OS's actual
+/// process start time, not application timestamps that can be stale after daemon restarts
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn get_process_uptime_sysinfo(pid: i64) -> u64 {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    if pid <= 0 {
+        return 0;
+    }
+
+    let mut system = System::new();
+    let sysinfo_pid = Pid::from_u32(pid as u32);
+    
+    // Refresh only the specific process we need for efficiency
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        ProcessRefreshKind::new(),
+    );
+
+    if let Some(process) = system.process(sysinfo_pid) {
+        // Get system boot time to calculate absolute uptime
+        let boot_time = System::boot_time();
+        let process_start_time = process.start_time();
+        
+        // Calculate uptime: current_time - (boot_time + process_start_time)
+        // process.start_time() returns seconds since boot
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        
+        let absolute_start_time = boot_time + process_start_time;
+        if current_time > absolute_start_time {
+            return current_time - absolute_start_time;
+        }
+    }
+
+    0 // Process not found or invalid time calculation
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn get_process_uptime_sysinfo(_pid: i64) -> u64 {
+    0
 }
 
 #[cfg(target_os = "linux")]
