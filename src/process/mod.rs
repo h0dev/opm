@@ -2267,6 +2267,47 @@ pub struct ProcessRunResult {
     pub shell_pid: Option<i64>,
 }
 
+/// Check if a command contains shell-specific features that require shell interpretation
+/// Returns true if the command needs to be run through a shell (sh/bash)
+/// Returns false if the command can be spawned directly for PM2-like behavior
+fn command_needs_shell(command: &str) -> bool {
+    // Shell operators and features that require shell interpretation
+    let shell_features = [
+        "&&", "||", "|",  // Logical operators and pipes
+        ">", ">>", "<",   // Redirection
+        ";",              // Command separator
+        "&",              // Background execution
+        "`", "$(",        // Command substitution
+        "~",              // Home directory expansion
+        "*", "?", "[",    // Glob patterns
+        "export ", "source ", "alias ", // Shell built-ins
+    ];
+    
+    shell_features.iter().any(|feature| command.contains(feature))
+}
+
+/// Parse command into program and arguments for direct execution
+/// Returns None if parsing fails or command is complex
+fn parse_direct_command(command: &str) -> Option<(String, Vec<String>)> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    
+    // Simple whitespace-based splitting
+    // This handles basic cases like "node server.js" or "python app.py"
+    let mut parts: Vec<String> = trimmed.split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+    
+    if parts.is_empty() {
+        return None;
+    }
+    
+    let program = parts.remove(0);
+    Some((program, parts))
+}
+
 /// Run the process
 pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String> {
     use std::fs::{self, OpenOptions};
@@ -2314,11 +2355,34 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
             )
         })?;
 
-    // Execute process
-    let mut cmd = Command::new(&metadata.shell);
-    cmd.args(&metadata.args)
-        .arg(&metadata.command)
-        .envs(metadata.env.iter().map(|env_var| {
+    // PM2-like execution strategy: spawn directly if possible, otherwise use shell
+    // This eliminates the intermediate shell PID problem for simple commands
+    let use_direct_spawn = !command_needs_shell(&metadata.command);
+    
+    let mut cmd = if use_direct_spawn {
+        // Try to parse and spawn directly without shell wrapper
+        if let Some((program, args)) = parse_direct_command(&metadata.command) {
+            log::debug!("Spawning '{}' directly without shell wrapper", program);
+            let mut command = Command::new(&program);
+            command.args(&args);
+            command
+        } else {
+            // Parsing failed, fall back to shell
+            log::debug!("Direct spawn parsing failed, using shell: {}", metadata.shell);
+            let mut command = Command::new(&metadata.shell);
+            command.args(&metadata.args).arg(&metadata.command);
+            command
+        }
+    } else {
+        // Command needs shell features (pipes, redirects, etc.)
+        // Use the configured shell from config.toml (sh or bash)
+        log::debug!("Using configured shell '{}' for command with shell operators", metadata.shell);
+        let mut command = Command::new(&metadata.shell);
+        command.args(&metadata.args).arg(&metadata.command);
+        command
+    };
+    
+    cmd.envs(metadata.env.iter().map(|env_var| {
             let parts: Vec<&str> = env_var.splitn(2, '=').collect();
             if parts.len() == 2 {
                 (parts[0], parts[1])
@@ -2331,7 +2395,8 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
         .stdin(Stdio::null());
 
     // Create a new process group for better process tree management
-    // This ensures the shell wrapper and its children are in the same process group
+    // This uses setsid() via process_group(0) on Unix systems
+    // This ensures the process and its children are in the same process group
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -2341,39 +2406,88 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
     let child = cmd.spawn().map_err(|err| {
         // Provide more helpful error messages based on error kind
         match err.kind() {
-            std::io::ErrorKind::NotFound => format!(
-                "Failed to spawn process: Command '{}' not found. \
-                Please ensure '{}' is installed and in your PATH. \
-                Error: {:?}",
-                metadata.shell, metadata.shell, err
-            ),
-            std::io::ErrorKind::PermissionDenied => format!(
-                "Failed to spawn process: Permission denied for '{}'. \
-                Check that the shell has execute permissions. \
-                Error: {:?}",
-                metadata.shell, err
-            ),
-            _ => format!(
-                "Failed to spawn process with shell '{}': {:?}. \
-                Command attempted: {} {} '{}'",
-                metadata.shell,
-                err,
-                metadata.shell,
-                metadata.args.join(" "),
-                metadata.command
-            ),
+            std::io::ErrorKind::NotFound => {
+                if use_direct_spawn {
+                    if let Some((program, _)) = parse_direct_command(&metadata.command) {
+                        format!(
+                            "Failed to spawn process: Command '{}' not found. \
+                            Please ensure '{}' is installed and in your PATH. \
+                            Error: {:?}",
+                            program, program, err
+                        )
+                    } else {
+                        format!(
+                            "Failed to spawn process: Command '{}' not found. Error: {:?}",
+                            metadata.command, err
+                        )
+                    }
+                } else {
+                    format!(
+                        "Failed to spawn process: Shell '{}' not found. \
+                        Please ensure '{}' is installed and in your PATH. \
+                        Error: {:?}",
+                        metadata.shell, metadata.shell, err
+                    )
+                }
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                if use_direct_spawn {
+                    format!(
+                        "Failed to spawn process: Permission denied for '{}'. \
+                        Check that the program has execute permissions. \
+                        Error: {:?}",
+                        metadata.command, err
+                    )
+                } else {
+                    format!(
+                        "Failed to spawn process: Permission denied for '{}'. \
+                        Check that the shell has execute permissions. \
+                        Error: {:?}",
+                        metadata.shell, err
+                    )
+                }
+            }
+            _ => {
+                if use_direct_spawn {
+                    format!(
+                        "Failed to spawn process directly: {:?}. \
+                        Command attempted: '{}'",
+                        err, metadata.command
+                    )
+                } else {
+                    format!(
+                        "Failed to spawn process with shell '{}': {:?}. \
+                        Command attempted: {} {} '{}'",
+                        metadata.shell,
+                        err,
+                        metadata.shell,
+                        metadata.args.join(" "),
+                        metadata.command
+                    )
+                }
+            }
         }
     })?;
 
     let shell_pid = child.id() as i64;
+    
+    // Wait briefly (200ms) to allow OS to register process tree
+    // This ensures sysinfo can discover child processes during PID stability checks
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    
     let actual_pid = unix::get_actual_child_pid(shell_pid);
 
     // Store child handle in global state to prevent it from being dropped and becoming a zombie
     // This is critical for PM2-like daemon functionality
     PROCESS_HANDLES.insert(shell_pid, Arc::new(Mutex::new(child)));
 
-    // If shell and actual PIDs differ, store the shell PID for CPU monitoring
-    let shell_pid_opt = (shell_pid != actual_pid).then_some(shell_pid);
+    // For direct spawns, shell_pid and actual_pid are the same (no shell wrapper)
+    // For shell-wrapped commands, they differ and we need to track both
+    let shell_pid_opt = if use_direct_spawn {
+        None // No shell wrapper for direct spawns
+    } else {
+        (shell_pid != actual_pid).then_some(shell_pid)
+    };
 
     Ok(ProcessRunResult {
         pid: actual_pid,
@@ -2659,10 +2773,11 @@ mod tests {
     #[test]
     fn test_error_handling_invalid_shell() {
         // Test that process_run returns an error for invalid shell
+        // Use a command with shell operators (|) to force shell usage
         let metadata = ProcessMetadata {
             name: "test_process".to_string(),
             shell: "/nonexistent/shell/that/does/not/exist".to_string(),
-            command: "echo test".to_string(),
+            command: "echo test | cat".to_string(), // Pipe forces shell usage
             log_path: "/tmp".to_string(),
             args: vec!["-c".to_string()],
             env: vec![],
@@ -2676,7 +2791,7 @@ mod tests {
         assert!(
             err_msg.contains("/nonexistent/shell/that/does/not/exist")
                 && (err_msg.contains("not found")
-                    || err_msg.contains("Command")
+                    || err_msg.contains("Shell")
                     || err_msg.contains("Failed to spawn")),
             "Error message should indicate shell not found, got: {}",
             err_msg
@@ -5233,5 +5348,60 @@ mod tests {
             is_new_crash, true,
             "Should increment when pid > 0 (process was running)"
         );
+    }
+
+    #[test]
+    fn test_command_needs_shell_detection() {
+        // Test shell operator detection
+        assert!(command_needs_shell("echo hello | grep world"), "Pipe should need shell");
+        assert!(command_needs_shell("echo hello && echo world"), "AND operator should need shell");
+        assert!(command_needs_shell("echo hello || echo world"), "OR operator should need shell");
+        assert!(command_needs_shell("echo hello > output.txt"), "Redirect should need shell");
+        assert!(command_needs_shell("echo hello >> output.txt"), "Append redirect should need shell");
+        assert!(command_needs_shell("cat < input.txt"), "Input redirect should need shell");
+        assert!(command_needs_shell("echo hello; echo world"), "Semicolon should need shell");
+        assert!(command_needs_shell("echo hello &"), "Background should need shell");
+        assert!(command_needs_shell("echo `date`"), "Command substitution (backticks) should need shell");
+        assert!(command_needs_shell("echo $(date)"), "Command substitution ($()) should need shell");
+        assert!(command_needs_shell("cd ~/projects"), "Tilde expansion should need shell");
+        assert!(command_needs_shell("ls *.txt"), "Glob pattern should need shell");
+        assert!(command_needs_shell("export PATH=/usr/bin"), "Export should need shell");
+        
+        // Test simple commands that don't need shell
+        assert!(!command_needs_shell("node server.js"), "Simple node command should not need shell");
+        assert!(!command_needs_shell("python app.py"), "Simple python command should not need shell");
+        assert!(!command_needs_shell("./binary --flag value"), "Binary with flags should not need shell");
+        assert!(!command_needs_shell("echo hello"), "Simple echo should not need shell");
+    }
+
+    #[test]
+    fn test_parse_direct_command() {
+        // Test successful parsing
+        let result = parse_direct_command("node server.js");
+        assert!(result.is_some());
+        let (program, args) = result.unwrap();
+        assert_eq!(program, "node");
+        assert_eq!(args, vec!["server.js"]);
+        
+        let result = parse_direct_command("python app.py --port 8080");
+        assert!(result.is_some());
+        let (program, args) = result.unwrap();
+        assert_eq!(program, "python");
+        assert_eq!(args, vec!["app.py", "--port", "8080"]);
+        
+        // Test empty command
+        let result = parse_direct_command("");
+        assert!(result.is_none());
+        
+        // Test whitespace only
+        let result = parse_direct_command("   ");
+        assert!(result.is_none());
+        
+        // Test single program with no args
+        let result = parse_direct_command("node");
+        assert!(result.is_some());
+        let (program, args) = result.unwrap();
+        assert_eq!(program, "node");
+        assert_eq!(args.len(), 0);
     }
 }
