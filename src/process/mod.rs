@@ -2211,7 +2211,7 @@ pub fn is_process_or_children_alive_sysinfo(root_pid: i64, tracked_children: &[i
         }
     }
     
-    // Use sysinfo to do a more thorough check of the process tree
+    // Use sysinfo to discover any untracked descendants that might still be alive
     // This is useful when the shell wrapper exits but children are still running
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -2220,24 +2220,7 @@ pub fn is_process_or_children_alive_sysinfo(root_pid: i64, tracked_children: &[i
         ProcessRefreshKind::new(),
     );
     
-    // Create a set of PIDs to check
-    let mut pids_to_check: HashSet<i64> = HashSet::new();
-    pids_to_check.insert(root_pid);
-    for &child in tracked_children {
-        pids_to_check.insert(child);
-    }
-    
-    // Check if any process in our tracked set exists in sysinfo
-    for pid in pids_to_check {
-        if pid > 0 {
-            let sysinfo_pid = sysinfo::Pid::from_u32(pid as u32);
-            if system.process(sysinfo_pid).is_some() {
-                return true;
-            }
-        }
-    }
-    
-    // Also check for any children of the root PID that might not be tracked yet
+    // Check for any children of the root PID that might not be tracked yet
     // This handles the case where bash -c spawns a child that we haven't discovered yet
     if root_pid > 0 {
         // Find all descendants of root_pid

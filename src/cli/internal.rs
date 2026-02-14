@@ -1518,7 +1518,7 @@ impl<'i> Internal<'i> {
 
         // Print final success message with count of restored processes
         let restored_count = restored_ids.len();
-        println!("[OPM] Success: {} processes restored.", restored_count);
+        println!("{} Success: {} processes restored.", *helpers::SUCCESS, restored_count);
         
         // Display the process list immediately after restore
         // This allows users to see the current status without manually running 'opm ls'
