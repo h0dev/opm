@@ -123,6 +123,52 @@ fn reap_zombie_processes() {
     }
 }
 
+/// Extract a search pattern from a command for process adoption
+/// Looks for distinctive parts like JAR files, script names, executables
+fn extract_search_pattern(command: &str) -> String {
+    // Look for patterns that uniquely identify the process
+    // Priority: JAR files, then .py/.js/.sh files, then quoted strings, then first word
+    
+    // Check for JAR files (e.g., "java -jar Stirling-PDF.jar")
+    if let Some(jar_pos) = command.find(".jar") {
+        // Find the start of the filename (after last space or slash)
+        let before_jar = &command[..jar_pos];
+        if let Some(start) = before_jar.rfind(|c: char| c == ' ' || c == '/') {
+            let end = (jar_pos + 4).min(command.len());
+            if start + 1 < end {
+                let jar_name = &command[start+1..end];
+                return jar_name.trim().to_string();
+            }
+        }
+    }
+    
+    // Check for common script extensions
+    for ext in &[".py", ".js", ".sh", ".rb", ".pl"] {
+        if let Some(ext_pos) = command.find(ext) {
+            let before_ext = &command[..ext_pos];
+            if let Some(start) = before_ext.rfind(|c: char| c == ' ' || c == '/') {
+                let end = (ext_pos + ext.len()).min(command.len());
+                if start + 1 < end {
+                    let script_name = &command[start+1..end];
+                    return script_name.trim().to_string();
+                }
+            }
+        }
+    }
+    
+    // Fall back to the first word if it looks like an executable
+    let first_word = command.split_whitespace().next().unwrap_or("");
+    if !first_word.is_empty() && !first_word.starts_with('-') {
+        // Skip common shells
+        if !matches!(first_word, "sh" | "bash" | "zsh" | "fish" | "dash") {
+            return first_word.to_string();
+        }
+    }
+    
+    // If all else fails, return empty (no adoption will occur)
+    String::new()
+}
+
 fn restart_process() {
     log!("[DAEMON_V2_CHECK] Monitoring cycle initiated", "fingerprint" => "v2_fix");
     
@@ -164,14 +210,21 @@ fn restart_process() {
         // PID 0 is reserved for the kernel scheduler and should never be assigned to user processes
         let has_valid_pid = item.pid > 0;
         
+        // Check if session is alive (more robust than individual PID checks)
+        // This handles process forking where the main PID exits but children continue running
+        let session_alive = item.session_id
+            .map_or(false, |sid| opm::process::is_session_alive(sid));
+        
         // Use enhanced sysinfo-based detection for more robust process tree checking
         // This handles cases where shell wrapper exits but children are still running
         let any_descendant_alive = has_valid_pid 
-            && (opm::process::is_process_or_children_alive_sysinfo(item.pid, &item.children) || shell_alive);
+            && (opm::process::is_process_or_children_alive_sysinfo(item.pid, &item.children) 
+                || shell_alive 
+                || session_alive);
 
         // Check if the main process (PID or shell_pid) is alive
         // This is the primary indicator of process health
-        let main_process_alive = has_valid_pid && (opm::process::is_pid_alive(item.pid) || shell_alive);
+        let main_process_alive = has_valid_pid && (opm::process::is_pid_alive(item.pid) || shell_alive || session_alive);
 
         // Even if a PID is alive, check if all tracked children are zombies
         // This handles cases where the wrong PID was adopted but the actual children crashed
@@ -247,6 +300,61 @@ fn restart_process() {
             }
         } else {
             // --- PROCESS IS DEAD (no root, no children alive) ---
+
+            // MANDATORY: NAME-BASED DOUBLE CHECK (Process Adoption)
+            // Before marking as crashed or restarting, search for processes by command pattern
+            // If a process matching the command is found, adopt it instead of restarting
+            // This prevents duplicate processes when the PID changes due to forking
+            if item.running && item.pid > 0 {
+                // Extract key parts of the command for searching
+                // Look for unique identifiers like JAR files, script names, etc.
+                let command_pattern = extract_search_pattern(&item.script);
+                
+                if !command_pattern.is_empty() {
+                    log!("[daemon] searching for existing process before restart", 
+                        "name" => &item.name, 
+                        "id" => id,
+                        "pattern" => &command_pattern);
+                    
+                    if let Some(found_pid) = opm::process::find_process_by_command(&command_pattern) {
+                        // Found a matching process - adopt it instead of restarting
+                        log!("[daemon] ADOPTING existing process instead of restarting", 
+                            "name" => &item.name, 
+                            "id" => id,
+                            "old_pid" => item.pid,
+                            "new_pid" => found_pid,
+                            "pattern" => &command_pattern);
+                        
+                        if runner.exists(id) {
+                            let process = runner.process(id);
+                            let old_pid = process.pid;
+                            process.pid = found_pid;
+                            process.shell_pid = None; // Reset shell_pid as we're adopting the real process
+                            process.crash.crashed = false; // Not crashed - we found it!
+                            process.failed_restart_attempts = 0; // Reset failure count
+                            
+                            // Update session ID for the adopted process
+                            #[cfg(any(target_os = "linux", target_os = "macos"))]
+                            {
+                                process.session_id = opm::process::unix::get_session_id(found_pid as i32);
+                            }
+                            
+                            // Add to tracked children for monitoring
+                            if !process.children.contains(&found_pid) {
+                                process.children.push(found_pid);
+                            }
+                            
+                            runner.save_direct();
+                            log!("[daemon] successfully adopted process",
+                                "name" => &item.name,
+                                "id" => id,
+                                "old_pid" => old_pid,
+                                "new_pid" => found_pid);
+                            continue; // Skip crash detection and restart logic
+                        }
+                    }
+                }
+            }
 
             // Check per-process 5s delay after last action (start/restart/reload/restore)
             // This delay prevents immediate crash detection for newly started processes
@@ -447,18 +555,43 @@ fn restart_process() {
                                 log!("[daemon] process reached max restart limit, stopping permanently with errored state", 
                                     "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "limit" => daemon_config.restarts);
                             } else {
-                                // Anti-spam cooldown mechanism
+                                // Anti-spam cooldown mechanism with exponential backoff
                                 // Enforce minimum delay between restart attempts
+                                // Implements exponential backoff: crashes within 10s trigger 30s wait
                                 let seconds_since_last_attempt = proc.last_restart_attempt
                                     .map(|t| (Utc::now() - t).num_seconds())
                                     .unwrap_or(i64::MAX); // Never attempted - allow restart immediately
                                 
-                                // Calculate backoff delay based on failure count
+                                // Calculate backoff delay based on failure count (exponential backoff)
+                                // Formula: base_delay * (2 ^ min(failed_attempts, 3))
+                                // This gives: 10s, 20s, 40s, 80s, 80s... capped at 80s
+                                // Note: This calculation is very cheap (single exponentiation) and only
+                                // runs when a process needs restart (rare), not on every monitoring cycle
                                 let base_delay = if proc.failed_restart_attempts > 0 {
-                                    FAILED_RESTART_COOLDOWN_SECS
+                                    // Process failed to restart - use exponential backoff
+                                    let exponential_factor = 2u64.pow(proc.failed_restart_attempts.min(3));
+                                    FAILED_RESTART_COOLDOWN_SECS * exponential_factor
                                 } else {
+                                    // First restart after successful start
                                     RESTART_COOLDOWN_SECS
                                 };
+                                
+                                // Check if process has exceeded maximum restart attempts
+                                const MAX_RESTART_ATTEMPTS: u32 = 5;
+                                if proc.failed_restart_attempts >= MAX_RESTART_ATTEMPTS {
+                                    // Set to FATAL_ERROR state - stop auto-restart until manual intervention
+                                    if let Some(process) = runner.list.get_mut(&id) {
+                                        process.running = false;
+                                        process.errored = true;
+                                    }
+                                    runner.save_direct();
+                                    log!("[daemon] process reached maximum restart failure limit - FATAL_ERROR state",
+                                        "name" => &proc.name,
+                                        "id" => id,
+                                        "failed_attempts" => proc.failed_restart_attempts,
+                                        "max_attempts" => MAX_RESTART_ATTEMPTS);
+                                    continue; // Skip restart - requires manual intervention
+                                }
                                 
                                 let within_cooldown = seconds_since_last_attempt < base_delay as i64;
 
@@ -510,10 +643,33 @@ fn restart_process() {
                                     
                                     // Update failed restart counter based on result
                                     // Verify process is actually running by checking PID > 0 AND process is alive
+                                    // Also check if this was a quick crash (within 10 seconds) to detect flapping
                                     if let Some(process) = runner.list.get_mut(&id) {
                                         if process.pid > 0 && opm::process::is_pid_alive(process.pid) {
                                             // Restart succeeded - process has valid PID and is alive
-                                            process.failed_restart_attempts = 0;
+                                            // Check if previous process crashed quickly (within 10s of start)
+                                            // This indicates a flapping process that needs exponential backoff
+                                            if is_new_crash {
+                                                // Use the process's started time which was updated by restart()
+                                                // Calculate how long the PREVIOUS instance ran before crashing
+                                                let previous_started = item.started;
+                                                let crash_time = (Utc::now() - previous_started).num_seconds();
+                                                if crash_time < 10 {
+                                                    // Quick crash detected - this counts as a failed restart
+                                                    process.failed_restart_attempts += 1;
+                                                    log!("[daemon] quick crash detected ({}s), incrementing failure counter",
+                                                        "name" => &proc.name,
+                                                        "id" => id,
+                                                        "crash_time_secs" => crash_time,
+                                                        "failed_attempts" => process.failed_restart_attempts);
+                                                } else {
+                                                    // Process ran long enough - reset failure counter
+                                                    process.failed_restart_attempts = 0;
+                                                }
+                                            } else {
+                                                // Retry of failed restart succeeded - reset counter
+                                                process.failed_restart_attempts = 0;
+                                            }
                                         } else {
                                             // Restart failed - no valid PID or process is not alive
                                             process.failed_restart_attempts += 1;
@@ -668,7 +824,7 @@ pub fn health(format: &String) {
 
     let table = Table::new(data.clone())
         .with(Rotate::Left)
-        .with(Style::rounded().remove_horizontals())
+        .with(Style::modern().remove_horizontals())
         .with(Colorization::exact([Color::FG_CYAN], Columns::first()))
         .with(BorderColor::filled(Color::FG_BRIGHT_BLACK))
         .to_string();

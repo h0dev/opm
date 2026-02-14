@@ -74,6 +74,61 @@ pub fn get_process_name(pid: u32) -> Result<String, String> {
     }
 }
 
+/// Get session ID of a process
+#[cfg(target_os = "linux")]
+pub fn get_session_id(pid: i32) -> Option<i64> {
+    use std::fs;
+    
+    let stat_path = format!("/proc/{}/stat", pid);
+    if let Ok(stat_content) = fs::read_to_string(&stat_path) {
+        // Parse /proc/pid/stat format: pid (comm) state ppid pgrp session ...
+        // After the command in parentheses: state (0), ppid (1), pgrp (2), session (3)
+        // The session ID is the 4th field (index 3)
+        if let Some(paren_end) = stat_content.rfind(')') {
+            let after_comm = &stat_content[paren_end + 1..];
+            let parts: Vec<&str> = after_comm.split_whitespace().collect();
+            if parts.len() > 3 {
+                if let Ok(sid) = parts[3].parse::<i64>() {
+                    return Some(sid);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Get session ID of a process (macOS stub - returns PID as fallback)
+#[cfg(target_os = "macos")]
+pub fn get_session_id(pid: i32) -> Option<i64> {
+    // macOS doesn't expose session ID easily in proc_pidinfo
+    // Fall back to using PID as session ID (less accurate but functional)
+    Some(pid as i64)
+}
+
+/// Get command line of a process
+#[cfg(target_os = "linux")]
+pub fn get_process_cmdline(pid: i32) -> Option<String> {
+    use std::fs;
+    
+    let cmdline_path = format!("/proc/{}/cmdline", pid);
+    if let Ok(cmdline_raw) = fs::read_to_string(&cmdline_path) {
+        // cmdline is null-separated, convert to space-separated
+        let cmdline = cmdline_raw.replace('\0', " ").trim().to_string();
+        if !cmdline.is_empty() {
+            return Some(cmdline);
+        }
+    }
+    None
+}
+
+/// Get command line of a process (macOS stub)
+#[cfg(target_os = "macos")]
+pub fn get_process_cmdline(_pid: i32) -> Option<String> {
+    // macOS would need libproc or sysctl to get full command line
+    // For now, return None as we can use process name as fallback
+    None
+}
+
 pub fn get_process_start_time(_pid: u32) -> Result<SystemTime, String> {
     #[cfg(target_os = "linux")]
     {

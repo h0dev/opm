@@ -12,6 +12,7 @@ pub use env::{env, Vars};
 pub use memory::{get_memory_info, NativeMemoryInfo};
 pub use process_info::{
     get_parent_pid, get_process_name, get_process_start_time, is_process_zombie,
+    get_session_id, get_process_cmdline,
 };
 pub use process_list::native_processes;
 

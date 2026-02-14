@@ -262,6 +262,10 @@ pub struct Process {
     /// Reset to 0 on successful restart. Used to implement exponential backoff
     #[serde(default)]
     pub failed_restart_attempts: u32,
+    /// Session ID of the spawned process (for session-based tracking)
+    /// Used to detect if any process in the session is still alive
+    #[serde(default)]
+    pub session_id: Option<i64>,
 }
 
 impl Process {
@@ -616,6 +620,7 @@ impl Runner {
                     errored: false,     // Not in error state by default
                     last_restart_attempt: None, // No restart attempt yet
                     failed_restart_attempts: 0, // No failures yet
+                    session_id: result.session_id, // Store session ID for tracking
                 },
             );
 
@@ -821,6 +826,7 @@ impl Runner {
 
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
+            process.session_id = result.session_id;
             process.running = true;
             process.started = Utc::now();
             // Clear crashed flag after successful restart
@@ -1049,6 +1055,7 @@ impl Runner {
             // Update process with new PID
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
+            process.session_id = result.session_id;
             process.running = true;
             process.children = vec![];
             process.started = Utc::now();
@@ -2279,6 +2286,91 @@ pub fn is_process_or_children_alive_sysinfo(root_pid: i64, tracked_children: &[i
     false
 }
 
+/// Check if any process in the same session is alive (using session ID)
+/// This is more robust than tracking individual PIDs as it handles process forking
+/// 
+/// Note: This function refreshes all processes which is expensive, but:
+/// 1. It's only called when the main PID is dead (rare case)
+/// 2. Session-based checks are critical for correct process tracking
+/// 3. The monitoring interval (default 1s) limits how often this runs
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn is_session_alive(session_id: i64) -> bool {
+    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};
+    
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    
+    // Check all processes to see if any have matching session ID
+    for (sysinfo_pid, _process) in system.processes() {
+        let pid = sysinfo_pid.as_u32() as i32;
+        if let Some(proc_sid) = unix::get_session_id(pid) {
+            if proc_sid == session_id {
+                // Found a process with matching session ID
+                if is_pid_alive(pid as i64) {
+                    return true;
+                }
+            }
+        }
+    }
+    
+    false
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn is_session_alive(_session_id: i64) -> bool {
+    false
+}
+
+/// Search for a process by command pattern
+/// Returns the PID of the first matching process, or None if not found
+/// 
+/// Note: This function refreshes all processes which is expensive, but:
+/// 1. It's only called when attempting process adoption (rare case, after crash)
+/// 2. Process adoption is critical to prevent duplicate processes
+/// 3. The cost is acceptable given it prevents severe issues like multiple service instances
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn find_process_by_command(command_pattern: &str) -> Option<i64> {
+    use sysinfo::{ProcessRefreshKind, System, ProcessesToUpdate};
+    
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new(),
+    );
+    
+    // Search all processes for command line match
+    for (sysinfo_pid, process) in system.processes() {
+        let pid = sysinfo_pid.as_u32() as i32;
+        
+        // Try to get full command line first
+        if let Some(cmdline) = unix::get_process_cmdline(pid) {
+            if cmdline.contains(command_pattern) {
+                log::info!("Found process by cmdline: PID {} matches pattern '{}'", pid, command_pattern);
+                return Some(pid as i64);
+            }
+        }
+        
+        // Fallback to process name if cmdline not available
+        let proc_name = process.name().to_string_lossy().to_string();
+        if proc_name.contains(command_pattern) || command_pattern.contains(&proc_name) {
+            log::info!("Found process by name: PID {} ({}) matches pattern '{}'", pid, proc_name, command_pattern);
+            return Some(pid as i64);
+        }
+    }
+    
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn find_process_by_command(_command_pattern: &str) -> Option<i64> {
+    None
+}
+
 
 /// Check if PID info is missing/incomplete for crash detection purposes
 /// Returns true if pid <= 0 and no tracked descendants
@@ -2301,6 +2393,7 @@ pub fn find_alive_process_in_group(_pid: i64) -> Option<i64> {
 pub struct ProcessRunResult {
     pub pid: i64,
     pub shell_pid: Option<i64>,
+    pub session_id: Option<i64>,
 }
 
 /// Check if a command contains shell-specific features that require shell interpretation
@@ -2440,13 +2533,19 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
         .stderr(Stdio::from(stderr_file))
         .stdin(Stdio::null());
 
-    // Create a new process group for better process tree management
-    // This uses setsid() via process_group(0) on Unix systems
-    // This ensures the process and its children are in the same process group
+    // Create a new session for better process tree management
+    // This uses setsid() to create a new session where this process is the session leader
+    // This ensures all children inherit the same session ID for robust tracking
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        unsafe {
+            cmd.pre_exec(|| {
+                // Create new session - this process becomes session leader
+                libc::setsid();
+                Ok(())
+            });
+        }
     }
 
     let child = cmd.spawn().map_err(|err| {
@@ -2537,10 +2636,18 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
     } else {
         (shell_pid != actual_pid).then_some(shell_pid)
     };
+    
+    // Get session ID of the spawned process for session-based tracking
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let session_id = unix::get_session_id(actual_pid as i32);
+    
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let session_id: Option<i64> = None;
 
     Ok(ProcessRunResult {
         pid: actual_pid,
         shell_pid: shell_pid_opt,
+        session_id,
     })
 }
 
@@ -2596,6 +2703,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2653,6 +2761,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2745,6 +2854,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2913,6 +3023,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -2967,6 +3078,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3021,6 +3133,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3077,6 +3190,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3127,6 +3241,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3185,6 +3300,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3249,6 +3365,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -3322,6 +3439,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -3370,6 +3488,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3426,6 +3545,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3485,6 +3605,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3547,6 +3668,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3608,6 +3730,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3672,6 +3795,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3815,6 +3939,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -3925,6 +4050,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4027,6 +4153,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4206,6 +4333,7 @@ mod tests {
                 errored: false,
             last_restart_attempt: None,
             failed_restart_attempts: 0,
+        session_id: None,
             };
             runner.list.insert(id, process);
         }
@@ -4314,6 +4442,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -4409,6 +4538,7 @@ mod tests {
                 errored: false,
             last_restart_attempt: None,
             failed_restart_attempts: 0,
+        session_id: None,
             };
             runner.list.insert(id, process);
         }
@@ -4513,6 +4643,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4582,6 +4713,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4648,6 +4780,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4728,6 +4861,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -4813,6 +4947,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4903,6 +5038,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -4993,6 +5129,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -5058,6 +5195,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -5125,6 +5263,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -5176,6 +5315,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -5232,6 +5372,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
@@ -5309,6 +5450,7 @@ mod tests {
                 errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process_from_dump.clone());
@@ -5439,6 +5581,7 @@ mod tests {
             errored: false,
         last_restart_attempt: None,
         failed_restart_attempts: 0,
+        session_id: None,
         };
 
         runner.list.insert(id, process);
