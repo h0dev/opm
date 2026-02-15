@@ -2395,15 +2395,22 @@ pub fn find_processes_by_command_pattern(_pattern: &str) -> Vec<i64> {
     Vec::new()
 }
 
-/// Kill all processes matching command patterns before restore
-/// This prevents port conflicts and resource issues
-pub fn kill_old_processes_before_restore(processes: &[(usize, String)]) -> Result<(), String> {
+/// Kill only OPM-managed processes matching command patterns before restore
+/// This prevents port conflicts and resource issues while avoiding killing unrelated processes
+pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64>)]) -> Result<(), String> {
     use std::thread;
     use std::time::Duration;
+    use std::collections::HashSet;
     
     let mut killed_pids = Vec::new();
     
-    for (_id, script) in processes {
+    // Collect all OPM-managed session IDs for filtering
+    let opm_session_ids: HashSet<i64> = processes
+        .iter()
+        .filter_map(|(_, _, session_id)| *session_id)
+        .collect();
+    
+    for (_id, script, _session_id) in processes {
         // Extract search pattern from command (same logic as daemon adoption)
         let pattern = extract_search_pattern_from_command(script);
         
@@ -2420,20 +2427,57 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String)]) -> Resul
                 continue;
             }
             
-            ::log::info!("Killing old process PID {} matching pattern '{}'", pid, pattern);
-            
-            // Force kill the process tree
-            if let Err(e) = force_kill_process_tree(pid) {
-                ::log::warn!("Failed to kill process {}: {}", pid, e);
+            // SAFETY CHECK: Only kill if process belongs to an OPM-managed session
+            // This prevents killing user shells and unrelated processes
+            let should_kill = if !opm_session_ids.is_empty() {
+                // Check if this PID belongs to any OPM-managed session
+                if let Some(proc_session_id) = unix::get_session_id(pid as i32) {
+                    if opm_session_ids.contains(&proc_session_id) {
+                        ::log::info!(
+                            "Process PID {} belongs to OPM session {} - will kill", 
+                            pid, proc_session_id
+                        );
+                        true
+                    } else {
+                        ::log::info!(
+                            "Process PID {} session {} is not OPM-managed - skipping", 
+                            pid, proc_session_id
+                        );
+                        false
+                    }
+                } else {
+                    // If we can't get session ID, be conservative and skip
+                    ::log::warn!(
+                        "Could not get session ID for PID {}, skipping to avoid killing unrelated processes", 
+                        pid
+                    );
+                    false
+                }
             } else {
-                killed_pids.push(pid);
+                // No session IDs available - skip killing to be safe
+                ::log::warn!(
+                    "No OPM session IDs available, skipping kill for PID {} to avoid killing unrelated processes",
+                    pid
+                );
+                false
+            };
+            
+            if should_kill {
+                ::log::info!("Killing OPM-managed process PID {} matching pattern '{}'", pid, pattern);
+                
+                // Force kill the process tree
+                if let Err(e) = force_kill_process_tree(pid) {
+                    ::log::warn!("Failed to kill process {}: {}", pid, e);
+                } else {
+                    killed_pids.push(pid);
+                }
             }
         }
     }
     
     // Wait 500ms for OS to clean up resources
     if !killed_pids.is_empty() {
-        ::log::info!("Killed {} old processes, waiting {}ms for resource cleanup", killed_pids.len(), PROCESS_CLEANUP_WAIT_MS);
+        ::log::info!("Killed {} OPM-managed processes, waiting {}ms for resource cleanup", killed_pids.len(), PROCESS_CLEANUP_WAIT_MS);
         thread::sleep(Duration::from_millis(PROCESS_CLEANUP_WAIT_MS));
     }
     

@@ -1288,23 +1288,23 @@ impl<'i> Internal<'i> {
         // FEATURE: AUTO-KILL ON RESTORE (CLEAN STATE)
         // Kill any running processes before restoring to ensure clean state
         // This prevents port conflicts and resource issues
-        // Load processes that will be restored to extract their command patterns
+        // Load processes that will be restored to extract their command patterns and session IDs
         let mut runner_temp = Runner::new();
-        let processes_to_check: Vec<(usize, String)> = runner_temp
+        let processes_to_check: Vec<(usize, String, Option<i64>)> = runner_temp
             .list()
             .filter_map(|(id, p)| {
                 // Only check processes that will be restored (running=true)
                 if p.running {
-                    Some((*id, p.script.clone()))
+                    Some((*id, p.script.clone(), p.session_id))
                 } else {
                     None
                 }
             })
             .collect();
         
-        // Kill old processes matching the command patterns
+        // Kill old processes matching the command patterns and session IDs
         if !processes_to_check.is_empty() {
-            ::log::info!("Searching for old processes to kill before restore");
+            ::log::info!("Searching for old OPM-managed processes to kill before restore");
             if let Err(e) = opm::process::kill_old_processes_before_restore(&processes_to_check) {
                 ::log::warn!("Error during process cleanup: {}", e);
             }
