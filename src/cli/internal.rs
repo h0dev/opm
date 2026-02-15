@@ -772,15 +772,15 @@ impl<'i> Internal<'i> {
                 if process_actually_running {
                     // For shell scripts, use comprehensive tree memory aggregation
                     // This includes shell_pid, main pid, and all tracked children
-                    memory_usage = opm::process::get_process_tree_memory(
-                        item.pid,
-                        item.shell_pid,
-                        &item.children,
-                    );
-
                     // For CPU, still use shell_pid as the root for tree traversal
                     let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+
                     if let Ok(process) = Process::new(pid_for_monitoring as u32) {
+                        memory_usage = opm::process::get_process_tree_memory(
+                            item.pid,
+                            item.shell_pid,
+                            &item.children,
+                        );
                         cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
                             &process,
                             pid_for_monitoring,

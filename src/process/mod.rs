@@ -2202,6 +2202,7 @@ pub fn get_process_tree_memory(
     let mut processed_pids = HashSet::new();
 
     // Helper to add memory for a PID and its descendants if not already processed
+    // Mutates: total_rss, total_vms, processed_pids
     let mut add_pid_memory = |target_pid: i64| {
         if target_pid <= 0 || processed_pids.contains(&target_pid) {
             return;
@@ -2220,8 +2221,8 @@ pub fn get_process_tree_memory(
         // Get memory for all descendants
         let descendants = process_find_children(target_pid);
         for child_pid in descendants {
-            if !processed_pids.contains(&child_pid) {
-                processed_pids.insert(child_pid);
+            // Use insert() return value to check if already processed (single HashSet lookup)
+            if processed_pids.insert(child_pid) {
                 if let Some(mem_info) = unix::NativeProcess::new_fast(child_pid as u32)
                     .ok()
                     .and_then(|p| p.memory_info().ok())
