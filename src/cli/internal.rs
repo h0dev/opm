@@ -1767,22 +1767,19 @@ impl<'i> Internal<'i> {
         let reattached_count = reattached_ids.len();
         let failed_count = failed_ids.len();
 
-        if started_count == 0 && reattached_count == 0 && failed_count == 0 {
-            println!("{} Info: No processes found in configuration.", *helpers::INFO);
-        } else {
+        // Always show the result since we know processes_to_restore is not empty
+        println!(
+            "{} Success: {} started, {} re-attached.",
+            *helpers::SUCCESS,
+            started_count,
+            reattached_count
+        );
+        if failed_count > 0 {
             println!(
-                "{} Success: {} started, {} re-attached.",
-                *helpers::SUCCESS,
-                started_count,
-                reattached_count
+                "{} Warning: {} processes failed to start.",
+                *helpers::WARN,
+                failed_count
             );
-            if failed_count > 0 {
-                println!(
-                    "{} Warning: {} processes failed to start.",
-                    *helpers::WARN,
-                    failed_count
-                );
-            }
         }
 
         // Display the process list immediately after restore
