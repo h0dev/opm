@@ -2407,7 +2407,12 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64
     // Collect all OPM-managed session IDs for filtering
     let opm_session_ids: HashSet<i64> = processes
         .iter()
-        .filter_map(|(_, _, session_id)| *session_id)
+        .filter_map(|(id, _, session_id)| {
+            if session_id.is_none() {
+                ::log::debug!("Process ID {} has no session ID stored", id);
+            }
+            *session_id
+        })
         .collect();
     
     for (_id, script, _session_id) in processes {
@@ -2447,6 +2452,10 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64
                     }
                 } else {
                     // If we can't get session ID, be conservative and skip
+                    ::log::debug!(
+                        "get_session_id returned None for PID {} - process may not exist or be inaccessible", 
+                        pid
+                    );
                     ::log::warn!(
                         "Could not get session ID for PID {}, skipping to avoid killing unrelated processes", 
                         pid
