@@ -2186,6 +2186,79 @@ pub fn get_aggregate_process_tree_usage_sysinfo(_root_pid: i64) -> Option<(f64, 
 }
 
 /// Get the total memory usage of the process and its children
+
+/// Get total memory usage of a process tree, including shell wrapper, main process, and all children
+/// This aggregates memory from all PIDs associated with a managed process:
+/// - shell_pid (if present) and its descendants
+/// - main pid and its descendants (if different from shell_pid)
+/// - tracked children array
+pub fn get_process_tree_memory(
+    pid: i64,
+    shell_pid: Option<i64>,
+    tracked_children: &[i64],
+) -> Option<MemoryInfo> {
+    let mut total_rss = 0u64;
+    let mut total_vms = 0u64;
+    let mut processed_pids = HashSet::new();
+
+    // Helper to add memory for a PID and its descendants if not already processed
+    let mut add_pid_memory = |target_pid: i64| {
+        if target_pid <= 0 || processed_pids.contains(&target_pid) {
+            return;
+        }
+        processed_pids.insert(target_pid);
+
+        // Get memory for this PID
+        if let Some(mem_info) = unix::NativeProcess::new_fast(target_pid as u32)
+            .ok()
+            .and_then(|p| p.memory_info().ok())
+        {
+            total_rss += mem_info.rss();
+            total_vms += mem_info.vms();
+        }
+
+        // Get memory for all descendants
+        let descendants = process_find_children(target_pid);
+        for child_pid in descendants {
+            if !processed_pids.contains(&child_pid) {
+                processed_pids.insert(child_pid);
+                if let Some(mem_info) = unix::NativeProcess::new_fast(child_pid as u32)
+                    .ok()
+                    .and_then(|p| p.memory_info().ok())
+                {
+                    total_rss += mem_info.rss();
+                    total_vms += mem_info.vms();
+                }
+            }
+        }
+    };
+
+    // Process shell_pid first (if exists)
+    if let Some(shell_pid) = shell_pid {
+        add_pid_memory(shell_pid);
+    }
+
+    // Process main pid (if different from shell_pid)
+    if Some(pid) != shell_pid {
+        add_pid_memory(pid);
+    }
+
+    // Process any explicitly tracked children that weren't already included
+    for &child_pid in tracked_children {
+        add_pid_memory(child_pid);
+    }
+
+    // Return aggregated memory if we found any
+    if total_rss > 0 || total_vms > 0 {
+        Some(MemoryInfo {
+            rss: total_rss,
+            vms: total_vms,
+        })
+    } else {
+        None
+    }
+}
+
 pub fn get_process_memory_with_children(pid: i64) -> Option<MemoryInfo> {
     let parent_memory = unix::NativeProcess::new_fast(pid as u32)
         .ok()?

@@ -16,7 +16,7 @@ use opm::{
     helpers::{self, ColoredString},
     log,
     process::{
-        get_process_cpu_usage_with_children_from_process, get_process_memory_with_children, http,
+        get_process_cpu_usage_with_children_from_process, http,
         is_any_descendant_alive, is_pid_alive, ItemSingle, Runner,
     },
 };
@@ -770,11 +770,17 @@ impl<'i> Internal<'i> {
                 // Only fetch CPU and memory stats if process is actually running
                 // Stopped or crashed processes should always show 0% CPU and 0b memory
                 if process_actually_running {
-                    // For shell scripts, use shell_pid to capture the entire process tree
-                    let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+                    // For shell scripts, use comprehensive tree memory aggregation
+                    // This includes shell_pid, main pid, and all tracked children
+                    memory_usage = opm::process::get_process_tree_memory(
+                        item.pid,
+                        item.shell_pid,
+                        &item.children,
+                    );
 
+                    // For CPU, still use shell_pid as the root for tree traversal
+                    let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
                     if let Ok(process) = Process::new(pid_for_monitoring as u32) {
-                        memory_usage = get_process_memory_with_children(pid_for_monitoring);
                         cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
                             &process,
                             pid_for_monitoring,
@@ -1869,16 +1875,23 @@ impl<'i> Internal<'i> {
                             let mut usage_internals: (Option<f64>, Option<MemoryInfo>) =
                                 (None, None);
 
-                            // For shell scripts, use shell_pid to capture the entire process tree
-                            let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+                            // For shell scripts, use comprehensive tree memory aggregation
+                            // This includes shell_pid, main pid, and all tracked children
+                            let memory = opm::process::get_process_tree_memory(
+                                item.pid,
+                                item.shell_pid,
+                                &item.children,
+                            );
 
+                            // For CPU, still use shell_pid as the root for tree traversal
+                            let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
                             if let Ok(process) = Process::new(pid_for_monitoring as u32) {
                                 usage_internals = (
                                     Some(get_process_cpu_usage_with_children_from_process(
                                         &process,
                                         pid_for_monitoring,
                                     )),
-                                    get_process_memory_with_children(pid_for_monitoring),
+                                    memory,
                                 );
                             }
 
@@ -2122,16 +2135,23 @@ impl<'i> Internal<'i> {
                                 let mut usage_internals: (Option<f64>, Option<MemoryInfo>) =
                                     (None, None);
 
-                                // For shell scripts, use shell_pid to capture the entire process tree
-                                let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
+                                // For shell scripts, use comprehensive tree memory aggregation
+                                // This includes shell_pid, main pid, and all tracked children
+                                let memory = opm::process::get_process_tree_memory(
+                                    item.pid,
+                                    item.shell_pid,
+                                    &item.children,
+                                );
 
+                                // For CPU, still use shell_pid as the root for tree traversal
+                                let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
                                 if let Ok(process) = Process::new(pid_for_monitoring as u32) {
                                     usage_internals = (
                                         Some(get_process_cpu_usage_with_children_from_process(
                                             &process,
                                             pid_for_monitoring,
                                         )),
-                                        get_process_memory_with_children(pid_for_monitoring),
+                                        memory,
                                     );
                                 }
 
