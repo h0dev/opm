@@ -731,8 +731,10 @@ impl<'i> Internal<'i> {
                         None
                     };
 
+                    // Validate the shell wrapper PID if present, otherwise validate main PID
+                    let pid_to_validate = item.shell_pid.unwrap_or(item.pid);
                     let (is_valid, _) = opm::process::validate_process_with_sysinfo(
-                        item.pid,
+                        pid_to_validate,
                         expected_pattern,
                         item.process_start_time,
                     );
@@ -820,8 +822,10 @@ impl<'i> Internal<'i> {
                 // Only count uptime when the process is actually running
                 // Use OS-level uptime from sysinfo for accurate uptime calculation
                 // Crashed or stopped processes should show "none" uptime
+                // For shell scripts, use shell_pid to track the wrapper process
                 let uptime = if process_actually_running {
-                    let uptime_secs = opm::process::get_process_uptime_sysinfo(item.pid);
+                    let pid_for_uptime = item.shell_pid.unwrap_or(item.pid);
+                    let uptime_secs = opm::process::get_process_uptime_sysinfo(pid_for_uptime);
                     if uptime_secs > 0 {
                         helpers::format_uptime_seconds(uptime_secs)
                     } else {
@@ -1819,6 +1823,7 @@ impl<'i> Internal<'i> {
 
                     // PM2-STYLE VALIDATION: Validate PID with sysinfo
                     // This prevents showing "online" status for ghost/reused PIDs
+                    // For shell-wrapped processes, validate the shell_pid (the wrapper process)
                     let has_valid_pid = item.pid > 0;
                     let pid_validated = if has_valid_pid && item.running {
                         let search_pattern = extract_search_pattern_for_restore(&item.script);
@@ -1828,8 +1833,10 @@ impl<'i> Internal<'i> {
                             None
                         };
 
+                        // Validate the shell wrapper PID if present, otherwise validate main PID
+                        let pid_to_validate = item.shell_pid.unwrap_or(item.pid);
                         let (is_valid, _) = opm::process::validate_process_with_sysinfo(
-                            item.pid,
+                            pid_to_validate,
                             expected_pattern,
                             item.process_start_time,
                         );
@@ -1928,8 +1935,10 @@ impl<'i> Internal<'i> {
                     // Only count uptime when the process is actually running
                     // Use OS-level uptime from sysinfo for accurate uptime calculation
                     // This prevents ghost data after daemon restarts
+                    // For shell scripts, use shell_pid to track the wrapper process
                     let uptime = if process_actually_running {
-                        let uptime_secs = opm::process::get_process_uptime_sysinfo(item.pid);
+                        let pid_for_uptime = item.shell_pid.unwrap_or(item.pid);
+                        let uptime_secs = opm::process::get_process_uptime_sysinfo(pid_for_uptime);
                         if uptime_secs > 0 {
                             format!("{}  ", helpers::format_uptime_seconds(uptime_secs))
                         } else {
@@ -2177,8 +2186,10 @@ impl<'i> Internal<'i> {
                         // Only count uptime when the process is actually running
                         // Use OS-level uptime from sysinfo for accurate uptime calculation
                         // Crashed or stopped processes should show "none" uptime
+                        // For shell scripts, use shell_pid to track the wrapper process
                         let uptime = if process_actually_running {
-                            let uptime_secs = opm::process::get_process_uptime_sysinfo(item.pid);
+                            let pid_for_uptime = item.shell_pid.unwrap_or(item.pid);
+                            let uptime_secs = opm::process::get_process_uptime_sysinfo(pid_for_uptime);
                             if uptime_secs > 0 {
                                 format!("{}  ", helpers::format_uptime_seconds(uptime_secs))
                             } else {

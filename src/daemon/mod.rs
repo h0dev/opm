@@ -228,6 +228,8 @@ fn restart_process() {
 
         // PM2-STYLE VALIDATION: Check for PID reuse and command mismatch
         // This is the "single source of truth" validation that prevents ghost processes
+        // For shell-wrapped processes, validate the shell_pid (the wrapper process)
+        // For direct processes, validate the main pid
         let mut validation_failed = false;
         if has_valid_pid {
             let search_pattern = extract_search_pattern(&item.script);
@@ -237,8 +239,10 @@ fn restart_process() {
                 None
             };
 
+            // Validate the shell wrapper PID if present, otherwise validate main PID
+            let pid_to_validate = item.shell_pid.unwrap_or(item.pid);
             let (is_valid, current_start_time) = opm::process::validate_process_with_sysinfo(
-                item.pid,
+                pid_to_validate,
                 expected_pattern,
                 item.process_start_time,
             );
@@ -248,7 +252,7 @@ fn restart_process() {
                 // PID has been reused or command mismatch detected
                 ::log::warn!(
                     "[daemon] PID {} validation failed for process {} ({}). PID may have been reused or command mismatch.",
-                    item.pid, item.name, id
+                    pid_to_validate, item.name, id
                 );
 
                 // Update start time if process exists but with different start time
