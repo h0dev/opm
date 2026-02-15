@@ -48,12 +48,12 @@ const TERMINATION_CHECK_INTERVAL_MS: u64 = 100;
 const STATUS_GRACE_PERIOD_SECS: i64 = 15;
 
 // Anti-spam restart cooldown constants
-// Minimum delay between restart attempts to prevent rapid restart loops
-pub const RESTART_COOLDOWN_SECS: u64 = 5;
-// Extended delay for failed restarts (e.g., port conflicts) to give time for issues to resolve
-pub const FAILED_RESTART_COOLDOWN_SECS: u64 = 10;
+// Simplified fixed delay for restart attempts as per requirement #4
+pub const RESTART_COOLDOWN_SECS: u64 = 2;
+// No exponential backoff - use same 2s delay for all restarts
+pub const FAILED_RESTART_COOLDOWN_SECS: u64 = 2;
 // Interval for periodic cooldown logging to reduce log noise
-pub const COOLDOWN_LOG_INTERVAL_SECS: i64 = 5;
+pub const COOLDOWN_LOG_INTERVAL_SECS: i64 = 2;
 // Wait time after killing processes to allow OS resource cleanup
 pub const PROCESS_CLEANUP_WAIT_MS: u64 = 500;
 

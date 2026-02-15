@@ -27,7 +27,7 @@ use opm::{
     helpers::{self, ColoredString},
     process::{
         dump, get_process_cpu_usage_with_children_from_process, hash, Runner,
-        COOLDOWN_LOG_INTERVAL_SECS, FAILED_RESTART_COOLDOWN_SECS, PROCESS_CLEANUP_WAIT_MS,
+        COOLDOWN_LOG_INTERVAL_SECS, PROCESS_CLEANUP_WAIT_MS,
         RESTART_COOLDOWN_SECS,
     },
 };
@@ -638,28 +638,15 @@ fn restart_process() {
                                 log!("[daemon] process reached max restart limit, stopping permanently with errored state", 
                                     "name" => &proc.name, "id" => id, "restarts" => proc.restarts, "limit" => daemon_config.restarts);
                             } else {
-                                // Anti-spam cooldown mechanism with exponential backoff
-                                // Enforce minimum delay between restart attempts
-                                // Implements exponential backoff: crashes within 10s trigger 30s wait
+                                // Simplified restart cooldown mechanism with fixed 2s delay
+                                // As per requirement #4, no complex exponential backoff
                                 let seconds_since_last_attempt = proc
                                     .last_restart_attempt
                                     .map(|t| (Utc::now() - t).num_seconds())
                                     .unwrap_or(i64::MAX); // Never attempted - allow restart immediately
 
-                                // Calculate backoff delay based on failure count (exponential backoff)
-                                // Formula: base_delay * (2 ^ min(failed_attempts, 3))
-                                // This gives: 10s, 20s, 40s, 80s, 80s... capped at 80s
-                                // Note: This calculation is very cheap (single exponentiation) and only
-                                // runs when a process needs restart (rare), not on every monitoring cycle
-                                let base_delay = if proc.failed_restart_attempts > 0 {
-                                    // Process failed to restart - use exponential backoff
-                                    let exponential_factor =
-                                        2u64.pow(proc.failed_restart_attempts.min(3));
-                                    FAILED_RESTART_COOLDOWN_SECS * exponential_factor
-                                } else {
-                                    // First restart after successful start
-                                    RESTART_COOLDOWN_SECS
-                                };
+                                // Fixed 2-second delay for all restart attempts
+                                let base_delay = RESTART_COOLDOWN_SECS;
 
                                 // Check if process has exceeded maximum restart attempts
                                 const MAX_RESTART_ATTEMPTS: u32 = 5;
