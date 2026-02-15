@@ -827,7 +827,7 @@ impl<'i> Internal<'i> {
 
                 // Only count uptime when the process is actually running
                 // Use OS-level uptime from sysinfo for accurate uptime calculation
-                // Crashed or stopped processes should show "none" uptime
+                // Offline or stopped processes should show "0s" uptime
                 // For shell scripts, use shell_pid to track the wrapper process
                 let uptime = if process_actually_running {
                     let pid_for_uptime = item.shell_pid.unwrap_or(item.pid);
@@ -835,11 +835,11 @@ impl<'i> Internal<'i> {
                     if uptime_secs > 0 {
                         helpers::format_uptime_seconds(uptime_secs)
                     } else {
-                        // If sysinfo returns 0, process doesn't exist - show as none
-                        string!("none")
+                        // If sysinfo returns 0, process doesn't exist - show as 0s (offline)
+                        string!("0s")
                     }
                 } else {
-                    string!("none")
+                    string!("0s")
                 };
 
                 let data = vec![Info {
@@ -1509,6 +1509,8 @@ impl<'i> Internal<'i> {
 
         let mut restored_ids = Vec::new();
         let mut failed_ids = Vec::new();
+        let mut reattached_ids = Vec::new();
+        let mut started_ids = Vec::new();
 
         // Restore processes that were running before daemon stopped
         // Now we restore all processes that have running=true, regardless of crashed state
@@ -1534,7 +1536,7 @@ impl<'i> Internal<'i> {
             .collect();
 
         if processes_to_restore.is_empty() {
-            println!("{} Success: 0 processes restored.", *helpers::SUCCESS);
+            println!("{} Info: No processes found in configuration.", *helpers::INFO);
             return;
         }
 
@@ -1618,8 +1620,8 @@ impl<'i> Internal<'i> {
                                 // Save the state with attached PID
                                 runner_guard.save_direct();
 
-                                // Return early - no need to spawn
-                                return (id, name);
+                                // Return (id, name, was_reattached=true)
+                                return (id, name, true);
                             } else {
                                 ::log::warn!(
                                     "Found PID {} but validation failed for '{}' (id={}), will spawn new process",
@@ -1649,15 +1651,15 @@ impl<'i> Internal<'i> {
                     );
                 }
 
-                // Return the ID and name for tracking
-                (id, name)
+                // Return (id, name, was_reattached=false)
+                (id, name, false)
             });
 
             handles.push(handle);
         }
 
         // Wait for all spawns to complete
-        let spawn_results: Vec<(usize, String)> =
+        let spawn_results: Vec<(usize, String, bool)> =
             handles.into_iter().filter_map(|h| h.join().ok()).collect();
 
         // Get the updated runner state after all parallel spawns
@@ -1684,7 +1686,7 @@ impl<'i> Internal<'i> {
 
         // FIX #3: Apply synchronized start time to all successfully restored processes
         // This ensures processes started in the same batch show consistent uptimes
-        for (id, _name) in &spawn_results {
+        for (id, _name, _) in &spawn_results {
             if runner.exists(*id) {
                 let process = runner.process(*id);
                 if process.running && process.pid > 0 {
@@ -1695,7 +1697,7 @@ impl<'i> Internal<'i> {
         }
 
         // Verify each process started successfully
-        for (id, name) in spawn_results {
+        for (id, name, was_reattached) in spawn_results {
             // Check if the restart was successful
             if let Some(process) = runner.info(id) {
                 // Verify the process is actually running using the same logic as daemon
@@ -1712,10 +1714,20 @@ impl<'i> Internal<'i> {
 
                 if process.running && process_alive {
                     restored_ids.push(id);
+                    if was_reattached {
+                        reattached_ids.push(id);
+                    } else {
+                        started_ids.push(id);
+                    }
                 } else if process.running && recently_started {
                     // Still starting up - give it the benefit of the doubt for initial report
                     // The daemon will verify and handle any issues during its monitoring cycle
                     restored_ids.push(id);
+                    if was_reattached {
+                        reattached_ids.push(id);
+                    } else {
+                        started_ids.push(id);
+                    }
                 } else {
                     failed_ids.push((id, name.clone()));
                     // Mark process as crashed so daemon can pick it up for auto-restart
@@ -1749,26 +1761,29 @@ impl<'i> Internal<'i> {
         // This must be done after all processes have been started to prevent duplicates
         crate::daemon::clear_restore_in_progress();
 
-        // FIX #2: RESTORE COUNT DISCREPANCY
-        // Calculate the final count based on actual process states, not the loop counter
-        // Count processes that are actually online (running=true and process is alive)
-        let final_online_count = runner
-            .list()
-            .filter(|(_id, p)| {
-                if !p.running {
-                    return false;
-                }
+        // FIX #1: ACCURATE RESTORE MESSAGING
+        // Show accurate counts of started, reattached, and failed processes
+        let started_count = started_ids.len();
+        let reattached_count = reattached_ids.len();
+        let failed_count = failed_ids.len();
 
-                // Check if the process is actually alive using shared helper method
-                opm::process::is_process_actually_alive(p.pid, p.shell_pid)
-            })
-            .count();
-
-        println!(
-            "{} Success: {} processes restored.",
-            *helpers::SUCCESS,
-            final_online_count
-        );
+        if started_count == 0 && reattached_count == 0 && failed_count == 0 {
+            println!("{} Info: No processes found in configuration.", *helpers::INFO);
+        } else {
+            println!(
+                "{} Success: {} started, {} re-attached.",
+                *helpers::SUCCESS,
+                started_count,
+                reattached_count
+            );
+            if failed_count > 0 {
+                println!(
+                    "{} Warning: {} processes failed to start.",
+                    *helpers::WARN,
+                    failed_count
+                );
+            }
+        }
 
         // Display the process list immediately after restore
         // This allows users to see the current status without manually running 'opm ls'
@@ -1955,11 +1970,11 @@ impl<'i> Internal<'i> {
                         if uptime_secs > 0 {
                             format!("{}  ", helpers::format_uptime_seconds(uptime_secs))
                         } else {
-                            // If sysinfo returns 0, process doesn't exist - show as offline
-                            string!("none  ")
+                            // If sysinfo returns 0, process doesn't exist - show as 0s (offline)
+                            string!("0s  ")
                         }
                     } else {
-                        string!("none  ")
+                        string!("0s  ")
                     };
 
                     // Always show restarts counter
@@ -2205,7 +2220,7 @@ impl<'i> Internal<'i> {
 
                         // Only count uptime when the process is actually running
                         // Use OS-level uptime from sysinfo for accurate uptime calculation
-                        // Crashed or stopped processes should show "none" uptime
+                        // Offline or stopped processes should show "0s" uptime
                         // For shell scripts, use shell_pid to track the wrapper process
                         let uptime = if process_actually_running {
                             let pid_for_uptime = item.shell_pid.unwrap_or(item.pid);
@@ -2213,10 +2228,10 @@ impl<'i> Internal<'i> {
                             if uptime_secs > 0 {
                                 format!("{}  ", helpers::format_uptime_seconds(uptime_secs))
                             } else {
-                                string!("none  ")
+                                string!("0s  ")
                             }
                         } else {
-                            string!("none  ")
+                            string!("0s  ")
                         };
 
                         // Add tree indicator for process wrappers
