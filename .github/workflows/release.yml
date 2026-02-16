@@ -1,0 +1,136 @@
+name: Build and Release Binaries
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: opm-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: opm-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: opm-macos-aarch64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p artifacts
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            cp target/${{ matrix.target }}/release/opm artifacts/${{ matrix.artifact_name }}
+          else
+            cp target/${{ matrix.target }}/release/opm artifacts/${{ matrix.artifact_name }}
+          fi
+          chmod +x artifacts/${{ matrix.artifact_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/${{ matrix.artifact_name }}
+          retention-days: 1
+
+  release:
+    name: Create or Update Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -name "opm-*" -exec cp {} release-assets/ \;
+          ls -lh release-assets/
+
+      - name: Delete existing release
+        continue-on-error: true
+        run: |
+          gh release delete latest --yes || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete existing tag
+        continue-on-error: true
+        run: |
+          git push --delete origin latest || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create new release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: Latest Development Build
+          body: |
+            ## Latest Development Build
+            
+            This is an automatically generated release containing the latest builds from the master branch.
+            
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+            
+            ### Available Binaries:
+            - `opm-linux-x86_64` - Linux (x86_64)
+            - `opm-macos-x86_64` - macOS (Intel)
+            - `opm-macos-aarch64` - macOS (Apple Silicon)
+            
+            ### Installation:
+            ```bash
+            # Linux
+            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-x86_64
+            chmod +x opm-linux-x86_64
+            sudo mv opm-linux-x86_64 /usr/local/bin/opm
+            
+            # macOS (Intel)
+            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-macos-x86_64
+            chmod +x opm-macos-x86_64
+            sudo mv opm-macos-x86_64 /usr/local/bin/opm
+            
+            # macOS (Apple Silicon)
+            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-macos-aarch64
+            chmod +x opm-macos-aarch64
+            sudo mv opm-macos-aarch64 /usr/local/bin/opm
+            ```
+          files: release-assets/*
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
