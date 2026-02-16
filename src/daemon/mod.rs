@@ -376,7 +376,7 @@ fn restart_process() {
             // unrelated processes. Process forking scenarios are already handled by:
             // 1. Session-based tracking (process.session_id)
             // 2. Process tree monitoring (process.children)
-            // 3. Shell wrapper child adoption (lines 489-565 below)
+            // 3. Shell wrapper child adoption (in the crash detection section below)
             //
             // If process adoption is needed in the future, it must include strict validation:
             // - Session ID must match (process was spawned by OPM)
