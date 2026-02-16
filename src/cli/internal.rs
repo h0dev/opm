@@ -1428,6 +1428,17 @@ impl<'i> Internal<'i> {
             }
         };
 
+        // Clear all PID data from loaded state to prevent false process detection
+        // This ensures restore always starts fresh processes instead of trying to
+        // attach to potentially unrelated system processes
+        for (_, process) in runner.list() {
+            process.pid = 0;
+            process.shell_pid = None;
+            process.children.clear();
+            process.session_id = None;
+            process.process_start_time = None;
+        }
+
         // Get restore cleanup configuration
         let config = config::read();
         let restore_cleanup = config.daemon.restore_cleanup.as_ref();
@@ -1506,8 +1517,7 @@ impl<'i> Internal<'i> {
 
         let mut restored_ids = Vec::new();
         let mut failed_ids = Vec::new();
-        let mut reattached_ids = Vec::new();
-        let mut started_ids = Vec::new();
+        let mut stopped_ids = Vec::new();
 
         // Restore processes that were running before daemon stopped
         // Now we restore all processes that have running=true, regardless of crashed state
@@ -1526,7 +1536,8 @@ impl<'i> Internal<'i> {
                 if p.running {
                     Some((*id, p.name.clone(), p.running, p.crash.crashed))
                 } else {
-                    // Skip processes with running=false (manually stopped processes)
+                    // Track stopped processes for reporting
+                    stopped_ids.push(*id);
                     None
                 }
             })
@@ -1559,8 +1570,7 @@ impl<'i> Internal<'i> {
             let runner_arc_clone = Arc::clone(&runner_arc);
 
             let handle = thread::spawn(move || {
-                // FIX #4: SYSTEM-WIDE "RUNNING" CHECK (Anti-Duplication)
-                // Before spawning a new process, check if one is already running
+                // Get the runner guard for this thread
                 let mut runner_guard = match runner_arc_clone.lock() {
                     Ok(guard) => guard,
                     Err(poisoned) => {
@@ -1574,63 +1584,8 @@ impl<'i> Internal<'i> {
                     }
                 };
 
-                // Check if a process matching this command is already running in the system
-                if runner_guard.exists(id) {
-                    let process = runner_guard.process(id);
-                    let search_identifier = extract_search_pattern_for_restore(&process.script);
-
-                    if !search_identifier.is_empty() {
-                        if let Some(existing_pid) =
-                            opm::process::find_process_by_command(&search_identifier)
-                        {
-                            ::log::info!(
-                                "Found existing process for '{}' (id={}) with PID {}, attaching instead of spawning",
-                                name,
-                                id,
-                                existing_pid
-                            );
-
-                            // Validate and capture start time of existing process
-                            let (is_valid, start_time) =
-                                opm::process::validate_process_with_sysinfo(
-                                    existing_pid,
-                                    Some(&search_identifier),
-                                    None,
-                                );
-
-                            if is_valid {
-                                // Attach to the existing process instead of spawning new one
-                                process.pid = existing_pid;
-                                process.shell_pid = None; // No shell wrapper for existing process
-                                process.running = true;
-                                process.crash.crashed = false;
-                                process.process_start_time = start_time; // Store start time for PID reuse detection
-                                process.is_process_tree = false; // Existing process is not a wrapper
-
-                                // Update session ID for the attached process
-                                #[cfg(any(target_os = "linux", target_os = "macos"))]
-                                {
-                                    process.session_id =
-                                        opm::process::unix::get_session_id(existing_pid as i32);
-                                }
-
-                                // Save the state with attached PID
-                                runner_guard.save_direct();
-
-                                // Return (id, name, was_reattached=true)
-                                return (id, name, true);
-                            } else {
-                                ::log::warn!(
-                                    "Found PID {} but validation failed for '{}' (id={}), will spawn new process",
-                                    existing_pid,
-                                    name,
-                                    id
-                                );
-                            }
-                        }
-                    }
-                }
-                // No existing process found, proceed with normal restart
+                // Always start fresh process during restore (no re-attachment)
+                // This prevents false positives from matching unrelated system processes
                 *runner_guard = Internal {
                     id,
                     server_name: &server_name,
@@ -1648,15 +1603,15 @@ impl<'i> Internal<'i> {
                     );
                 }
 
-                // Return (id, name, was_reattached=false)
-                (id, name, false)
+                // Return (id, name)
+                (id, name)
             });
 
             handles.push(handle);
         }
 
         // Wait for all spawns to complete
-        let spawn_results: Vec<(usize, String, bool)> =
+        let spawn_results: Vec<(usize, String)> =
             handles.into_iter().filter_map(|h| h.join().ok()).collect();
 
         // Get the updated runner state after all parallel spawns
@@ -1683,7 +1638,7 @@ impl<'i> Internal<'i> {
 
         // FIX #3: Apply synchronized start time to all successfully restored processes
         // This ensures processes started in the same batch show consistent uptimes
-        for (id, _name, _) in &spawn_results {
+        for (id, _name) in &spawn_results {
             if runner.exists(*id) {
                 let process = runner.process(*id);
                 if process.running && process.pid > 0 {
@@ -1694,7 +1649,7 @@ impl<'i> Internal<'i> {
         }
 
         // Verify each process started successfully
-        for (id, name, was_reattached) in spawn_results {
+        for (id, name) in spawn_results {
             // Check if the restart was successful
             if let Some(process) = runner.info(id) {
                 // Verify the process is actually running using the same logic as daemon
@@ -1711,20 +1666,10 @@ impl<'i> Internal<'i> {
 
                 if process.running && process_alive {
                     restored_ids.push(id);
-                    if was_reattached {
-                        reattached_ids.push(id);
-                    } else {
-                        started_ids.push(id);
-                    }
                 } else if process.running && recently_started {
                     // Still starting up - give it the benefit of the doubt for initial report
                     // The daemon will verify and handle any issues during its monitoring cycle
                     restored_ids.push(id);
-                    if was_reattached {
-                        reattached_ids.push(id);
-                    } else {
-                        started_ids.push(id);
-                    }
                 } else {
                     failed_ids.push((id, name.clone()));
                     // Mark process as crashed so daemon can pick it up for auto-restart
@@ -1758,26 +1703,19 @@ impl<'i> Internal<'i> {
         // This must be done after all processes have been started to prevent duplicates
         crate::daemon::clear_restore_in_progress();
 
-        // FIX #1: ACCURATE RESTORE MESSAGING
-        // Show accurate counts of started, reattached, and failed processes
-        let started_count = started_ids.len();
-        let reattached_count = reattached_ids.len();
-        let failed_count = failed_ids.len();
+        // Calculate counts for output message
+        let started_count = restored_ids.len();
+        let stopped_count = stopped_ids.len();
+        let errored_count = failed_ids.len();
 
-        // Always show the result since we know processes_to_restore is not empty
+        // Show restore results: started, stopped, and errored counts only
         println!(
-            "{} Success: {} started, {} re-attached.",
+            "{} Restore complete: {} started, {} stopped, {} errored.",
             *helpers::SUCCESS,
             started_count,
-            reattached_count
+            stopped_count,
+            errored_count
         );
-        if failed_count > 0 {
-            println!(
-                "{} Warning: {} processes failed to start.",
-                *helpers::WARN,
-                failed_count
-            );
-        }
 
         // Display the process list immediately after restore
         // This allows users to see the current status without manually running 'opm ls'
