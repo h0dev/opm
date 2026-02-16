@@ -742,22 +742,27 @@ impl Runner {
                 }
             }
 
-            let process = self.process(id);
             let full_config = config::read();
             let config = full_config.runner;
             let max_restarts = full_config.daemon.restarts;
+
+            // Clone the process data we need before making any modifications
+            // This avoids borrowing issues with self.list
             let Process {
                 path,
                 script,
                 name,
                 running: was_running,
                 ..
-            } = process.clone();
+            } = self.list.get(&id).expect("Process must exist").clone();
 
             // Save the current working directory so we can restore it after restart
             // This is critical for the daemon - changing the working directory affects the daemon process
             // and can cause it to crash when trying to access its own files
             let original_dir = std::env::current_dir().ok();
+
+            // Get mutable reference to process for modifications
+            let process = self.process(id);
 
             // Reset counters when user manually starts a stopped process (not a restart)
             // This gives the process a fresh start after being stopped/crashed
@@ -991,6 +996,9 @@ impl Runner {
                     }
                 }
             }
+
+            // Get mutable reference to process after duplicate check
+            let process = self.process(id);
 
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
