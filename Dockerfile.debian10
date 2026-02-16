@@ -1,0 +1,43 @@
+# Build stage for OPM on Debian 10
+FROM debian:10
+
+# Update sources to use archive repository (Debian 10 reached EOL)
+# Add [check-valid-until=no] option to work with archived repositories
+RUN echo "deb [check-valid-until=no] http://archive.debian.org/debian buster main" > /etc/apt/sources.list && \
+    echo "deb [check-valid-until=no] http://archive.debian.org/debian-security buster/updates main" >> /etc/apt/sources.list
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install cross-compilation tools for aarch64
+RUN apt-get update && apt-get install -y \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 for webui builds (optional)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up workspace
+WORKDIR /build
+
+# Configure cargo for cross-compilation
+RUN mkdir -p /root/.cargo && \
+    echo '[target.aarch64-unknown-linux-gnu]' >> /root/.cargo/config.toml && \
+    echo 'linker = "aarch64-linux-gnu-gcc"' >> /root/.cargo/config.toml
+
+# Entry point will be the build command
+CMD ["/bin/bash"]
