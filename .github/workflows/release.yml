@@ -72,12 +72,7 @@ jobs:
           EOF
 
       - name: Build release binary
-        run: |
-          if [ -n "${{ matrix.features }}" ]; then
-            cargo build --release --target ${{ matrix.target }} --features ${{ matrix.features }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
         env:
           CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
           CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
@@ -179,9 +174,9 @@ jobs:
             chmod +x opm-linux-x86_64-webui
             sudo mv opm-linux-x86_64-webui /usr/local/bin/opm
             
-            # Then start with WebUI enabled:
+            # Start the daemon with WebUI enabled
             opm daemon restore --api --webui
-            # Access at http://127.0.0.1:9876/
+            # Access the web interface at http://127.0.0.1:9876/
             ```
             
             #### Standard Build (Linux ARM64):
@@ -197,9 +192,9 @@ jobs:
             chmod +x opm-linux-aarch64-webui
             sudo mv opm-linux-aarch64-webui /usr/local/bin/opm
             
-            # Then start with WebUI enabled:
+            # Start the daemon with WebUI enabled
             opm daemon restore --api --webui
-            # Access at http://127.0.0.1:9876/
+            # Access the web interface at http://127.0.0.1:9876/
             ```
             
             #### macOS (Intel):
