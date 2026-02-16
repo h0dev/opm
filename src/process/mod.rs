@@ -3179,32 +3179,37 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
         }
     })?;
 
-    let shell_pid = child.id() as i64;
+    // PID of the process spawned by Command::spawn()
+    // For direct spawns: this is the application PID
+    // For shell-wrapped spawns: this is the shell wrapper PID
+    let spawned_pid = child.id() as i64;
 
+    // Determine the actual application PID
     // For shell-wrapped processes, wait briefly to allow OS to register process tree
     // This ensures sysinfo can discover child processes during PID stability checks
     // For direct spawns, no wait needed as there's no shell wrapper to track
     let actual_pid = if use_direct_spawn {
         // For direct spawns, child.id() is already the actual application PID
         // No need to search for children since there's no shell wrapper
-        shell_pid
+        spawned_pid
     } else {
         // For shell-wrapped spawns, wait for process tree to stabilize
         std::thread::sleep(std::time::Duration::from_millis(200));
         // Find the actual application PID from the shell wrapper's children
-        unix::get_actual_child_pid(shell_pid)
+        unix::get_actual_child_pid(spawned_pid)
     };
 
     // Store child handle in global state to prevent it from being dropped and becoming a zombie
     // This is critical for PM2-like daemon functionality
-    PROCESS_HANDLES.insert(shell_pid, Arc::new(Mutex::new(child)));
+    // Use spawned_pid (not actual_pid) because this is the direct child we spawned
+    PROCESS_HANDLES.insert(spawned_pid, Arc::new(Mutex::new(child)));
 
-    // For direct spawns, shell_pid and actual_pid are the same (no shell wrapper)
+    // For direct spawns, spawned_pid and actual_pid are the same (no shell wrapper)
     // For shell-wrapped commands, they differ and we need to track both
     let shell_pid_opt = if use_direct_spawn {
         None // No shell wrapper for direct spawns
     } else {
-        (shell_pid != actual_pid).then_some(shell_pid)
+        (spawned_pid != actual_pid).then_some(spawned_pid)
     };
 
     // Get session ID of the spawned process for session-based tracking
