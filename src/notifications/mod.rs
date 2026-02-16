@@ -67,12 +67,12 @@ impl NotificationManager {
             .body(message)
             .appname("OPM")
             .icon("application-x-executable")
-            .hint(Hint::Category("network".to_string()))
             .timeout(5000);
 
-        // urgency() method is only available on Linux/BSD, not on macOS
+        // hint() and urgency() methods are only available on Linux/BSD, not on macOS
         #[cfg(all(unix, not(target_os = "macos")))]
         {
+            notification.hint(Hint::Category("network".to_string()));
             notification.urgency(event.urgency());
         }
 
