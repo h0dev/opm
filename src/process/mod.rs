@@ -2780,16 +2780,12 @@ pub fn is_pid_info_missing(pid: i64, children: &[i64]) -> bool {
 }
 
 /// Check if a process is actually alive by checking PID and shell_pid
-/// This checks the actual process PID first (long-running), then shell_pid (transient)
 /// Returns true if either the main PID or shell PID is alive
+/// This matches the daemon logic which checks: is_pid_alive(pid) || shell_alive
 pub fn is_process_actually_alive(pid: i64, shell_pid: Option<i64>) -> bool {
-    if pid > 0 {
-        is_pid_alive(pid)
-    } else if let Some(shell_pid) = shell_pid {
-        shell_pid > 0 && is_pid_alive(shell_pid)
-    } else {
-        false
-    }
+    let main_pid_alive = pid > 0 && is_pid_alive(pid);
+    let shell_pid_alive = shell_pid.map_or(false, |spid| spid > 0 && is_pid_alive(spid));
+    main_pid_alive || shell_pid_alive
 }
 
 /// Validate process state using sysinfo with PID reuse detection
@@ -2916,20 +2912,18 @@ pub fn get_process_uptime_sysinfo(pid: i64) -> u64 {
     );
 
     if let Some(process) = system.process(sysinfo_pid) {
-        // Get system boot time to calculate absolute uptime
-        let boot_time = System::boot_time();
+        // In sysinfo 0.30+, process.start_time() returns seconds since UNIX epoch
+        // (not seconds since boot as in older versions)
         let process_start_time = process.start_time();
         
-        // Calculate uptime: current_time - (boot_time + process_start_time)
-        // process.start_time() returns seconds since boot
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         
-        let absolute_start_time = boot_time + process_start_time;
-        if current_time > absolute_start_time {
-            return current_time - absolute_start_time;
+        // Calculate uptime: current_time - process_start_time
+        if current_time > process_start_time {
+            return current_time - process_start_time;
         }
     }
 
