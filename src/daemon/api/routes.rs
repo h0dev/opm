@@ -1404,15 +1404,23 @@ async fn send_test_desktop_notification(
     title: &str,
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use notify_rust::{Notification, Urgency};
+    use notify_rust::Notification;
 
-    Notification::new()
+    let mut notification = Notification::new();
+    notification
         .summary(title)
         .body(message)
-        .urgency(Urgency::Normal)
         .appname("OPM")
-        .timeout(5000)
-        .show()?;
+        .timeout(5000);
+
+    // urgency() method is only available on Linux/BSD, not on macOS
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use notify_rust::Urgency;
+        notification.urgency(Urgency::Normal);
+    }
+
+    notification.show()?;
 
     Ok(())
 }
