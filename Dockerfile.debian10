@@ -10,6 +10,8 @@ RUN echo "deb [check-valid-until=no] http://archive.debian.org/debian buster mai
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
+    clang \
+    llvm \
     pkg-config \
     libssl-dev \
     git \
