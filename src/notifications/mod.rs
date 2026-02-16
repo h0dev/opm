@@ -72,7 +72,9 @@ impl NotificationManager {
 
         // urgency() method is only available on Linux/BSD, not on macOS
         #[cfg(all(unix, not(target_os = "macos")))]
-        notification.urgency(event.urgency());
+        {
+            notification.urgency(event.urgency());
+        }
 
         notification.show()?;
 
