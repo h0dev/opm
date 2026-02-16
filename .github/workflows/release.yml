@@ -16,18 +16,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             target: x86_64-unknown-linux-gnu
             artifact_name: opm-linux-x86_64
-          - os: ubuntu-latest
+            features: ""
+          - os: ubuntu-20.04
             target: aarch64-unknown-linux-gnu
             artifact_name: opm-linux-aarch64
+            features: ""
+          - os: ubuntu-20.04
+            target: x86_64-unknown-linux-gnu
+            artifact_name: opm-linux-x86_64-webui
+            features: "webui"
+          - os: ubuntu-20.04
+            target: aarch64-unknown-linux-gnu
+            artifact_name: opm-linux-aarch64-webui
+            features: "webui"
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: opm-macos-x86_64
+            features: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: opm-macos-aarch64
+            features: ""
 
     steps:
       - name: Checkout code
@@ -37,6 +49,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Setup Node.js (for webui builds)
+        if: matrix.features == 'webui'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Install cross-compilation dependencies (Linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -54,7 +72,12 @@ jobs:
           EOF
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo build --release --target ${{ matrix.target }} --features ${{ matrix.features }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
         env:
           CC_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
           CXX_aarch64_unknown_linux_gnu: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
@@ -127,29 +150,67 @@ jobs:
             **Date:** ${{ github.event.head_commit.timestamp }}
             
             ### Available Binaries:
-            - `opm-linux-x86_64` - Linux (x86_64)
-            - `opm-linux-aarch64` - Linux (ARM64)
+            
+            #### Standard Binaries (without WebUI):
+            - `opm-linux-x86_64` - Linux (x86_64) - Built on Ubuntu 20.04
+            - `opm-linux-aarch64` - Linux (ARM64) - Built on Ubuntu 20.04
             - `opm-macos-x86_64` - macOS (Intel)
             - `opm-macos-aarch64` - macOS (Apple Silicon)
             
+            #### WebUI-Enabled Binaries:
+            - `opm-linux-x86_64-webui` - Linux (x86_64) with WebUI - Built on Ubuntu 20.04
+            - `opm-linux-aarch64-webui` - Linux (ARM64) with WebUI - Built on Ubuntu 20.04
+            
+            > **Note:** Linux binaries are built on Ubuntu 20.04 for better compatibility with older systems.
+            > WebUI-enabled binaries include the web interface for managing processes via browser.
+            
             ### Installation:
+            
+            #### Standard Build (Linux x86_64):
             ```bash
-            # Linux (x86_64)
             wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-x86_64
             chmod +x opm-linux-x86_64
             sudo mv opm-linux-x86_64 /usr/local/bin/opm
+            ```
             
-            # Linux (ARM64)
+            #### WebUI Build (Linux x86_64):
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-x86_64-webui
+            chmod +x opm-linux-x86_64-webui
+            sudo mv opm-linux-x86_64-webui /usr/local/bin/opm
+            
+            # Then start with WebUI enabled:
+            opm daemon restore --api --webui
+            # Access at http://127.0.0.1:9876/
+            ```
+            
+            #### Standard Build (Linux ARM64):
+            ```bash
             wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-aarch64
             chmod +x opm-linux-aarch64
             sudo mv opm-linux-aarch64 /usr/local/bin/opm
+            ```
             
-            # macOS (Intel)
+            #### WebUI Build (Linux ARM64):
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-aarch64-webui
+            chmod +x opm-linux-aarch64-webui
+            sudo mv opm-linux-aarch64-webui /usr/local/bin/opm
+            
+            # Then start with WebUI enabled:
+            opm daemon restore --api --webui
+            # Access at http://127.0.0.1:9876/
+            ```
+            
+            #### macOS (Intel):
+            ```bash
             wget https://github.com/${{ github.repository }}/releases/download/latest/opm-macos-x86_64
             chmod +x opm-macos-x86_64
             sudo mv opm-macos-x86_64 /usr/local/bin/opm
+            ```
             
-            # macOS (Apple Silicon)
+            #### macOS (Apple Silicon):
+            ```bash
             wget https://github.com/${{ github.repository }}/releases/download/latest/opm-macos-aarch64
             chmod +x opm-macos-aarch64
             sudo mv opm-macos-aarch64 /usr/local/bin/opm
