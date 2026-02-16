@@ -1281,7 +1281,7 @@ impl<'i> Internal<'i> {
     }
 
     pub fn restore(server_name: &String) {
-        let (kind, _list_name) = super::format(server_name);
+        let (_kind, _list_name) = super::format(server_name);
 
         if !matches!(&**server_name, "internal" | "local") {
             crashln!("{} Cannot restore on remote servers", *helpers::FAIL)
@@ -1565,8 +1565,6 @@ impl<'i> Internal<'i> {
         for (id, name, _was_running, _was_crashed) in &processes_to_restore {
             let id = *id;
             let name = name.clone();
-            let server_name = server_name.clone();
-            let kind = kind.clone();
             let runner_arc_clone = Arc::clone(&runner_arc);
 
             let handle = thread::spawn(move || {
@@ -1586,13 +1584,9 @@ impl<'i> Internal<'i> {
 
                 // Always start fresh process during restore (no re-attachment)
                 // This prevents false positives from matching unrelated system processes
-                *runner_guard = Internal {
-                    id,
-                    server_name: &server_name,
-                    kind: kind.clone(),
-                    runner: runner_guard.clone(),
-                }
-                .restart(&None, &None, false, true, false);
+                // Call restart directly on the shared runner without cloning to avoid lost updates
+                // Parameters: id, dead=false (user-initiated), increment_counter=false (counters reset later)
+                runner_guard.restart(id, false, false);
 
                 // Create timestamp file for this restore action
                 if let Err(e) = opm::process::write_action_timestamp(id) {
