@@ -2558,7 +2558,7 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64
     // accidentally terminating unrelated processes. This is safer than trying to
     // match only by command pattern, which could match user processes.
     if opm_session_ids.is_empty() {
-        ::log::info!(
+        ::log::debug!(
             "No valid OPM session IDs found in dump - skipping process cleanup to avoid killing unrelated processes"
         );
         return Ok(());
@@ -2593,7 +2593,7 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64
                     true
                 } else {
                     ::log::debug!(
-                        "Process PID {} session {} is not OPM-managed - skipping", 
+                        "Process PID {} session {} is not an OPM-managed session - skipping", 
                         pid, proc_session_id
                     );
                     false
