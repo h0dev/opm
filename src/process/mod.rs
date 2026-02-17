@@ -29,6 +29,8 @@ use nix::{
     unistd::Pid,
 };
 
+
+
 use chrono::{DateTime, Utc};
 use global_placeholders::global;
 use macros_rs::{crashln, string, ternary, then};
@@ -40,6 +42,10 @@ use utoipa::ToSchema;
 // This is the PM2-like daemon state that keeps processes alive
 pub static PROCESS_HANDLES: Lazy<DashMap<i64, Arc<Mutex<std::process::Child>>>> =
     Lazy::new(DashMap::new);
+
+// Global PID registry to prevent duplicate PIDs during parallel process operations
+// This ensures that even during rapid parallel process spawning, each process gets a unique PID
+static PID_REGISTRY: Lazy<Mutex<HashSet<i64>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 // Constants for process termination waiting
 const MAX_TERMINATION_WAIT_ATTEMPTS: u32 = 50;
@@ -700,6 +706,57 @@ impl Runner {
                 return self;
             }
 
+            // Register the PID in the global registry to prevent race conditions during parallel operations
+            {
+                let mut pid_registry = PID_REGISTRY.lock().unwrap();
+                if pid_registry.contains(&result.pid) {
+                    log::warn!(
+                        "[process] Duplicate PID {} detected in registry for new process '{}' (id={}). Skipping start.",
+                        result.pid,
+                        name,
+                        id
+                    );
+                    println!(
+                        "{} Process '{}' (id={}) start aborted: PID {} already in use by another process.",
+                        *helpers::FAIL,
+                        name,
+                        id,
+                        result.pid
+                    );
+                    // Release the lock before returning
+                    drop(pid_registry);
+                    return self;
+                }
+                
+                pid_registry.insert(result.pid);
+                
+                // Also register shell PID if present
+                if let Some(shell_pid) = result.shell_pid {
+                    if pid_registry.contains(&shell_pid) {
+                        log::warn!(
+                            "[process] Shell PID {} already in registry for new process '{}' (id={}). Skipping start.",
+                            shell_pid,
+                            name,
+                            id
+                        );
+                        // Remove the main PID we just added since we're failing
+                        pid_registry.remove(&result.pid);
+                        println!(
+                            "{} Process '{}' (id={}) start aborted: Shell PID {} already in use.",
+                            *helpers::FAIL,
+                            name,
+                            id,
+                            shell_pid
+                        );
+                        // Release the lock before returning
+                        drop(pid_registry);
+                        return self;
+                    }
+                    pid_registry.insert(shell_pid);
+                }
+                drop(pid_registry);
+            }
+
             self.list.insert(
                 id,
                 Process {
@@ -977,6 +1034,62 @@ impl Runner {
                 return self;
             }
 
+            // Register the PID in the global registry to prevent race conditions during parallel operations
+            // This ensures that even if multiple processes get the same PID from the OS, 
+            // they won't all be registered in OPM
+            let mut pid_registry = PID_REGISTRY.lock().unwrap();
+            if pid_registry.contains(&result.pid) {
+                log::warn!(
+                    "[process] Duplicate PID {} detected in registry for process '{}' (id={}). Skipping restart.",
+                    result.pid,
+                    name,
+                    id
+                );
+                println!(
+                    "{} Process '{}' (id={}) restart aborted: PID {} already in use by another process.",
+                    *helpers::FAIL,
+                    name,
+                    id,
+                    result.pid
+                );
+                // Restore working directory before returning
+                if let Some(ref dir) = original_dir {
+                    let _ = std::env::set_current_dir(dir);
+                }
+                return self;
+            }
+            
+            // Add the PID to the registry
+            pid_registry.insert(result.pid);
+            
+            // Also register shell PID if present
+            if let Some(shell_pid) = result.shell_pid {
+                if pid_registry.contains(&shell_pid) {
+                    log::warn!(
+                        "[process] Shell PID {} already in registry for process '{}' (id={}). Skipping restart.",
+                        shell_pid,
+                        name,
+                        id
+                    );
+                    // Remove the main PID we just added since we're failing
+                    pid_registry.remove(&result.pid);
+                    println!(
+                        "{} Process '{}' (id={}) restart aborted: Shell PID {} already in use.",
+                        *helpers::FAIL,
+                        name,
+                        id,
+                        shell_pid
+                    );
+                    // Restore working directory before returning
+                    if let Some(ref dir) = original_dir {
+                        let _ = std::env::set_current_dir(dir);
+                    }
+                    return self;
+                }
+                pid_registry.insert(shell_pid);
+            }
+            drop(pid_registry); // Release the lock
+
             // Get mutable reference to process after duplicate check
             let process = self.process(id);
 
@@ -1210,19 +1323,32 @@ impl Runner {
             let old_pid = process.pid;
             let old_children = process.children.clone();
 
+            // First, remove the old PID from the registry if it existed
+            // This prevents stale PIDs from accumulating in the registry
+            {
+                let mut pid_registry = PID_REGISTRY.lock().unwrap();
+                if process.pid > 0 {
+                    pid_registry.remove(&process.pid);
+                }
+                if let Some(old_shell_pid) = process.shell_pid {
+                    pid_registry.remove(&old_shell_pid);
+                }
+                drop(pid_registry);
+            }
+            
             // Update process with new PID
+            let process = self.process(id);
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
             process.session_id = result.session_id;
             process.process_start_time = result.start_time;
             process.is_process_tree = result.shell_pid.is_some();
             process.running = true;
-            process.children = vec![];
             process.started = Utc::now();
-            // Clear crashed flag after successful reload
+            // Clear crashed flag after successful restart
             // This allows the daemon to properly detect if the process crashes again
             process.crash.crashed = false;
-            // Clear manual_stop flag when process is reloaded
+            // Clear manual_stop flag when process is started/restarted
             process.manual_stop = false;
             process.last_action_at = Utc::now();
 
@@ -1331,6 +1457,14 @@ impl Runner {
                     let _ = child.wait();
                 }
             }
+            
+            // Remove PID from the registry to allow reuse
+            let mut pid_registry = PID_REGISTRY.lock().unwrap();
+            pid_registry.remove(&pid);
+            if let Some(shell_pid_val) = shell_pid {
+                pid_registry.remove(&shell_pid_val);
+            }
+            drop(pid_registry);
         }
     }
 
