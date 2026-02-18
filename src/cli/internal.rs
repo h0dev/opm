@@ -1438,6 +1438,30 @@ impl<'i> Internal<'i> {
             process.session_id = None;
             process.process_start_time = None;
         }
+        
+        // CRITICAL: Update daemon's memory cache immediately after clearing PIDs
+        // This prevents daemon from spawning duplicate processes during parallel restore
+        // The daemon runs in a separate process, so we must use socket IPC to update its state
+        // Without this immediate update, daemon would see stale cache with valid PIDs and spawn duplicates
+        let socket_path = global!("opm.socket");
+        match opm::socket::send_request(&socket_path, opm::socket::SocketRequest::SetState(runner.clone())) {
+            Ok(opm::socket::SocketResponse::Success) => {}
+            Ok(opm::socket::SocketResponse::Error(message)) => {
+                ::log::warn!(
+                    "Failed to update daemon state via socket after PID clearing: {}. Daemon may spawn duplicates.",
+                    message
+                );
+            }
+            Ok(_) => {
+                ::log::warn!("Unexpected response when updating daemon state after PID clearing. Daemon may spawn duplicates.");
+            }
+            Err(e) => {
+                ::log::warn!(
+                    "Failed to communicate with daemon to update state after PID clearing: {}. Daemon may spawn duplicates.",
+                    e
+                );
+            }
+        }
 
         // Get restore cleanup configuration
         let config = config::read();
@@ -1702,10 +1726,9 @@ impl<'i> Internal<'i> {
         // marked as crashed in permanent storage for daemon monitoring
         runner.save_permanent();
 
-        // CRITICAL: Update daemon's memory cache via socket so it sees the new state immediately
-        // This prevents daemon from spawning duplicate processes when it reads from cache
-        // The daemon runs in a separate process, so we must use socket IPC to update its state
-        // Without this update, daemon would see stale cache with pid=0 and spawn duplicates
+        // Update daemon's memory cache via socket so it sees the new state immediately
+        // NOTE: This duplicates the update sent right after PID clearing, but ensures final state
+        // is properly synchronized after all restore operations complete
         let socket_path = global!("opm.socket");
         match opm::socket::send_request(&socket_path, opm::socket::SocketRequest::SetState(runner.clone())) {
             Ok(opm::socket::SocketResponse::Success) => {}
