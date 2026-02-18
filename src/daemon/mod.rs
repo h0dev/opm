@@ -401,6 +401,12 @@ fn restart_process() {
                 // Only run crash detection if not within action delay
                 // This prevents false crash detection for processes that are still starting up
                 if !within_action_delay {
+                    // Check if restore is in progress - if so, skip crash detection to prevent conflicts
+                    // This prevents the daemon from restarting processes that are being restored
+                    if *RESTORE_IN_PROGRESS.read().unwrap() {
+                        continue; // Skip monitoring during restore operations
+                    }
+
                     // Detect new crashes: process has PID but is now dead
                     let grace_period = daemon_config.crash_grace_period as i64;
                     let just_started = (Utc::now() - item.started).num_seconds() < grace_period;
@@ -671,16 +677,23 @@ fn restart_process() {
                                         process.last_restart_attempt = Some(Utc::now());
                                     }
 
-                                    // Attempt restart
-                                    runner.restart(id, true, true);
+                                     // Check if restore is in progress - if so, skip restart to prevent conflicts
+                                     // This prevents the daemon from restarting processes that are being restored
+                                     if *RESTORE_IN_PROGRESS.read().unwrap() {
+                                         log!("[daemon] skipping restart during restore operation", "id" => id, "name" => &proc.name);
+                                         continue; // Skip restart during restore operations
+                                     }
 
-                                    // Update failed restart counter based on result
-                                    // Verify process is actually running by checking PID > 0 AND process is alive
-                                    // Also check if this was a quick crash (within 10 seconds) to detect flapping
-                                    if let Some(process) = runner.list.get_mut(&id) {
-                                        if process.pid > 0
-                                            && opm::process::is_pid_alive(process.pid)
-                                        {
+                                     // Attempt restart
+                                     runner.restart(id, true, true);
+
+                                     // Update failed restart counter based on result
+                                     // Verify process is actually running by checking PID > 0 AND process is alive
+                                     // Also check if this was a quick crash (within 10 seconds) to detect flapping
+                                     if let Some(process) = runner.list.get_mut(&id) {
+                                         if process.pid > 0
+                                             && opm::process::is_pid_alive(process.pid)
+                                         {
                                             // Restart succeeded - process has valid PID and is alive
                                             // Check if previous process crashed quickly (within 10s of start)
                                             // This indicates a flapping process that needs exponential backoff
