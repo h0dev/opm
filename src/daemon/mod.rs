@@ -50,6 +50,7 @@ static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 // Flag to prevent daemon from auto-starting processes during restore operation
 // This prevents race condition where daemon restarts processes that restore is already handling
 static RESTORE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+const RESTORE_IN_PROGRESS_FILE: &str = "restore_in_progress.flag";
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     // SAFETY: Signal handlers should be kept simple and avoid complex operations.
@@ -1537,21 +1538,87 @@ pub fn cleanup_all_timestamp_files() {
     }
 }
 
+fn restore_in_progress_flag_path() -> Option<std::path::PathBuf> {
+    home::home_dir().map(|home_dir| home_dir.join(".opm").join(RESTORE_IN_PROGRESS_FILE))
+}
+
 /// Set restore in progress flag to prevent daemon from auto-starting processes during restore
 pub fn set_restore_in_progress() {
     RESTORE_IN_PROGRESS.store(true, Ordering::SeqCst);
+
+    if let Some(flag_path) = restore_in_progress_flag_path() {
+        let pid = process::id();
+        if let Err(e) = std::fs::write(&flag_path, pid.to_string()) {
+            ::log::warn!(
+                "[daemon] failed to write restore in progress flag file {:?}: {}",
+                flag_path,
+                e
+            );
+        }
+    }
+
     ::log::info!("[daemon] restore in progress flag set");
 }
 
 /// Clear restore in progress flag to allow daemon to resume auto-starting processes
 pub fn clear_restore_in_progress() {
     RESTORE_IN_PROGRESS.store(false, Ordering::SeqCst);
+
+    if let Some(flag_path) = restore_in_progress_flag_path() {
+        if flag_path.exists() {
+            if let Err(e) = std::fs::remove_file(&flag_path) {
+                ::log::warn!(
+                    "[daemon] failed to remove restore in progress flag file {:?}: {}",
+                    flag_path,
+                    e
+                );
+            }
+        }
+    }
+
     ::log::info!("[daemon] restore in progress flag cleared");
 }
 
 /// Check if restore is currently in progress
 pub fn is_restore_in_progress() -> bool {
-    RESTORE_IN_PROGRESS.load(Ordering::SeqCst)
+    if RESTORE_IN_PROGRESS.load(Ordering::SeqCst) {
+        return true;
+    }
+
+    let Some(flag_path) = restore_in_progress_flag_path() else {
+        return false;
+    };
+
+    if !flag_path.exists() {
+        return false;
+    }
+
+    let flag_contents = match std::fs::read_to_string(&flag_path) {
+        Ok(contents) => contents,
+        Err(e) => {
+            ::log::warn!(
+                "[daemon] failed to read restore in progress flag file {:?}: {}",
+                flag_path,
+                e
+            );
+            return true;
+        }
+    };
+
+    let parsed_pid = match flag_contents.trim().parse::<i32>() {
+        Ok(pid) if pid > 0 => pid,
+        _ => {
+            let _ = std::fs::remove_file(&flag_path);
+            return false;
+        }
+    };
+
+    if pid::running(parsed_pid) {
+        true
+    } else {
+        let _ = std::fs::remove_file(&flag_path);
+        false
+    }
 }
 
 // Helper function to check if there was a recent action timestamp file
@@ -1611,6 +1678,26 @@ mod tests {
         assert!(is_restore_in_progress());
         clear_restore_in_progress();
         assert!(!is_restore_in_progress());
+    }
+
+    #[test]
+    fn test_restore_in_progress_flag_file_stale_pid_cleanup() {
+        clear_restore_in_progress();
+
+        let flag_path = restore_in_progress_flag_path().expect("home directory should be available");
+        if let Some(parent) = flag_path.parent() {
+            std::fs::create_dir_all(parent).expect("should create ~/.opm directory for test");
+        }
+        std::fs::write(&flag_path, "999999").expect("should write stale flag file");
+
+        assert!(
+            !is_restore_in_progress(),
+            "stale restore marker must not block daemon"
+        );
+        assert!(
+            !flag_path.exists(),
+            "stale restore marker should be removed after validation"
+        );
     }
 
     #[test]

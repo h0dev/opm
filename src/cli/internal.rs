@@ -1568,6 +1568,7 @@ impl<'i> Internal<'i> {
             .collect();
 
         if processes_to_restore.is_empty() {
+            crate::daemon::clear_restore_in_progress();
             println!("{} Info: No processes found in configuration.", *helpers::INFO);
             return;
         }
