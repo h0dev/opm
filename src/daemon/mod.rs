@@ -152,6 +152,45 @@ fn should_fail_process_validation(
     start_time_mismatch || !pid_alive
 }
 
+fn is_process_still_alive(process: &opm::process::Process) -> bool {
+    let shell_alive = process
+        .shell_pid
+        .map_or(false, |pid| opm::process::is_pid_alive(pid));
+    let session_alive = process
+        .session_id
+        .map_or(false, |sid| opm::process::is_session_alive(sid));
+
+    let main_or_shell_alive = process.pid > 0
+        && (opm::process::is_pid_alive(process.pid) || shell_alive || session_alive);
+
+    let tree_alive = if process.pid > 0 {
+        opm::process::is_process_or_children_alive_sysinfo(process.pid, &process.children)
+    } else {
+        process
+            .children
+            .iter()
+            .any(|&child_pid| opm::process::is_pid_alive(child_pid))
+    };
+
+    main_or_shell_alive || tree_alive || session_alive
+}
+
+fn should_start_process_without_pid(
+    snapshot: &opm::process::Process,
+    latest: Option<&opm::process::Process>,
+    restore_in_progress: bool,
+) -> bool {
+    if restore_in_progress {
+        return false;
+    }
+
+    let candidate = latest.unwrap_or(snapshot);
+    candidate.running
+        && candidate.pid == 0
+        && !candidate.crash.crashed
+        && !is_process_still_alive(candidate)
+}
+
 fn restart_process() {
     log!("[DAEMON_V2_CHECK] Monitoring cycle initiated", "fingerprint" => "v2_fix");
 
@@ -579,6 +618,11 @@ fn restart_process() {
                     if let Some(proc) = updated_process {
                         log!("[daemon] checking if process is running", "id" => id, "running" => proc.running, "restarts" => proc.restarts);
                         if proc.running {
+                            if is_process_still_alive(&proc) {
+                                log!("[daemon] skipping restart because process is still alive", "name" => &proc.name, "id" => id, "pid" => proc.pid, "shell_pid" => format!("{:?}", proc.shell_pid));
+                                continue;
+                            }
+
                             // Check restart limit BEFORE attempting restart
                             if proc.restarts >= daemon_config.restarts {
                                 // Limit reached - stop the process permanently and set errored state
@@ -733,7 +777,8 @@ fn restart_process() {
         // Handle processes that need to be started (e.g. after restore or `opm start`)
         // Skip this during restore to prevent race condition where daemon restarts
         // processes that restore is already handling, which would create duplicates
-        if item.running && item.pid == 0 && !item.crash.crashed && !restore_in_progress {
+        let latest_process = runner.info(id);
+        if should_start_process_without_pid(&item, latest_process, restore_in_progress) {
             log!("[daemon] starting process with no PID", "name" => &item.name, "id" => id);
             runner.restart(id, true, false); // is_daemon_op=true, increment_counter=false
                                              // Save state after restart to persist PID and state changes
@@ -1646,6 +1691,10 @@ fn has_recent_action_timestamp(id: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use opm::process::{Crash, Process as OpmProcess, Watch};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
     use std::sync::Mutex;
     use std::thread;
 
@@ -1808,5 +1857,63 @@ mod tests {
     #[test]
     fn test_should_fail_process_validation_when_pid_not_alive() {
         assert!(should_fail_process_validation(false, None, None, false));
+    }
+
+    fn test_process(pid: i64) -> OpmProcess {
+        OpmProcess {
+            id: 1,
+            pid,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: "test".to_string(),
+            path: PathBuf::from("/tmp"),
+            script: "sleep 1".to_string(),
+            restarts: 0,
+            running: true,
+            crash: Crash { crashed: false },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: Utc::now(),
+            manual_stop: false,
+            errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
+            session_id: None,
+            process_start_time: None,
+            is_process_tree: false,
+        }
+    }
+
+    #[test]
+    fn test_should_not_start_without_pid_when_latest_state_is_alive() {
+        let snapshot = test_process(0);
+        let mut latest = test_process(std::process::id() as i64);
+        latest.running = true;
+
+        assert!(!should_start_process_without_pid(
+            &snapshot,
+            Some(&latest),
+            false
+        ));
+    }
+
+    #[test]
+    fn test_should_start_without_pid_when_no_alive_state() {
+        let snapshot = test_process(0);
+        let latest = test_process(0);
+
+        assert!(should_start_process_without_pid(
+            &snapshot,
+            Some(&latest),
+            false
+        ));
     }
 }

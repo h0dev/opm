@@ -43,23 +43,6 @@ fn format_last_restart_attempt(item: &opm::process::Process) -> String {
         .unwrap_or_else(|| "never".to_string())
 }
 
-fn format_restart_backoff(item: &opm::process::Process) -> String {
-    if item.last_restart_attempt.is_none() {
-        return "idle".to_string();
-    }
-
-    let remaining_secs = item.restart_cooldown_remaining_secs();
-    let cooldown_secs = item.restart_cooldown_delay_secs();
-
-    if remaining_secs > 0 {
-        format!("{remaining_secs}s/{cooldown_secs}s")
-    } else if item.failed_restart_attempts > 0 {
-        format!("ready (fails={})", item.failed_restart_attempts)
-    } else {
-        "ready".to_string()
-    }
-}
-
 fn ensure_daemon_running() {
     use global_placeholders::global;
 
@@ -607,8 +590,6 @@ impl<'i> Internal<'i> {
             #[tabled(rename = "script id")]
             id: String,
             restarts: u64,
-            #[tabled(rename = "restart backoff")]
-            restart_backoff: String,
             #[tabled(rename = "failed restarts")]
             failed_restart_attempts: u32,
             #[tabled(rename = "last restart attempt")]
@@ -627,7 +608,6 @@ impl<'i> Internal<'i> {
                      "name": &self.name.trim(),
                      "path": &self.path.trim(),
                      "restarts": &self.restarts,
-                     "restart_backoff": &self.restart_backoff.trim(),
                      "failed_restart_attempts": &self.failed_restart_attempts,
                      "last_restart_attempt": &self.last_restart_attempt.trim(),
                      "hash": &self.hash.trim(),
@@ -830,7 +810,6 @@ impl<'i> Internal<'i> {
                     // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
                     restarts: item.restarts,
-                    restart_backoff: format_restart_backoff(item),
                     failed_restart_attempts: item.failed_restart_attempts,
                     last_restart_attempt: format_last_restart_attempt(item),
                     name: item.name.clone(),
@@ -950,7 +929,6 @@ impl<'i> Internal<'i> {
                     // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
                     restarts: item.restarts,
-                    restart_backoff: format_restart_backoff(&item),
                     failed_restart_attempts: item.failed_restart_attempts,
                     last_restart_attempt: format_last_restart_attempt(&item),
                     name: item.name.clone(),
@@ -1791,8 +1769,6 @@ impl<'i> Internal<'i> {
                 uptime: String,
                 #[tabled(rename = "↺")]
                 restarts: String,
-                #[tabled(rename = "backoff")]
-                backoff: String,
                 status: ColoredString,
                 cpu: String,
                 mem: String,
@@ -1815,7 +1791,6 @@ impl<'i> Internal<'i> {
                         "uptime": &self.uptime.trim(),
                         "status": &self.status.0.trim(),
                         "restarts": &self.restarts.trim(),
-                        "backoff": &self.backoff.trim(),
                     });
                     trimmed_json.serialize(serializer)
                 }
@@ -1961,7 +1936,6 @@ impl<'i> Internal<'i> {
                     // Always show restarts counter
                     // restarts is persisted and provides accurate restart count
                     let restarts_value = item.restarts;
-                    let restart_backoff = format_restart_backoff(&item);
 
                     // Add tree indicator for process wrappers
                     let name_display = if item.is_process_tree {
@@ -1976,7 +1950,6 @@ impl<'i> Internal<'i> {
                         mem: format!("{memory_usage}   "),
                         id: id.to_string().cyan().bold().into(),
                         restarts: format!("{}  ", restarts_value),
-                        backoff: format!("{restart_backoff}  "),
                         name: name_display,
                         pid: ternary!(
                             process_actually_running,
@@ -2084,8 +2057,6 @@ impl<'i> Internal<'i> {
                     uptime: String,
                     #[tabled(rename = "↺")]
                     restarts: String,
-                    #[tabled(rename = "backoff")]
-                    backoff: String,
                     status: ColoredString,
                     cpu: String,
                     mem: String,
@@ -2108,7 +2079,6 @@ impl<'i> Internal<'i> {
                             "uptime": &self.uptime.trim(),
                             "status": &self.status.0.trim(),
                             "restarts": &self.restarts.trim(),
-                            "backoff": &self.backoff.trim(),
                         });
                         trimmed_json.serialize(serializer)
                     }
@@ -2228,7 +2198,6 @@ impl<'i> Internal<'i> {
                             mem: format!("{memory_usage}   "),
                             id: id.to_string().cyan().bold().into(),
                             restarts: format!("{}  ", item.restarts),
-                            backoff: format!("{}  ", format_restart_backoff(&item)),
                             name: name_display,
                             pid: ternary!(
                                 process_actually_running,

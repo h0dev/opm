@@ -844,6 +844,8 @@ impl Runner {
                 path,
                 script,
                 name,
+                pid: previous_pid,
+                shell_pid: previous_shell_pid,
                 running: was_running,
                 ..
             } = self
@@ -1046,6 +1048,13 @@ impl Runner {
             // This ensures that even if multiple processes get the same PID from the OS, 
             // they won't all be registered in OPM
             let mut pid_registry = PID_REGISTRY.lock().unwrap();
+            if previous_pid > 0 {
+                pid_registry.remove(&previous_pid);
+            }
+            if let Some(previous_shell_pid) = previous_shell_pid {
+                pid_registry.remove(&previous_shell_pid);
+            }
+
             if pid_registry.contains(&result.pid) {
                 log::warn!(
                     "[process] Duplicate PID {} detected in registry for process '{}' (id={}). Skipping restart.",
