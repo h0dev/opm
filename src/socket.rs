@@ -25,26 +25,6 @@ use std::thread;
 use crate::process;
 use crate::process::{dump, Runner};
 
-/// Duration (in seconds) that daemon will ignore a process after a manual action.
-/// This constant documents the timeout used by daemon/mod.rs::has_recent_action_timestamp().
-/// Keep this in sync with the actual timeout value in the daemon code.
-#[allow(dead_code)]
-const ACTION_IGNORE_DURATION_SECS: u64 = 5;
-
-/// Helper function to create action timestamp file for a process
-/// This tells the daemon to ignore the process for ACTION_IGNORE_DURATION_SECS seconds
-/// Uses fsync to ensure timestamp is durably written before returning
-fn create_action_timestamp(id: usize) {
-    use crate::process::write_action_timestamp;
-    if let Err(e) = write_action_timestamp(id) {
-        log::warn!(
-            "Failed to create action timestamp file for process {}: {}",
-            id,
-            e
-        );
-    }
-}
-
 /// Request types that can be sent to the daemon via socket
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SocketRequest {
@@ -407,9 +387,6 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     .map(|p| p.children.clone())
                     .unwrap_or_default();
 
-                // Create action timestamp to prevent daemon from interfering during removal
-                create_action_timestamp(id);
-
                 // IMPORTANT: Mark process as stopped BEFORE removing from list
                 // This prevents race condition where daemon's restart_process() loop
                 // detects the process is dead and tries to restart it during removal
@@ -473,9 +450,6 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
                     .info(id)
                     .map(|p| p.children.clone())
                     .unwrap_or_default();
-
-                // Create action timestamp to prevent daemon from interfering during stop
-                create_action_timestamp(id);
 
                 // Mark as stopped and clear crashed flag
                 runner.process(id).running = false;

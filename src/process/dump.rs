@@ -52,6 +52,21 @@ use std::{collections::BTreeMap, fs, sync::Mutex};
 /// This stores the transient process state in RAM instead of writing to disk
 static MEMORY_CACHE: Lazy<Mutex<Option<Runner>>> = Lazy::new(|| Mutex::new(None));
 
+fn permanent_snapshot(source: &Runner) -> Runner {
+    let mut snapshot = source.clone();
+
+    for process in snapshot.list.values_mut() {
+        process.pid = 0;
+        process.shell_pid = None;
+        process.children.clear();
+        process.session_id = None;
+        process.process_start_time = None;
+        process.is_process_tree = false;
+    }
+
+    snapshot
+}
+
 /// Helper function to create an empty Runner
 fn empty_runner() -> Runner {
     Runner {
@@ -309,6 +324,7 @@ pub fn raw() -> Vec<u8> {
 
 pub fn write(dump: &Runner) {
     let dump_path = global!("opm.dump");
+    let persistent_dump = permanent_snapshot(dump);
 
     // Create backup of existing dump file before writing new one
     if Exists::check(&dump_path).file() {
@@ -320,7 +336,7 @@ pub fn write(dump: &Runner) {
         }
     }
 
-    let encoded = match ron::ser::to_string(&dump) {
+    let encoded = match ron::ser::to_string(&persistent_dump) {
         Ok(contents) => contents,
         Err(err) => crashln!(
             "{} Cannot encode dump.\n{}",

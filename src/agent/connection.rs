@@ -1,6 +1,5 @@
 use super::messages::AgentMessage;
 use super::types::{AgentConfig, AgentInfo, AgentStatus};
-use crate::process;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use rustls::crypto::ring;
@@ -312,64 +311,34 @@ impl AgentConnection {
                                                       let mut item = runner.get(process_id);
                                                       item.restart(false);
                                                       item.get_runner().save();
-                                                      // Create timestamp file for this action to prevent daemon from overriding state
-                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = process::write_action_timestamp(process_id) {
-                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
-                                                      }
                                                       (true, format!("Process {} started", process_id))
                                                   }
                                                   "restart" => {
                                                       let mut item = runner.get(process_id);
                                                       item.restart(true);
                                                       item.get_runner().save();
-                                                      // Create timestamp file for this action to prevent daemon from overriding state
-                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = process::write_action_timestamp(process_id) {
-                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
-                                                      }
                                                       (true, format!("Process {} restarted", process_id))
                                                   }
                                                   "reload" => {
                                                       let mut item = runner.get(process_id);
                                                       item.reload(true);
                                                       item.get_runner().save();
-                                                      // Create timestamp file for this action to prevent daemon from overriding state
-                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = process::write_action_timestamp(process_id) {
-                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
-                                                      }
                                                       (true, format!("Process {} reloaded", process_id))
                                                   }
                                                   "stop" | "kill" => {
                                                       let mut item = runner.get(process_id);
                                                       item.stop();
                                                       item.get_runner().save();
-                                                      // Create timestamp file for this action to prevent daemon from overriding state
-                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = process::write_action_timestamp(process_id) {
-                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
-                                                      }
                                                       (true, format!("Process {} stopped", process_id))
                                                   }
                                                   "reset_env" | "clear_env" => {
                                                       let mut item = runner.get(process_id);
                                                       item.clear_env();
                                                       item.get_runner().save();
-                                                      // Create timestamp file for this action to prevent daemon from overriding state
-                                                      // Write with fsync to ensure timestamp is durably written before daemon checks
-                                                      if let Err(e) = process::write_action_timestamp(process_id) {
-                                                          ::log::warn!("Failed to create action timestamp file for process {}: {}", process_id, e);
-                                                      }
                                                       (true, format!("Process {} environment cleared", process_id))
                                                   }
                                                   "remove" | "delete" => {
                                                       runner.remove(process_id);
-                                                      // Clean up any action timestamp file after removal
-                                                      if let Some(home_dir) = home::home_dir() {
-                                                          let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), process_id);
-                                                          let _ = std::fs::remove_file(action_file);
-                                                      }
                                                       (true, format!("Process {} removed", process_id))
                                                   }
                                                   "flush" | "clean" => {

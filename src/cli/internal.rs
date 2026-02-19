@@ -1358,10 +1358,6 @@ impl<'i> Internal<'i> {
             );
         }
 
-        // Clean up all stale timestamp files before restore to ensure fresh start
-        // This prevents old timestamp files from interfering with crash detection
-        crate::daemon::cleanup_all_timestamp_files();
-
         // Set restore in progress flag to prevent daemon from auto-starting processes
         // This prevents race condition where daemon and restore both try to start the same process
         crate::daemon::set_restore_in_progress();

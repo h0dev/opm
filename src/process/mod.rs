@@ -19,8 +19,6 @@ use std::{
 #[cfg(not(target_os = "linux"))]
 use std::collections::HashMap;
 
-use home;
-
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
@@ -65,37 +63,6 @@ pub const FAILED_RESTART_COOLDOWN_SECS: u64 = 2;
 pub const COOLDOWN_LOG_INTERVAL_SECS: i64 = 2;
 // Wait time after killing processes to allow OS resource cleanup
 pub const PROCESS_CLEANUP_WAIT_MS: u64 = 500;
-
-/// Write timestamp file durably to disk with fsync
-/// This ensures the timestamp is persisted before the function returns,
-/// preventing race conditions where the daemon might check for the file
-/// before it's fully written to disk.
-pub fn write_action_timestamp(id: usize) -> Result<(), std::io::Error> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    if let Some(home_dir) = home::home_dir() {
-        let action_file = format!("{}/.opm/last_action_{}.timestamp", home_dir.display(), id);
-        let timestamp = Utc::now().to_rfc3339();
-
-        // Open file with O_SYNC flag to ensure data is written synchronously
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
-            .open(&action_file)?;
-
-        // Write the timestamp
-        file.write_all(timestamp.as_bytes())?;
-
-        // Explicitly sync to ensure data is flushed to disk
-        file.sync_all()?;
-
-        log::debug!("Created and synced timestamp file for process {}", id);
-    }
-    Ok(())
-}
 
 /// Wait for a process to terminate gracefully
 /// Uses libc::kill(pid, 0) to check if process exists, which is the same approach
@@ -222,7 +189,6 @@ pub type Env = BTreeMap<String, String>;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Process {
     pub id: usize,
-    /// Process ID - persisted to enable state synchronization via socket
     pub pid: i64,
     /// PID of the parent shell process when running commands through a shell.
     /// This is set when the command is executed via a shell (e.g., bash -c 'script.sh')
@@ -795,16 +761,6 @@ impl Runner {
                 },
             );
 
-            // Create timestamp file for this new process to prevent daemon from
-            // immediately marking it as crashed if it exits quickly during startup
-            // Write with fsync to ensure timestamp is durably written before daemon checks
-            if let Err(e) = write_action_timestamp(id) {
-                log::warn!(
-                    "Failed to create action timestamp file for process {}: {}",
-                    id,
-                    e
-                );
-            }
         }
 
         return self;
@@ -820,20 +776,6 @@ impl Runner {
                 );
             };
         } else {
-            // Create timestamp file FIRST (before spawning process or modifying state)
-            // to prevent daemon from interfering during the entire restart operation.
-            // This must be done before any state changes to ensure daemon sees it.
-            // Skip for daemon-initiated restarts (dead=true) since daemon will handle those.
-            if !dead {
-                if let Err(e) = write_action_timestamp(id) {
-                    log::warn!(
-                        "Failed to create action timestamp file for process {}: {}",
-                        id,
-                        e
-                    );
-                }
-            }
-
             let full_config = config::read();
             let config = full_config.runner;
             let max_restarts = full_config.daemon.restarts;
@@ -1176,9 +1118,6 @@ impl Runner {
                 }
             }
 
-            // Timestamp file was already created at the beginning of this method
-            // to prevent race conditions with the daemon during the entire restart operation.
-
             // Save state after successful restart to persist changes
             // Use save_direct() when called from daemon (dead=true) to avoid serialization
             // that would lose fields marked with #[serde(skip)] like the restart counter
@@ -1397,20 +1336,6 @@ impl Runner {
             if let Some(dir) = original_dir {
                 if let Err(err) = std::env::set_current_dir(&dir) {
                     log::warn!("Failed to restore working directory after reload: {}", err);
-                }
-            }
-
-            // Create timestamp file for manual reloads (not daemon reloads) to prevent
-            // daemon from immediately marking the process as crashed during startup
-            // This gives the process time to initialize before daemon monitoring kicks in
-            // Write with fsync to ensure timestamp is durably written before daemon checks
-            if !dead {
-                if let Err(e) = write_action_timestamp(id) {
-                    log::warn!(
-                        "Failed to create action timestamp file for process {}: {}",
-                        id,
-                        e
-                    );
                 }
             }
 
