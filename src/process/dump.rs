@@ -212,8 +212,7 @@ pub fn commit_memory_direct() {
     // Write merged state to permanent
     write(&merged);
 
-    // Clear memory cache
-    clear_memory();
+    write_memory_direct(&merged);
     log!("[dump::commit_memory_direct] Committed memory cache to permanent storage");
 }
 
@@ -509,8 +508,7 @@ pub fn commit_memory() {
     // Write merged state to permanent
     write(&merged);
 
-    // Clear memory cache
-    clear_memory();
+    write_memory_direct(&merged);
     log!("[dump::commit_memory] Committed memory cache to permanent storage");
 }
 
