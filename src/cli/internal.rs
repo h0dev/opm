@@ -715,8 +715,10 @@ impl<'i> Internal<'i> {
                 // 1. It's marked as running but not actually running (consistent with opm ls)
                 // 2. The crash.crashed flag is explicitly set by the daemon
                 // This ensures consistent status display between opm ls and opm info
-                let crashed_while_running =
-                    item.running && !process_actually_running && crash_detection_enabled;
+                let crashed_while_running = item.running
+                    && item.pid > 0
+                    && !process_actually_running
+                    && crash_detection_enabled;
                 let crashed_by_flag = item.crash.crashed && crash_detection_enabled;
 
                 let mut memory_usage: Option<MemoryInfo> = None;
@@ -767,6 +769,8 @@ impl<'i> Internal<'i> {
                 } else if item.errored {
                     // Process reached restart limit - show as errored
                     "errored  ".red().bold()
+                } else if item.running && item.pid == 0 && crash_detection_enabled {
+                    "starting  ".yellow().bold()
                 } else if crashed_while_running || crashed_by_flag {
                     // Process crashed: either marked as running but not alive, or crash flag set
                     // No waiting state - always show as crashed during restart cooldown
@@ -1898,12 +1902,13 @@ impl<'i> Internal<'i> {
                     } else if item.errored {
                         "errored  ".red().bold()
                     } else if item.running {
-                        // No waiting state - always show as crashed during restart cooldown
-                        if crash_detection_enabled {
+                        if !crash_detection_enabled {
+                            "stopped   ".red().bold()
+                        } else if item.pid == 0 {
+                            "starting  ".yellow().bold()
+                        } else {
                             // Process is marked as running but PID doesn't exist
                             "crashed   ".red().bold()
-                        } else {
-                            "stopped   ".red().bold()
                         }
                     } else {
                         // Process is not running (running=false) - always show as stopped
@@ -2150,14 +2155,20 @@ impl<'i> Internal<'i> {
                             }
                         }
 
+                        let crash_detection_enabled = config::read().daemon.crash_detection;
+
                         let status = if process_actually_running {
                             "online   ".green().bold()
                         } else if item.errored {
                             "errored  ".red().bold()
                         } else if item.running {
-                            // No waiting state - always show as crashed during restart cooldown
-                            // Process is marked as running but PID doesn't exist - it crashed
-                            "crashed   ".red().bold()
+                            if !crash_detection_enabled {
+                                "stopped   ".red().bold()
+                            } else if item.pid == 0 {
+                                "starting  ".yellow().bold()
+                            } else {
+                                "crashed   ".red().bold()
+                            }
                         } else {
                             // Process is not running (running=false) - always show as stopped
                             // This ensures stopped processes display correctly even if they have
