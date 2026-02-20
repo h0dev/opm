@@ -52,6 +52,10 @@ static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 static RESTORE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const RESTORE_IN_PROGRESS_FILE: &str = "restore_in_progress.flag";
 
+fn max_failed_restart_attempts(limit: u64) -> u32 {
+    limit.min(u32::MAX as u64) as u32
+}
+
 extern "C" fn handle_termination_signal(_: libc::c_int) {
     // SAFETY: Signal handlers should be kept simple and avoid complex operations.
     // Don't save process state on daemon shutdown - users should explicitly use 'opm save'
@@ -644,9 +648,9 @@ fn restart_process() {
                                 // Fixed 2-second delay for all restart attempts
                                 let base_delay = RESTART_COOLDOWN_SECS;
 
-                                // Check if process has exceeded maximum restart attempts
-                                const MAX_RESTART_ATTEMPTS: u32 = 5;
-                                if proc.failed_restart_attempts >= MAX_RESTART_ATTEMPTS {
+                                let max_failed_attempts_limit =
+                                    max_failed_restart_attempts(daemon_config.restarts);
+                                if proc.failed_restart_attempts >= max_failed_attempts_limit {
                                     // Set to FATAL_ERROR state - stop auto-restart until manual intervention
                                     if let Some(process) = runner.list.get_mut(&id) {
                                         process.running = false;
@@ -657,7 +661,7 @@ fn restart_process() {
                                         "name" => &proc.name,
                                         "id" => id,
                                         "failed_attempts" => proc.failed_restart_attempts,
-                                        "max_attempts" => MAX_RESTART_ATTEMPTS);
+                                        "max_attempts" => max_failed_attempts_limit);
                                     continue; // Skip restart - requires manual intervention
                                 }
 
@@ -1804,5 +1808,12 @@ mod tests {
             Some(&latest),
             false
         ));
+    }
+
+    #[test]
+    fn test_max_failed_restart_attempts_matches_restart_limit() {
+        assert_eq!(max_failed_restart_attempts(10), 10);
+        assert_eq!(max_failed_restart_attempts(0), 0);
+        assert_eq!(max_failed_restart_attempts(u64::MAX), u32::MAX);
     }
 }
