@@ -247,6 +247,72 @@ const LogViewer = (props: { liveReload; setLiveReload; server: string | null; ba
 	}
 };
 
+const parseCpuPercent = (value: unknown): number => {
+	if (typeof value === 'number' && Number.isFinite(value)) {
+		return value;
+	}
+
+	if (typeof value !== 'string') {
+		return 0;
+	}
+
+	const parsed = Number.parseFloat(value.replace('%', '').trim());
+	return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const parseMemoryBytes = (value: unknown): number => {
+	if (typeof value === 'number' && Number.isFinite(value)) {
+		return value;
+	}
+
+	if (typeof value !== 'string') {
+		return 0;
+	}
+
+	const match = value.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
+	if (!match) {
+		return 0;
+	}
+
+	const size = Number.parseFloat(match[1]);
+	if (!Number.isFinite(size)) {
+		return 0;
+	}
+
+	const unit = match[2] ?? 'b';
+	const multipliers: Record<string, number> = {
+		b: 1,
+		kb: 1024,
+		mb: 1024 * 1024,
+		gb: 1024 * 1024 * 1024,
+	};
+
+	return Math.max(0, Math.round(size * (multipliers[unit] ?? 1)));
+};
+
+const normalizeProcessPayload = (payload: any) => {
+	if (payload?.info && payload?.stats) {
+		return payload;
+	}
+
+	return {
+		info: {
+			id: payload?.id ?? 0,
+			name: payload?.name ?? 'unknown',
+			pid: payload?.pid ?? 0,
+			status: payload?.status ?? 'stopped',
+			uptime: payload?.uptime ?? '0s',
+			command: payload?.command ?? payload?.script ?? payload?.name ?? 'unknown',
+		},
+		stats: {
+			cpu_percent: parseCpuPercent(payload?.cpu),
+			memory_usage: {
+				rss: parseMemoryBytes(payload?.mem),
+			},
+		},
+	};
+};
+
 const View = (props: { id: string; base: string }) => {
 	const { toasts, closeToast, success, error } = useToast();
 	const [item, setItem] = useState<any>();
@@ -299,21 +365,23 @@ const View = (props: { id: string; base: string }) => {
 						return p.id === processId || String(p.id) === props.id;
 					});
 					if (matchedProcess) {
-						setItem(matchedProcess);
+						setItem(normalizeProcessPayload(matchedProcess));
 						setMissingProcess(false);
 						setDisabled(false);
 						
-						if (matchedProcess.info?.status === 'stopped') {
+						if (matchedProcess.status === 'stopped') {
 							source.close();
 						}
 					} else {
-						console.warn(`Process ${props.id} not found in agent processes`);
-						setMissingProcess(true);
+						if (data.processes.length > 0) {
+							console.warn(`Process ${props.id} not found in agent processes`);
+							setMissingProcess(true);
+						}
 						setDisabled(false);
 					}
 				} else {
 					// Standard process endpoint response
-					setItem(data);
+					setItem(normalizeProcessPayload(data));
 					setMissingProcess(false);
 					setDisabled(false);
 

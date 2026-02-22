@@ -15,57 +15,41 @@ const activeItem = navItems.find((item) => item.key === active) || navItems[0];
 ---
 
 <nav class="fixed top-0 left-0 right-0 backdrop-blur-md bg-white/95 dark:bg-zinc-900/95 border-b border-gray-200 dark:border-zinc-800 z-[100] shadow-lg">
-  <div class="flex items-center justify-between gap-3 px-3 sm:px-6 py-2 sm:py-3 w-full">
-    <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+  <div class="flex items-center gap-3 px-3 sm:px-6 py-2 sm:py-3 w-full">
+    <div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-shrink-0">
       <img class="h-6 sm:h-8 w-auto flex-shrink-0" src="{{base_path | safe}}/assets/favicon.svg" alt="OPM">
       <span class="text-lg sm:text-xl font-bold text-gray-900 dark:text-zinc-100 flex-shrink-0">OPM</span>
     </div>
 
-    <div class="hidden sm:flex items-center gap-2 overflow-x-auto rounded-lg mobile-navbar-scroll min-w-0 flex-1 px-2">
-      {navItems.map((item) => (
-        <a
-          href={item.href}
-          aria-label={item.label}
-          class={`${active === item.key
-            ? 'bg-sky-600/20 text-sky-600 dark:text-sky-300'
-            : 'hover:bg-gray-100 dark:hover:bg-zinc-800/50 text-gray-600 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-zinc-100'} flex items-center px-3 py-2 text-sm font-medium transition-all duration-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-inset`}
-        >
-          {item.label}
-        </a>
-      ))}
-    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <details class="relative">
+        <summary class="list-none cursor-pointer select-none transition inline-flex items-center gap-2 border border-gray-300 dark:border-zinc-700 bg-gray-100 dark:bg-zinc-800/60 text-gray-900 dark:text-zinc-50 px-3 py-2 text-sm font-semibold rounded-lg">
+          <span class="hidden sm:inline">{activeItem.label}</span>
+          <span class="inline sm:hidden">{activeItem.short}</span>
+          <svg class="h-4 w-4 text-gray-500 dark:text-zinc-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+        </summary>
 
-    <div class="hidden sm:flex flex-shrink-0">
-      <ThemeToggle client:load />
-    </div>
-
-    <details class="relative sm:hidden">
-      <summary class="list-none cursor-pointer select-none transition inline-flex items-center gap-2 border border-gray-300 dark:border-zinc-700 bg-gray-100 dark:bg-zinc-800/60 text-gray-900 dark:text-zinc-50 px-3 py-2 text-sm font-semibold rounded-lg">
-        <span>{activeItem.short}</span>
-        <svg class="h-4 w-4 text-gray-500 dark:text-zinc-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-        </svg>
-      </summary>
-
-      <div class="absolute right-0 mt-2 w-56 rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/95 shadow-xl p-2 z-[120]">
-        <div class="flex flex-col gap-1">
-          {navItems.map((item) => (
-            <a
-              href={item.href}
-              class={`${active === item.key
-                ? 'bg-sky-600/20 text-sky-600 dark:text-sky-300'
-                : 'text-gray-700 dark:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800/70'} px-3 py-2 rounded-md text-sm font-medium`}
-            >
-              {item.label}
-            </a>
-          ))}
+        <div class="absolute right-0 mt-2 w-60 rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/95 shadow-xl p-2 z-[120]">
+          <div class="flex flex-col gap-1">
+            {navItems.map((item) => (
+              <a
+                href={item.href}
+                class={`${active === item.key
+                  ? 'bg-sky-600/20 text-sky-600 dark:text-sky-300'
+                  : 'text-gray-700 dark:text-zinc-200 hover:bg-gray-100 dark:hover:bg-zinc-800/70'} px-3 py-2 rounded-md text-sm font-medium`}
+              >
+                {item.label}
+              </a>
+            ))}
+          </div>
         </div>
+      </details>
 
-        <div class="mt-2 pt-2 border-t border-gray-200 dark:border-zinc-800 flex items-center justify-between">
-          <span class="text-xs uppercase tracking-wide text-gray-500 dark:text-zinc-400">Theme</span>
-          <ThemeToggle client:load />
-        </div>
+      <div class="flex-shrink-0">
+        <ThemeToggle client:load />
       </div>
-    </details>
+    </div>
   </div>
 </nav>
