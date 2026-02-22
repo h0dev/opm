@@ -35,7 +35,6 @@ use tabled::{
 lazy_static! {
     static ref SCRIPT_EXTENSION_PATTERN: Regex =
         Regex::new(r"^[^\s]+\.(js|ts|mjs|cjs|py|py3|pyw|sh|bash|zsh|rb|pl|php|lua|r|R|go|java|kt|kts|scala|groovy|swift)(\s|$)").unwrap();
-    static ref SIMPLE_PATH_PATTERN: Regex = Regex::new(r"^[a-zA-Z0-9]+(/[a-zA-Z0-9]+)*$").unwrap();
 }
 
 fn format_last_restart_attempt(item: &opm::process::Process) -> String {
@@ -183,7 +182,7 @@ impl<'i> Internal<'i> {
                     let interpreter = match ext {
                         ".js" | ".ts" | ".mjs" | ".cjs" => config.runner.node.clone(),
                         ".py" | ".py3" | ".pyw" => "python3".to_string(),
-                        ".sh" | ".bash" | ".zsh" => "bash".to_string(),
+                        ".sh" | ".bash" | ".zsh" => config.runner.shell.clone(),
                         ".rb" => "ruby".to_string(),
                         ".pl" => "perl".to_string(),
                         ".php" => "php".to_string(),
@@ -207,12 +206,7 @@ impl<'i> Internal<'i> {
                     script.clone()
                 }
             } else {
-                // No extension, check old pattern for js/ts
-                if SIMPLE_PATH_PATTERN.is_match(script) {
-                    format!("{} {}", config.runner.node, script)
-                } else {
-                    script.clone()
-                }
+                script.clone()
             };
 
             self.runner
