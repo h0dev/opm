@@ -16,7 +16,7 @@ html {
 /* ========================================================================
    CRITICAL FIX: NAVIGATION ALIGNMENT (Mobile & Desktop)
    ======================================================================== */
-nav {
+.opm-navbar {
 	display: flex !important;
 	justify-content: flex-start !important; 
 	align-items: center !important;
@@ -27,21 +27,16 @@ nav {
 	box-sizing: border-box !important;
 }
 
-nav > div {
+.opm-navbar > .opm-navbar-inner {
 	display: flex !important;
-	justify-content: flex-start !important;
+	justify-content: space-between !important;
 	align-items: center !important;
 	gap: 0.75rem;
-	width: auto !important;
-	
-	/* Ép dính trái và ngăn tự động căn giữa */
-	margin-left: 0 !important;
-	margin-right: auto !important; 
-	
+	width: 100% !important;
 	flex-wrap: nowrap !important;
 }
 
-nav a {
+.opm-navbar a {
 	white-space: nowrap;
 	flex-shrink: 0;
 }

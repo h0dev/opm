@@ -39,21 +39,20 @@ const { title, description } = Astro.props;
 		<!-- Critical CSS inlined to prevent FOUC -->
 		<style is:inline>
 			/* Prevent navbar centering on initial load */
-			/* Note: These selectors mirror the navbar structure to ensure immediate application */
-			/* before external CSS loads. The structure is stable as it's defined in navbar.astro */
-			nav {
+			/* Scoped to OPM navbar so generic nav elements are unaffected */
+			.opm-navbar {
 				display: flex !important;
 				justify-content: flex-start !important;
 				align-items: center !important;
 			}
-			nav > div {
+			.opm-navbar > .opm-navbar-inner {
 				display: flex !important;
-				justify-content: flex-start !important;
+				justify-content: space-between !important;
 				align-items: center !important;
 				width: 100% !important;
 			}
-			nav > div > div {
-				justify-content: flex-start !important;
+			.opm-navbar > .opm-navbar-inner > div:last-child {
+				margin-left: auto !important;
 			}
 			
 			/* Prevent toggle switch shape issues on initial load */

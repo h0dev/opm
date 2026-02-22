@@ -14,8 +14,8 @@ const navItems = [
 const activeItem = navItems.find((item) => item.key === active) || navItems[0];
 ---
 
-<nav class="fixed top-0 left-0 right-0 backdrop-blur-md bg-white/95 dark:bg-zinc-900/95 border-b border-gray-200 dark:border-zinc-800 z-[100] shadow-lg">
-  <div class="flex items-center gap-3 px-3 sm:px-6 py-2 sm:py-3 w-full">
+<nav class="opm-navbar fixed top-0 left-0 right-0 backdrop-blur-md bg-white/95 dark:bg-zinc-900/95 border-b border-gray-200 dark:border-zinc-800 z-[100] shadow-lg">
+  <div class="opm-navbar-inner flex items-center gap-3 px-3 sm:px-6 py-2 sm:py-3 w-full">
     <div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-shrink-0">
       <img class="h-6 sm:h-8 w-auto flex-shrink-0" src="{{base_path | safe}}/assets/favicon.svg" alt="OPM">
       <span class="text-lg sm:text-xl font-bold text-gray-900 dark:text-zinc-100 flex-shrink-0">OPM</span>
