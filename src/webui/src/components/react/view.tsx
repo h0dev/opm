@@ -252,9 +252,11 @@ const View = (props: { id: string; base: string }) => {
 	const [item, setItem] = useState<any>();
 	const [loaded, setLoaded] = useState(false);
 	const [disabled, setDisabled] = useState(false);
+	const [missingProcess, setMissingProcess] = useState(false);
 	const [live, setLive] = useState<SSE | null>(null);
 	const [liveReload, setLiveReload] = useState(false);
 	const renameRef = useRef<{ triggerEdit: () => void }>(null);
+	const processId = parseInt(props.id, 10);
 
 	const badge = {
 		online: 'bg-emerald-400/10 text-emerald-400',
@@ -289,9 +291,16 @@ const View = (props: { id: string; base: string }) => {
 				// Process endpoint returns: {info: {...}, logs: [...]}
 				if (agentId && data.processes) {
 					// Extract the specific process from the agent's processes array
-					const matchedProcess = data.processes.find((p) => p.id === props.id);
+					const matchedProcess = data.processes.find((p) => {
+						if (isNaN(processId)) {
+							return String(p.id) === props.id;
+						}
+
+						return p.id === processId || String(p.id) === props.id;
+					});
 					if (matchedProcess) {
 						setItem(matchedProcess);
+						setMissingProcess(false);
 						setDisabled(false);
 						
 						if (matchedProcess.info?.status === 'stopped') {
@@ -299,10 +308,13 @@ const View = (props: { id: string; base: string }) => {
 						}
 					} else {
 						console.warn(`Process ${props.id} not found in agent processes`);
+						setMissingProcess(true);
+						setDisabled(false);
 					}
 				} else {
 					// Standard process endpoint response
 					setItem(data);
+					setMissingProcess(false);
 					setDisabled(false);
 
 					if (data.info?.status === 'stopped') {
@@ -351,7 +363,9 @@ const View = (props: { id: string; base: string }) => {
 
 	const action = async (id: number, name: string) => {
 		try {
-			if (server != 'local') {
+			if (agentId) {
+				await api.post(`${props.base}/daemon/agents/${agentId}/process/${id}/action`, { json: { method: name } });
+			} else if (server != 'local') {
 				await api.post(`${props.base}/remote/${server}/action/${id}`, { json: { method: name } });
 			} else {
 				await api.post(`${props.base}/process/${id}/action`, { json: { method: name } });
@@ -365,6 +379,20 @@ const View = (props: { id: string; base: string }) => {
 
 	if (!loaded) {
 		return <Loader />;
+	} else if (missingProcess || !item?.info || !item?.stats || isNaN(processId)) {
+		return (
+			<Fragment>
+				<ToastContainer toasts={toasts} onClose={closeToast} />
+				<div className="px-4 py-6 sm:px-6 lg:px-8">
+					<div className="rounded-lg border border-red-700/40 bg-red-900/10 p-4 text-red-300">
+						<div className="font-semibold">Process not found</div>
+						<div className="mt-1 text-sm">
+							Process `{props.id}` is not available for this agent context. It may have been deleted or you opened the wrong server/agent route.
+						</div>
+					</div>
+				</div>
+			</Fragment>
+		);
 	} else {
 		const online = isRunning(item.info.status);
 		const [uptime, upunit] = startDuration(item.info.uptime);
@@ -388,7 +416,7 @@ const View = (props: { id: string; base: string }) => {
 									ref={renameRef}
 									base={props.base} 
 									server={server} 
-									process_id={parseInt(props.id)} 
+									process_id={processId} 
 									callback={openConnection} 
 									old={item.info.name} 
 									onSuccess={success} 
@@ -429,7 +457,7 @@ const View = (props: { id: string; base: string }) => {
 							<button
 								type="button"
 								disabled={disabled}
-								onClick={() => action(props.id, online ? 'restart' : 'start')}
+								onClick={() => action(processId, online ? 'restart' : 'start')}
 								className="disabled:opacity-50 disabled:pointer-events-none transition inline-flex items-center justify-center space-x-1.5 border focus:outline-none focus:ring-0 focus:ring-offset-0 focus:z-10 shrink-0 saturate-[110%] border-gray-300 dark:border-zinc-700 hover:border-zinc-600 bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-zinc-50 hover:bg-gray-200 dark:bg-zinc-700 px-4 py-2 text-sm font-semibold rounded-lg">
 								{disabled ? (
 									<svg className="w-5 h-5 text-zinc-800 animate-spin fill-zinc-50" viewBox="0 0 100 101" fill="none">
@@ -473,7 +501,7 @@ const View = (props: { id: string; base: string }) => {
 												<MenuItem>
 													{({ focus }) => (
 														<a
-															onClick={() => action(props.id, 'start')}
+									onClick={() => action(processId, 'start')}
 															className={classNames(
 																focus ? 'bg-emerald-700/10 text-emerald-500' : 'text-gray-700 dark:text-zinc-200',
 																'rounded-md block p-2 w-full text-left cursor-pointer'
@@ -486,7 +514,7 @@ const View = (props: { id: string; base: string }) => {
 											<MenuItem>
 												{({ focus }) => (
 													<a
-														onClick={() => action(props.id, 'stop')}
+									onClick={() => action(processId, 'stop')}
 														className={classNames(
 															focus ? 'bg-yellow-400/10 text-amber-500' : 'text-gray-700 dark:text-zinc-200',
 															'rounded-md block p-2 w-full text-left cursor-pointer'
@@ -516,7 +544,7 @@ const View = (props: { id: string; base: string }) => {
 												{({ _ }) => (
 													<a
 														onClick={() => {
-															action(props.id, 'flush');
+									action(processId, 'flush');
 															window.location.reload();
 														}}
 														className="text-gray-700 dark:text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-gray-100 dark:bg-zinc-800/80 hover:text-gray-900 dark:text-zinc-50">
@@ -529,7 +557,7 @@ const View = (props: { id: string; base: string }) => {
 											<MenuItem>
 												{({ focus }) => (
 													<a
-														onClick={() => action(props.id, 'delete')}
+								onClick={() => action(processId, 'delete')}
 														className={classNames(
 															focus ? 'bg-red-700/10 text-red-500' : 'text-red-400',
 															'rounded-md block p-2 w-full text-left cursor-pointer'
@@ -563,7 +591,7 @@ const View = (props: { id: string; base: string }) => {
 					))}
 				</div>
 
-				<LogViewer server={server} id={parseInt(props.id)} base={props.base} liveReload={liveReload} setLiveReload={setLiveReload} agentId={agentId} />
+				<LogViewer server={server} id={processId} base={props.base} liveReload={liveReload} setLiveReload={setLiveReload} agentId={agentId} />
 			</Fragment>
 		);
 	}
