@@ -206,55 +206,17 @@ button, a, input, select {
 ::-webkit-scrollbar-thumb:hover { @apply bg-gray-400 dark:bg-zinc-600; }
 *:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
 
-/* Mobile navbar scrollbar - always visible */
 @media (max-width: 640px) {
 	.mobile-navbar-scroll {
-		scrollbar-width: thin;  /* Firefox: make scrollbar visible */
-		-webkit-overflow-scrolling: touch;  /* iOS smooth scrolling */
-		overflow-x: auto !important;  /* Use auto instead of scroll to show only when needed */
-		scrollbar-gutter: stable;  /* Reserve space for scrollbar */
-		position: relative;
-		padding-bottom: 10px;  /* Space for custom scrollbar */
+		overflow-x: auto !important;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: none;
+		-ms-overflow-style: none;
+		padding-bottom: 2px;
 	}
-	
-	/* Create a visible custom scrollbar track at the bottom */
-	.mobile-navbar-scroll::after {
-		content: '';
-		position: absolute;
-		bottom: 2px;
-		left: 0;
-		right: 0;
-		height: 3px;
-		@apply bg-gray-200 dark:bg-zinc-800;
-		border-radius: 2px;
-		pointer-events: none;
-	}
-	
-	/* Ensure webkit scrollbar is always visible on mobile */
+
 	.mobile-navbar-scroll::-webkit-scrollbar {
-		height: 6px;
-		-webkit-appearance: none;
-		appearance: none;
-	}
-	
-	.mobile-navbar-scroll::-webkit-scrollbar-thumb {
-		@apply bg-gray-400 dark:bg-zinc-500 rounded;
-		visibility: visible;
-		min-width: 40px;  /* Ensure thumb has minimum width */
-	}
-	
-	.mobile-navbar-scroll::-webkit-scrollbar-track {
-		@apply bg-gray-200 dark:bg-zinc-800;
-		visibility: visible;
-	}
-	
-	/* Force scrollbar to always be visible when content overflows */
-	.mobile-navbar-scroll::-webkit-scrollbar-thumb:horizontal {
-		background: #9ca3af;
-	}
-	
-	.dark .mobile-navbar-scroll::-webkit-scrollbar-thumb:horizontal {
-		background: #71717a;
+		display: none;
 	}
 }
 
