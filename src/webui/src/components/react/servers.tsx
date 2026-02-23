@@ -50,11 +50,12 @@ const Index = (props: { base: string }) => {
 		source.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data);
-				agents.clear();
 				if (Array.isArray(data)) {
 					// Filter out the local agent
 					const remoteAgents = data.filter((agent: any) => !isLocalAgent(agent.id));
-					remoteAgents.forEach((agent: any) => agents.push(agent));
+					agents.setValue(remoteAgents);
+				} else {
+					agents.setValue([]);
 				}
 				setLoading(false);
 			} catch (err) {

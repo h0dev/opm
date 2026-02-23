@@ -114,6 +114,16 @@ const { title, description } = Astro.props;
 					
 					// Check if we're on login page or protected page
 					const isLoginPage = window.location.pathname.includes('login');
+					const token = $settings.get().token || '';
+
+					if (!isLoginPage) {
+						document.body.style.visibility = 'hidden';
+
+						if (!token) {
+							window.location.replace(base + '/login');
+							return;
+						}
+					}
 					
 					// Use a lightweight health check instead of metrics
 					const checkEndpoint = base + '/health';
@@ -123,7 +133,7 @@ const { title, description } = Astro.props;
 					const timeoutId = setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT);
 					
 					fetch(checkEndpoint, {
-						headers: { token: $settings.get().token || '' },
+						headers: { token },
 						signal: controller.signal,
 						cache: 'no-cache'
 					})
@@ -131,19 +141,21 @@ const { title, description } = Astro.props;
 						clearTimeout(timeoutId);
 						if (isLoginPage) {
 							if (response.status === 200) {
-								window.location.href = base + '/';
+								window.location.replace(base + '/');
 							}
 						} else {
 							if (response.status !== 200) {
-								window.location.href = base + '/login';
+								window.location.replace(base + '/login');
+								return;
 							}
+							document.body.style.visibility = 'visible';
 						}
 					})
 					.catch((error) => {
 						clearTimeout(timeoutId);
 						// If request fails or times out, redirect to login (except if already on login)
-						if (!isLoginPage && error.name !== 'AbortError') {
-							window.location.href = base + '/login';
+						if (!isLoginPage) {
+							window.location.replace(base + '/login');
 						}
 					});
 				}
