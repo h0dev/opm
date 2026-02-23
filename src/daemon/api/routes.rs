@@ -37,9 +37,13 @@ use opm::{
 };
 
 use crate::daemon::{
-    api::{HTTP_COUNTER, HTTP_REQ_HISTOGRAM},
+    api::{
+        HTTP_COUNTER, HTTP_REQ_HISTOGRAM, GLOBAL_EVENT_MANAGER, GLOBAL_NOTIFICATION_MANAGER,
+    },
     pid::{self, Pid},
 };
+
+use opm::notifications::NotificationEvent;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -3026,6 +3030,74 @@ pub async fn agent_action_handler(
                             response.success,
                             response.message
                         );
+
+                        if response.success {
+                            let action_kind = if method.starts_with("rename:") {
+                                "rename"
+                            } else {
+                                method
+                            };
+
+                            let agent_name = registry
+                                .get(&agent_id)
+                                .map(|a| a.name)
+                                .unwrap_or_else(|| agent_id.clone());
+
+                            let process_name = registry
+                                .get_processes(&agent_id)
+                                .and_then(|processes| {
+                                    processes
+                                        .into_iter()
+                                        .find(|p| p.id == process_id)
+                                        .map(|p| p.name)
+                                })
+                                .unwrap_or_else(|| format!("process-{}", process_id));
+
+                            let event_type = match action_kind {
+                                "start" => opm::events::EventType::ProcessStart,
+                                "restart" | "reload" => opm::events::EventType::ProcessRestart,
+                                "stop" | "kill" => opm::events::EventType::ProcessStop,
+                                "remove" | "delete" => opm::events::EventType::ProcessDelete,
+                                _ => opm::events::EventType::ProcessRestart,
+                            };
+
+                            let notification_event = match action_kind {
+                                "start" => NotificationEvent::ProcessStart,
+                                "restart" | "reload" => NotificationEvent::ProcessRestart,
+                                "stop" | "kill" => NotificationEvent::ProcessStop,
+                                "remove" | "delete" => NotificationEvent::ProcessDelete,
+                                _ => NotificationEvent::ProcessRestart,
+                            };
+
+                            if let Some(event_manager) = GLOBAL_EVENT_MANAGER.get() {
+                                let event = opm::events::Event::new(
+                                    event_type,
+                                    agent_id.clone(),
+                                    agent_name.clone(),
+                                    Some(process_id.to_string()),
+                                    Some(process_name.clone()),
+                                    format!(
+                                        "Agent '{}' executed '{}' on '{}'",
+                                        agent_name, action_kind, process_name
+                                    ),
+                                );
+                                event_manager.add_event(event).await;
+                            }
+
+                            if let Some(notification_manager) = GLOBAL_NOTIFICATION_MANAGER.get() {
+                                notification_manager
+                                    .send(
+                                        notification_event,
+                                        "Agent process updated",
+                                        &format!(
+                                            "{}: '{}' -> {}",
+                                            agent_name, process_name, action_kind
+                                        ),
+                                    )
+                                    .await;
+                            }
+                        }
+
                         timer.observe_duration();
                         Ok(Json(attempt(response.success, &body.method)))
                     }

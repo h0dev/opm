@@ -1,10 +1,13 @@
 use opm::agent::messages::{ActionResponse, AgentMessage, FileResponse, LogResponse};
 use opm::agent::registry::AgentRegistry;
 use opm::agent::types::{AgentInfo, AgentStatus, ConnectionType};
+use opm::notifications::NotificationEvent;
 use opm::process::ProcessItem;
 use rocket::{get, State};
 use rocket_ws::{Message, Stream, WebSocket};
 use tokio::sync::mpsc;
+
+use crate::daemon::api::{GLOBAL_EVENT_MANAGER, GLOBAL_NOTIFICATION_MANAGER};
 
 /// WebSocket route handler for agent connections
 ///
@@ -57,6 +60,38 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
                                     // Register agent with sender channel for bidirectional communication
                                     registry.register_with_sender(agent_info, tx.clone());
                                     agent_id = Some(id);
+
+                                    if let Some(event_manager) = GLOBAL_EVENT_MANAGER.get() {
+                                        let event = opm::events::Event::new(
+                                            opm::events::EventType::AgentConnect,
+                                            agent_id.clone().unwrap_or_default(),
+                                            name.clone(),
+                                            None,
+                                            None,
+                                            format!("Agent '{}' connected", name),
+                                        );
+                                        tokio::spawn({
+                                            let event_manager = event_manager.clone();
+                                            async move {
+                                                event_manager.add_event(event).await;
+                                            }
+                                        });
+                                    }
+
+                                    if let Some(notification_manager) = GLOBAL_NOTIFICATION_MANAGER.get()
+                                    {
+                                        let notification_manager = notification_manager.clone();
+                                        let agent_name = name.clone();
+                                        tokio::spawn(async move {
+                                            notification_manager
+                                                .send(
+                                                    NotificationEvent::AgentConnect,
+                                                    "Agent connected",
+                                                    &format!("Agent '{}' is now online", agent_name),
+                                                )
+                                                .await;
+                                        });
+                                    }
 
                                     // Send success response
                                     let response = AgentMessage::Response {
@@ -223,6 +258,39 @@ pub fn websocket_handler(ws: WebSocket, registry: &State<AgentRegistry>) -> Stre
 
         // Cleanup: unregister agent on disconnect
         if let Some(id) = agent_id {
+            if let Some(agent) = registry.get(&id) {
+                if let Some(event_manager) = GLOBAL_EVENT_MANAGER.get() {
+                    let event = opm::events::Event::new(
+                        opm::events::EventType::AgentDisconnect,
+                        id.clone(),
+                        agent.name.clone(),
+                        None,
+                        None,
+                        format!("Agent '{}' disconnected", agent.name),
+                    );
+                    tokio::spawn({
+                        let event_manager = event_manager.clone();
+                        async move {
+                            event_manager.add_event(event).await;
+                        }
+                    });
+                }
+
+                if let Some(notification_manager) = GLOBAL_NOTIFICATION_MANAGER.get() {
+                    let notification_manager = notification_manager.clone();
+                    let agent_name = agent.name.clone();
+                    tokio::spawn(async move {
+                        notification_manager
+                            .send(
+                                NotificationEvent::AgentDisconnect,
+                                "Agent disconnected",
+                                &format!("Agent '{}' went offline", agent_name),
+                            )
+                            .await;
+                    });
+                }
+            }
+
             log::info!("[WebSocket] Unregistering agent {}", id);
             registry.unregister(&id);
         }

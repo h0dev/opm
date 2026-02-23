@@ -13,6 +13,8 @@ import { ACTION_MESSAGES } from '@/constants';
 // Delay in milliseconds to wait for agent ProcessUpdate messages to arrive at server
 // before refreshing the UI. This ensures the UI shows the updated process state.
 const AGENT_PROCESS_UPDATE_DELAY_MS = 200;
+const AGENT_PROCESS_REFRESH_RETRIES = 5;
+const AGENT_PROCESS_REFRESH_INTERVAL_MS = 250;
 
 type ProcessItem = {
 	id: number;
@@ -132,12 +134,22 @@ const Index = (props: { base: string }) => {
 		
 		try {
 			await api.post(endpoint, { json: { method: name } });
-			// For agent processes, add a small delay to allow the agent to send the ProcessUpdate
-			// before we refresh the UI. This ensures the UI shows the updated state.
 			if (item.agent_id) {
-				await new Promise(resolve => setTimeout(resolve, AGENT_PROCESS_UPDATE_DELAY_MS));
+				for (let attempt = 0; attempt < AGENT_PROCESS_REFRESH_RETRIES; attempt++) {
+					await new Promise((resolve) => setTimeout(resolve, AGENT_PROCESS_UPDATE_DELAY_MS + attempt * AGENT_PROCESS_REFRESH_INTERVAL_MS));
+					await fetch();
+
+					const updated = items.value.find(
+						(current) => current.id === item.id && current.agent_id === item.agent_id
+					);
+
+					if (updated) {
+						break;
+					}
+				}
+			} else {
+				await fetch();
 			}
-			await fetch();
 			success(ACTION_MESSAGES[name] || `${name} action completed successfully`);
 		} catch (err) {
 			error(`Failed to ${name} process: ${(err as Error).message}`);
@@ -456,8 +468,9 @@ const Index = (props: { base: string }) => {
 										}}
 										base={props.base} 
 										server={item.server} 
-										process_id={item.id} 
-										callback={fetch} 
+														process_id={item.id}
+														agent_id={item.agent_id}
+														callback={fetch}
 										old={item.name} 
 										onSuccess={success} 
 										onError={error} 

@@ -6,6 +6,7 @@ interface InlineRenameProps {
 	base: string;
 	server: string;
 	process_id: number;
+	agent_id?: string;
 	callback: () => void;
 	old: string;
 	onSuccess?: (msg: string) => void;
@@ -26,13 +27,18 @@ const InlineRename = forwardRef((props: InlineRenameProps, ref) => {
 	const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => setFormData(event.target.value);
 
 	const handleSave = async () => {
-		const url =
-			props.server !== 'local'
+		const url = props.agent_id
+			? `${props.base}/daemon/agents/${props.agent_id}/process/${props.process_id}/action`
+			: props.server !== 'local'
 				? `${props.base}/remote/${props.server}/rename/${props.process_id}`
 				: `${props.base}/process/${props.process_id}/rename`;
 
 		try {
-			await api.post(url, { body: formData });
+			if (props.agent_id) {
+				await api.post(url, { json: { method: `rename:${formData}` } });
+			} else {
+				await api.post(url, { body: formData });
+			}
 			setIsEditing(false);
 			props.callback();
 			props.onSuccess?.('Process renamed successfully');

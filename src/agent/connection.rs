@@ -345,6 +345,17 @@ impl AgentConnection {
                                                       runner.flush(process_id);
                                                       (true, format!("Process {} logs flushed", process_id))
                                                   }
+                                                  method if method.starts_with("rename:") => {
+                                                      let new_name = method.trim_start_matches("rename:").trim();
+                                                      if new_name.is_empty() {
+                                                          (false, "Rename target is empty".to_string())
+                                                      } else {
+                                                          let mut item = runner.get(process_id);
+                                                          item.rename(new_name.to_string());
+                                                          item.get_runner().save();
+                                                          (true, format!("Process {} renamed", process_id))
+                                                      }
+                                                  }
                                                   _ => {
                                                       (false, format!("Unknown action: {}", method))
                                                   }

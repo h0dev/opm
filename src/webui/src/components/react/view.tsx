@@ -445,6 +445,12 @@ const View = (props: { id: string; base: string }) => {
 		}
 	};
 
+	const refreshCurrentProcess = async () => {
+		openConnection();
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		openConnection();
+	};
+
 	if (!loaded) {
 		return <Loader />;
 	} else if (missingProcess || !item?.info || !item?.stats || isNaN(processId)) {
@@ -485,6 +491,7 @@ const View = (props: { id: string; base: string }) => {
 									base={props.base} 
 									server={server} 
 									process_id={processId} 
+									agent_id={agentId || undefined}
 									callback={openConnection} 
 									old={item.info.name} 
 									onSuccess={success} 
@@ -614,13 +621,13 @@ const View = (props: { id: string; base: string }) => {
 											</MenuItem>
 											<MenuItem>
 												{({ _ }) => (
-													<a
-														onClick={() => {
-									action(processId, 'flush');
-															window.location.reload();
-														}}
-														className="text-gray-700 dark:text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-gray-100 dark:bg-zinc-800/80 hover:text-gray-900 dark:text-zinc-50">
-														Clean Logs
+											<a
+												onClick={() => {
+													action(processId, 'flush');
+													refreshCurrentProcess();
+												}}
+												className="text-gray-700 dark:text-zinc-200 rounded-md block p-2 w-full text-left cursor-pointer hover:bg-gray-100 dark:bg-zinc-800/80 hover:text-gray-900 dark:text-zinc-50">
+												Clean Logs
 													</a>
 												)}
 											</MenuItem>
