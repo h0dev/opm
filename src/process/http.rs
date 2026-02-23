@@ -1,6 +1,6 @@
 use crate::process::Remote;
 use macros_rs::{fmtstr, string};
-use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING};
 use reqwest::Client;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -25,12 +25,14 @@ struct CreateBody<'c> {
 
 pub mod sync {
     use reqwest::blocking::Client;
-    use reqwest::header::{HeaderMap, HeaderValue};
+    use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING};
 
     pub use reqwest::blocking::Response;
     pub fn client(token: &Option<String>) -> (Client, HeaderMap) {
         let client = Client::new();
         let mut headers = HeaderMap::new();
+
+        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
 
         if let Some(token) = token {
             headers.insert("token", HeaderValue::from_str(&token).unwrap());
@@ -43,6 +45,8 @@ pub mod sync {
 pub async fn client(token: &Option<String>) -> (Client, HeaderMap) {
     let client = Client::new();
     let mut headers = HeaderMap::new();
+
+    headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
 
     if let Some(token) = token {
         headers.insert("token", HeaderValue::from_str(&token).unwrap());
