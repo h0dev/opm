@@ -2648,6 +2648,56 @@ pub async fn agent_get_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/daemon/agents/{agent_id}/processes",
+    params(
+        ("agent_id" = String, Path, description = "Agent ID")
+    ),
+    responses(
+        (status = 200, description = "Agent processes retrieved successfully", body = [ProcessItem]),
+        (status = 404, description = "Agent not found")
+    ),
+    security(("api_key" = []))
+)]
+#[get("/daemon/agents/<agent_id>/processes")]
+pub async fn agent_processes_handler(
+    agent_id: String,
+    registry: &State<opm::agent::registry::AgentRegistry>,
+    _t: Token,
+) -> Result<Json<Vec<ProcessItem>>, GenericError> {
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["agent_processes"])
+        .start_timer();
+    HTTP_COUNTER.inc();
+
+    if agent_id == "local" {
+        let mut local_processes = Runner::new().fetch();
+        for process in &mut local_processes {
+            process.agent_id = Some("local".to_string());
+            process.agent_name = Some("Local Server".to_string());
+            process.agent_api_endpoint = None;
+        }
+
+        timer.observe_duration();
+        return Ok(Json(local_processes));
+    }
+
+    let agent = registry
+        .get(&agent_id)
+        .ok_or_else(|| generic_error(Status::NotFound, "Agent not found".to_string()))?;
+
+    let mut processes = registry.get_processes(&agent_id).unwrap_or_default();
+    for process in &mut processes {
+        process.agent_id = Some(agent_id.clone());
+        process.agent_name = Some(agent.name.clone());
+        process.agent_api_endpoint = agent.api_endpoint.clone();
+    }
+
+    timer.observe_duration();
+    Ok(Json(processes))
+}
+
 /// Get logs for a specific agent process
 #[utoipa::path(
     get,
