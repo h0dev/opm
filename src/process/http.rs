@@ -236,16 +236,19 @@ pub fn clear_env(
 }
 
 /// Get list of connected agents from server
-pub fn agent_list(address: &str) -> Result<sync::Response, anyhow::Error> {
-    let (client, headers) = sync::client(&None);
+pub fn agent_list(address: &str, token: &Option<String>) -> Result<sync::Response, anyhow::Error> {
+    let (client, headers) = sync::client(token);
     Ok(client
         .get(fmtstr!("{address}/daemon/agents/list"))
         .headers(headers)
         .send()?)
 }
 
-pub fn agent_list_identity(address: &str) -> Result<sync::Response, anyhow::Error> {
-    let (client, headers) = sync::client_identity(&None);
+pub fn agent_list_identity(
+    address: &str,
+    token: &Option<String>,
+) -> Result<sync::Response, anyhow::Error> {
+    let (client, headers) = sync::client_identity(token);
     Ok(client
         .get(fmtstr!("{address}/daemon/agents/list"))
         .headers(headers)
@@ -253,8 +256,12 @@ pub fn agent_list_identity(address: &str) -> Result<sync::Response, anyhow::Erro
 }
 
 /// Get processes for a specific agent
-pub fn agent_processes(address: &str, agent_id: &str) -> Result<sync::Response, anyhow::Error> {
-    let (client, headers) = sync::client(&None);
+pub fn agent_processes(
+    address: &str,
+    token: &Option<String>,
+    agent_id: &str,
+) -> Result<sync::Response, anyhow::Error> {
+    let (client, headers) = sync::client(token);
     Ok(client
         .get(fmtstr!("{address}/daemon/agents/{agent_id}/processes"))
         .headers(headers)

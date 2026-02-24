@@ -382,12 +382,28 @@ fn agent_list(format: &String, server_name: &String) {
         return;
     };
 
+    let server_token: Option<String> = if matches!(&**server_name, "internal" | "local") {
+        config
+            .daemon
+            .web
+            .secure
+            .as_ref()
+            .filter(|secure| secure.enabled)
+            .map(|secure| secure.token.clone())
+    } else if let Some(servers) = opm::config::servers().servers {
+        servers
+            .get(server_name)
+            .and_then(|srv| srv.token.clone())
+    } else {
+        None
+    };
+
     // Make API call to get agent list
-    let agents = match http::agent_list(&server) {
+    let agents = match http::agent_list(&server, &server_token) {
         Ok(response) => match response.json::<Vec<opm::agent::types::AgentInfo>>() {
             Ok(agents) => Ok(agents),
             Err(_) => {
-                match http::agent_list_identity(&server) {
+                match http::agent_list_identity(&server, &server_token) {
                     Ok(identity_response) => identity_response
                         .json::<Vec<opm::agent::types::AgentInfo>>()
                         .map_err(|e| e.to_string()),
@@ -433,7 +449,8 @@ fn agent_list(format: &String, server_name: &String) {
                         };
 
                         // Get process count by fetching processes for this agent
-                        let process_count = match http::agent_processes(&server, &agent.id) {
+                        let process_count =
+                            match http::agent_processes(&server, &server_token, &agent.id) {
                             Ok(resp) => match resp.json::<Vec<opm::process::ProcessItem>>() {
                                 Ok(processes) => processes.len().to_string(),
                                 Err(_) => "N/A".to_string(),
@@ -558,11 +575,27 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
         return;
     };
 
+    let server_token: Option<String> = if matches!(&**server_name, "internal" | "local") {
+        config
+            .daemon
+            .web
+            .secure
+            .as_ref()
+            .filter(|secure| secure.enabled)
+            .map(|secure| secure.token.clone())
+    } else if let Some(servers) = opm::config::servers().servers {
+        servers
+            .get(server_name)
+            .and_then(|srv| srv.token.clone())
+    } else {
+        None
+    };
+
     // First, get list of agents
-    let agents = match http::agent_list(&server) {
+    let agents = match http::agent_list(&server, &server_token) {
         Ok(response) => match response.json::<Vec<opm::agent::types::AgentInfo>>() {
             Ok(agents) => agents,
-            Err(_) => match http::agent_list_identity(&server) {
+            Err(_) => match http::agent_list_identity(&server, &server_token) {
                 Ok(identity_response) => {
                     match identity_response.json::<Vec<opm::agent::types::AgentInfo>>() {
                         Ok(agents) => agents,
@@ -613,7 +646,7 @@ fn agent_processes(agent_filter: &Option<String>, format: &String, server_name: 
 
     // Fetch processes from each agent
     for agent in agents_to_query.iter() {
-        match http::agent_processes(&server, &agent.id) {
+        match http::agent_processes(&server, &server_token, &agent.id) {
             Ok(resp) => match resp.json::<Vec<opm::process::ProcessItem>>() {
                 Ok(processes) => {
                     let agent_prefix = if is_multi_agent {
