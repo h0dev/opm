@@ -226,136 +226,11 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             SocketResponse::State(merged)
         }
         SocketRequest::SetState(runner) => {
-            // Merge the provided state with existing memory cache to prevent race conditions
-            // where the daemon's stale runner overwrites newly created processes
-            // Read current memory state
-            let current_memory = dump::read_memory_direct_option();
-
-            let merged_runner = match current_memory {
-                Some(mut current) => {
-                    // Merge strategy: Update/add all processes from the provided runner
-                    // while preserving any processes in memory that aren't in the provided runner.
-                    //
-                    // This prevents two issues:
-                    // 1. Daemon (or any caller) accidentally deleting processes created after it loaded state
-                    // 2. Race conditions where CLI creates a process while daemon is monitoring
-                    //
-                    // For processes that exist in both:
-                    // - The provided runner's version overwrites the existing one
-                    // - This is intentional: the daemon is the authoritative source for state updates
-                    //   (crash counters, PIDs, running status, etc.)
-                    // - The daemon loads state once per cycle and makes authoritative updates
-                    //
-                    // For processes only in current memory:
-                    // - They are preserved (not deleted)
-                    // - This fixes the reported bug where newly created processes disappeared
-
-                    // Update all processes that exist in the provided runner
-                    // Handle ID conflicts: if a process ID already exists and the incoming process
-                    // is fundamentally different (race condition from concurrent creates with stale counter),
-                    // reassign a new ID to prevent overwriting existing processes
-                    for (id, mut process) in runner.list {
-                        if let Some(existing) = current.list.get(&id) {
-                            // Check if this is actually a different process (same ID but different identity)
-                            // Compare by immutable process properties (name, script, path) rather than
-                            // runtime state (PID, started timestamp) which change during normal restarts.
-                            // This fixes the bug where process restarts were incorrectly detected as ID conflicts,
-                            // causing duplicate process entries to be created.
-                            let is_same_process = existing.name == process.name
-                                && existing.script == process.script
-                                && existing.path == process.path;
-
-                            if !is_same_process {
-                                // True ID conflict detected! Two genuinely different processes claim the same ID.
-                                // This happens in race conditions during concurrent process creation with stale counters.
-                                // Allocate a new ID for the incoming process to prevent overwriting.
-                                let mut new_id = current
-                                    .id
-                                    .counter
-                                    .load(std::sync::atomic::Ordering::Relaxed);
-                                while current.list.contains_key(&new_id) {
-                                    new_id += 1;
-                                }
-
-                                // Log before moving process (avoids unnecessary clones)
-                                log::warn!(
-                                    "[socket] True ID conflict detected for id={} (existing process '{}' vs incoming process '{}'). Reassigned incoming to id={}.",
-                                    id, existing.name, process.name, new_id
-                                );
-
-                                // Update process with new ID and insert
-                                process.id = new_id;
-                                current.list.insert(new_id, process);
-
-                                // Update counter to be at least new_id + 1
-                                let next_counter = new_id + 1;
-                                current
-                                    .id
-                                    .counter
-                                    .store(next_counter, std::sync::atomic::Ordering::Relaxed);
-
-                                continue;
-                            }
-
-                            // Same process - merge smartly to preserve mid-cycle updates
-                            // Problem: When restore/start updates a process, it sets PID/children/started via SetState.
-                            // But the daemon's monitoring loop may be running with a stale runner (pid=0).
-                            // When daemon saves, it would overwrite the fresh PID with stale pid=0.
-                            //
-                            // Additionally, if the daemon incorrectly marks a running process as stopped
-                            // (e.g., shell wrapper exits but child still running), we need to preserve the
-                            // correct running state to prevent phantom stops.
-                            //
-                            // Solution: Preserve runtime fields that may have been updated mid-cycle:
-                            // - pid, shell_pid, children, started, running: Keep existing if non-zero/non-default
-                            // - Other fields: Use incoming values (daemon is authoritative for state/counters)
-                            //
-                            // This fixes the phantom crash/stop issue where processes appear stopped after restore/start
-                            // even though they're actually running.
-
-                            // Safety check: If existing has a valid PID but incoming has pid=0,
-                            // preserve the existing state. This handles edge cases like:
-                            // - Deserialization from old dump files that had serde(skip) on pid
-                            // - Corrupted state updates
-                            // - Daemon restarts where temporary state is lost
-                            if existing.pid > 0 && process.pid == 0 {
-                                process.pid = existing.pid;
-                                process.shell_pid = existing.shell_pid;
-                                process.children = existing.children.clone();
-                                process.running = existing.running;
-                                process.started = existing.started;
-                                log::debug!(
-                                    "[socket] Preserved PID for process '{}' (id={}): pid={}, running={}",
-                                    process.name, id, process.pid, process.running
-                                );
-                            }
-                        }
-
-                        // No conflict, or this is an update to existing process - insert normally
-                        current.list.insert(id, process);
-                    }
-
-                    // Update the ID counter to the maximum of both
-                    // Use Relaxed ordering since socket handler is single-threaded and sequential
-                    let provided_counter =
-                        runner.id.counter.load(std::sync::atomic::Ordering::Relaxed);
-                    let current_counter = current
-                        .id
-                        .counter
-                        .load(std::sync::atomic::Ordering::Relaxed);
-                    if provided_counter > current_counter {
-                        current
-                            .id
-                            .counter
-                            .store(provided_counter, std::sync::atomic::Ordering::Relaxed);
-                    }
-
-                    current
-                }
-                None => {
-                    // No existing state, use the provided runner as-is
-                    runner
-                }
+            // Merge the caller's snapshot with the authoritative memory cache.
+            // See `merge_setstate` for the identity rules.
+            let merged_runner = match dump::read_memory_direct_option() {
+                Some(current) => merge_setstate(current, runner),
+                None => runner,
             };
 
             // Write merged state to memory cache
@@ -628,6 +503,111 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
     Ok(())
 }
 
+/// Identifies a process across renumbering: the properties a user picks it by.
+type Identity = (String, String, std::path::PathBuf);
+
+fn identity(process: &process::Process) -> Identity {
+    (
+        process.name.clone(),
+        process.script.clone(),
+        process.path.clone(),
+    )
+}
+
+/// Merge a caller's `SetState` snapshot into the authoritative memory cache.
+///
+/// Snapshot callers read the state, mutate it and send it back, so their ids can
+/// be stale: the daemon compacts ids on every removal, which shifts every id
+/// above the removed one. Keying on ids therefore confused identity with
+/// position — it duplicated processes, moved them to other rows and resurrected
+/// deleted ones. Processes are matched by identity `(name, script, path)` instead:
+///
+/// - An identity present in `current` is updated **in place**: it keeps the
+///   current id (the incoming id is stale) and its derived state (log paths).
+/// - An incoming process whose identity is unknown is new; it is inserted under
+///   its own id, or under a freshly allocated id when that id is taken.
+/// - A process in `current` that no incoming process claims is preserved: only
+///   an explicit deletion (`RemoveProcess`) removes a process.
+/// - `opm adjust` and `opm restore --name` resolve an id against the current
+///   list, so a rename whose snapshot id still matches the current id is applied;
+///   this daemon's monitoring loop renames in place and never moves an identity.
+/// - The id counter never moves backwards.
+fn merge_setstate(mut current: Runner, incoming: Runner) -> Runner {
+    use std::collections::HashMap;
+    use std::sync::atomic::Ordering;
+
+    let incoming_counter = incoming.id.counter.load(Ordering::SeqCst);
+    let mut incoming_by_identity: HashMap<Identity, process::Process> = incoming
+        .list
+        .into_values()
+        .map(|process| (identity(&process), process))
+        .collect();
+
+    {
+        for (id, existing) in current.list.iter_mut() {
+            let Some(mut process) = incoming_by_identity.remove(&identity(existing)) else {
+                continue;
+            };
+
+            // `opm <cmd> <id>` resolves ids against the current list, so the id a
+            // caller passes is a command-line fact, not a stale leftover: honour it.
+            let renamed_by_id = process.name != existing.name && process.id == *id;
+            if !renamed_by_id {
+                process.name = existing.name.clone();
+            }
+
+            process.id = *id;
+            process.log_out = existing.log_out.clone();
+            process.log_error = existing.log_error.clone();
+
+            // A snapshot with pid=0 (old dump, daemon restart, restore clearing
+            // pids) must not wipe the live runtime state of a running process.
+            if existing.pid > 0 && process.pid == 0 {
+                process.pid = existing.pid;
+                process.shell_pid = existing.shell_pid;
+                process.children = existing.children.clone();
+                process.running = existing.running;
+                process.started = existing.started;
+                log::debug!(
+                    "[socket] Preserved PID for process '{}' (id={}): pid={}, running={}",
+                    process.name,
+                    id,
+                    process.pid,
+                    process.running
+                );
+            }
+
+            *existing = process;
+        }
+    }
+
+    // Whatever no identity claimed is new to this daemon.
+    for (_, mut process) in incoming_by_identity {
+        let snapshot_id = process.id;
+        let id = if current.list.contains_key(&snapshot_id) {
+            current.alloc_id()
+        } else {
+            snapshot_id
+        };
+
+        log::debug!(
+            "[socket] Accepted new process '{}' as id={} (snapshot id was {})",
+            process.name,
+            id,
+            snapshot_id
+        );
+        process.id = id;
+        current.list.insert(id, process);
+    }
+
+    let current_counter = current.id.counter.load(Ordering::SeqCst);
+    if incoming_counter > current_counter {
+        current.id.counter.store(incoming_counter, Ordering::SeqCst);
+    }
+
+    current
+}
+
 /// Client function to send a request to the daemon via socket
 /// Implements retry logic with exponential backoff for transient failures
 pub fn send_request(socket_path: &str, request: SocketRequest) -> Result<SocketResponse> {
@@ -790,5 +770,359 @@ pub fn is_daemon_running(socket_path: &str) -> bool {
     match send_request(socket_path, SocketRequest::Ping) {
         Ok(SocketResponse::Pong) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::process::{Crash, Process, Watch};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn process(id: usize, name: &str, pid: i64, started_secs: i64) -> Process {
+        Process {
+            id,
+            pid,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: name.to_string(),
+            path: PathBuf::from("/tmp/opm-e2e"),
+            script: "node /tmp/probe.js".to_string(),
+            restarts: 0,
+            running: pid > 0,
+            crash: Crash { crashed: false },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: chrono::DateTime::from_timestamp(started_secs, 0)
+                .expect("timestamp is valid"),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: chrono::DateTime::from_timestamp(started_secs, 0)
+                .expect("timestamp is valid"),
+            manual_stop: false,
+            errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
+            session_id: None,
+            process_start_time: None,
+            is_process_tree: false,
+            log_out: Some(format!("/root/.opm/logs/{name}-out.log")),
+            log_error: Some(format!("/root/.opm/logs/{name}-error.log")),
+        }
+    }
+
+    fn runner(counter: usize, processes: Vec<Process>) -> Runner {
+        let mut list = BTreeMap::new();
+        for item in processes {
+            list.insert(item.id, item);
+        }
+
+        Runner {
+            id: crate::process::id::Id::new(counter),
+            list,
+            remote: None,
+        }
+    }
+
+    fn names_and_pids(runner: &Runner) -> Vec<(usize, String, i64)> {
+        runner
+            .list
+            .iter()
+            .map(|(id, process)| (*id, process.name.clone(), process.pid))
+            .collect()
+    }
+
+    #[test]
+    fn test_setstate_stale_snapshot_does_not_duplicate_processes() {
+        // Real reproduction (base commit): seven processes, then `opm remove 3,4`.
+        // The first removal compacted ids, so the second call's snapshot (taken
+        // before the first removal) still described ids 3 and 4 with the pre-remove
+        // identities. Merging that snapshot by numeric id added app6/app7 a second
+        // time at ids 7 and 8, both carrying the same live PID.
+        let current = runner(
+            9,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+                process(3, "app4", 0, 4),
+                process(4, "app6", 114227, 5),
+                process(5, "app7", 114241, 6),
+                process(6, "app5", 114280, 7),
+            ],
+        );
+        let incoming = runner(
+            9,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+                process(3, "app4", 114189, 4),
+                process(4, "app5", 114280, 7),
+                process(5, "app6", 114227, 5),
+                process(6, "app7", 114241, 6),
+            ],
+        );
+
+        let merged = merge_setstate(current, incoming);
+
+        assert_eq!(
+            names_and_pids(&merged),
+            vec![
+                (0, "app1".to_string(), 114130),
+                (1, "app2".to_string(), 114157),
+                (2, "app3".to_string(), 114185),
+                (3, "app4".to_string(), 114189),
+                (4, "app6".to_string(), 114227),
+                (5, "app7".to_string(), 114241),
+                (6, "app5".to_string(), 114280),
+            ],
+            "a stale snapshot must not duplicate processes or move an existing one to another id"
+        );
+    }
+
+    #[test]
+    fn test_setstate_does_not_resurrect_a_deleted_process_from_a_contaminated_snapshot() {
+        // The resurrection seen live at base: `opm remove 3,4` deleted app5 too,
+        // but the contaminated memory cache still listed it, so the second
+        // removal's snapshot carried app5's identity back in. A stale snapshot can
+        // only lay claim to identities the current list really has; a process the
+        // caller never asked to delete must stay deleted.
+        let current = runner(
+            9,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+                process(3, "app6", 114227, 5),
+            ],
+        );
+        let incoming = runner(
+            9,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+                process(3, "app4", 114189, 4),
+                process(4, "app5", 114280, 6),
+                process(5, "app6", 114227, 5),
+            ],
+        );
+
+        let merged = merge_setstate(current, incoming);
+
+        // app4 and app5 are absent from the current list, so they exist nowhere
+        // else; they are new to this daemon and are accepted under fresh ids — but
+        // never in place of a process that is already there.
+        assert_eq!(merged.list.len(), 6, "no identity may be inserted twice: {:?}", names_and_pids(&merged));
+        for name in ["app1", "app2", "app3", "app4", "app5", "app6"] {
+            assert_eq!(
+                merged.list.values().filter(|p| p.name == name).count(),
+                1,
+                "{name} must appear exactly once"
+            );
+        }
+        assert_eq!(
+            names_and_pids(&merged)[..4],
+            [
+                (0, "app1".to_string(), 114130),
+                (1, "app2".to_string(), 114157),
+                (2, "app3".to_string(), 114185),
+                (3, "app6".to_string(), 114227),
+            ],
+            "the processes already in the list must keep their ids and slots"
+        );
+        assert!(
+            merged.list[&4].name == "app4" || merged.list[&4].name == "app5",
+            "id 4 is free, so one of the new processes takes it"
+        );
+    }
+
+    #[test]
+    fn test_setstate_deleted_process_stays_deleted_when_absent_from_current() {
+        // Explicit deletion is `RemoveProcess`; a snapshot that no longer contains
+        // app5 must not delete it either, and a snapshot that carries an identity
+        // which no longer exists anywhere is the only way it can return. Once the
+        // contaminating entry is gone from the current list, nothing can claim it.
+        let current = runner(
+            7,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app6", 114227, 5),
+            ],
+        );
+        let incoming = runner(
+            7,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app6", 114227, 5),
+            ],
+        );
+
+        let merged = merge_setstate(current, incoming);
+
+        assert_eq!(
+            names_and_pids(&merged),
+            vec![
+                (0, "app1".to_string(), 114130),
+                (1, "app6".to_string(), 114227),
+            ],
+            "a process missing from the snapshot must survive the merge"
+        );
+    }
+
+    #[test]
+    fn test_setstate_matches_by_identity_when_ids_shifted() {
+        // Compaction renumbers ids; a stale snapshot pairs an identity with the id
+        // the process had before the shift. The identity match must win, and the
+        // CURRENT id must win too (`opm <cmd> 6` resolves against the current list).
+        let current = runner(
+            7,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app5", 114280, 7),
+                process(2, "app6", 114227, 5),
+            ],
+        );
+        let incoming = runner(
+            7,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(3, "app6", 114227, 5),
+                process(6, "app5", 114280, 7),
+            ],
+        );
+
+        let merged = merge_setstate(current, incoming);
+
+        assert_eq!(
+            names_and_pids(&merged),
+            vec![
+                (0, "app1".to_string(), 114130),
+                (1, "app5".to_string(), 114280),
+                (2, "app6".to_string(), 114227),
+            ],
+            "identity is (name, script, path), so stale ids must not move a process"
+        );
+    }
+
+    #[test]
+    fn test_setstate_accepts_new_process_and_reallocates_colliding_id() {
+        let current = runner(
+            3,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+            ],
+        );
+        // A concurrent `opm start` allocated id 3 while the caller held a stale
+        // counter, so the incoming new process claims an id that is already taken
+        // by a different identity.
+        let incoming = runner(
+            4,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+                process(3, "app9", 114999, 9),
+            ],
+        );
+
+        let merged = merge_setstate(current, incoming);
+
+        assert_eq!(
+            names_and_pids(&merged),
+            vec![
+                (0, "app1".to_string(), 114130),
+                (1, "app2".to_string(), 114157),
+                (2, "app3".to_string(), 114185),
+                (3, "app9".to_string(), 114999),
+            ],
+            "a genuinely new process must be accepted under a free id"
+        );
+    }
+
+    #[test]
+    fn test_setstate_new_process_colliding_on_id_gets_a_free_id() {
+        let current = runner(
+            3,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+            ],
+        );
+        let incoming = runner(
+            4,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(1, "app2", 114157, 2),
+                process(2, "app3", 114185, 3),
+                process(1, "app9", 114999, 9),
+            ],
+        );
+
+        let merged = merge_setstate(current, incoming);
+
+        assert_eq!(
+            names_and_pids(&merged),
+            vec![
+                (0, "app1".to_string(), 114130),
+                (1, "app2".to_string(), 114157),
+                (2, "app3".to_string(), 114185),
+                (3, "app9".to_string(), 114999),
+            ],
+            "a new process must never overwrite the process already at that id"
+        );
+    }
+
+    #[test]
+    fn test_setstate_preserves_current_state_when_incoming_pid_is_zero() {
+        // Existing rule: a snapshot with pid=0 (daemon restart, old dump, restore
+        // clearing pids) must not wipe the live pid/children of a running process.
+        let mut current_process = process(0, "app1", 114130, 1);
+        current_process.children = vec![114131, 114132];
+        let current = runner(1, vec![current_process]);
+        let incoming = runner(1, vec![process(0, "app1", 0, 1)]);
+
+        let merged = merge_setstate(current, incoming);
+
+        let entry = merged.list.get(&0).expect("process must survive the merge");
+        assert_eq!(entry.pid, 114130, "live pid must be preserved");
+        assert_eq!(
+            entry.children,
+            vec![114131, 114132],
+            "live children must be preserved"
+        );
+        assert!(entry.running, "running state must be preserved");
+    }
+
+    #[test]
+    fn test_setstate_never_lowers_the_id_counter() {
+        // A stale snapshot carries an old counter. Lowering it would let the next
+        // allocation reuse ids that the current list still needs.
+        let current = runner(
+            9,
+            vec![
+                process(0, "app1", 114130, 1),
+                process(8, "app7", 114241, 6),
+            ],
+        );
+        let incoming = runner(3, vec![process(0, "app1", 114130, 1)]);
+
+        let merged = merge_setstate(current, incoming);
+
+        assert!(
+            merged.id.counter.load(std::sync::atomic::Ordering::SeqCst) >= 9,
+            "counter must never move backwards, got {}",
+            merged.id.counter.load(std::sync::atomic::Ordering::SeqCst)
+        );
     }
 }
