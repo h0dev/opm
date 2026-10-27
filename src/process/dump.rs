@@ -46,7 +46,7 @@ use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::{collections::BTreeMap, fs, sync::Mutex};
+use std::{fs, sync::Mutex};
 
 /// Global in-memory cache for process state (replaces temporary file)
 /// This stores the transient process state in RAM instead of writing to disk
@@ -71,8 +71,7 @@ fn permanent_snapshot(source: &Runner) -> Runner {
 fn empty_runner() -> Runner {
     Runner {
         id: Id::new(0),
-        list: BTreeMap::new(),
-        remote: None,
+        ..Default::default()
     }
 }
 
@@ -200,6 +199,22 @@ pub fn write_memory_direct(dump: &Runner) {
     log!("[dump::write_memory_direct] Updated in-memory process cache");
 }
 
+/// Write the monitor loop's changes back to the cache under its lock.
+///
+/// `dump` is a tick: the cache state it loaded plus the changes it made. Only
+/// those changes are applied — replacing the cache with the tick would resurrect
+/// processes `opm remove` deleted meanwhile (under fresh ids, after compaction)
+/// and drop processes merged in by `SetState`. See `Runner::apply_daemon_delta`.
+pub fn write_memory_delta(dump: &Runner) {
+    let mut cache = MEMORY_CACHE.lock().unwrap();
+    match cache.as_mut() {
+        Some(current) => dump.apply_daemon_delta(current),
+        None => *cache = Some(dump.clone()),
+    }
+
+    log!("[dump::write_memory_delta] Applied daemon changes to in-memory process cache");
+}
+
 /// Public version for socket server to avoid recursion
 pub fn commit_memory_direct() {
     // Read permanent dump directly
@@ -260,8 +275,7 @@ pub fn read() -> Runner {
     if !Exists::check(&global!("opm.dump")).file() {
         let runner = Runner {
             id: Id::new(0),
-            list: BTreeMap::new(),
-            remote: None,
+            ..Default::default()
         };
 
         write(&runner);
@@ -299,8 +313,7 @@ pub fn read() -> Runner {
             // Create a fresh runner with empty state
             let runner = Runner {
                 id: Id::new(0),
-                list: BTreeMap::new(),
-                remote: None,
+                ..Default::default()
             };
 
             write(&runner);

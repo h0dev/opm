@@ -308,6 +308,67 @@ pub struct Runner {
     #[serde(skip, default)]
     pub remote: Option<Remote>,
     pub list: BTreeMap<usize, Process>,
+    /// The changes the monitor loop makes to the cache; see
+    /// [`Runner::start_daemon_delta`] and [`Runner::apply_daemon_delta`].
+    #[serde(skip, default)]
+    daemon_delta: DaemonDelta,
+}
+
+impl Default for Runner {
+    fn default() -> Self {
+        Runner {
+            id: id::Id::new(0),
+            remote: None,
+            list: BTreeMap::new(),
+            daemon_delta: DaemonDelta::default(),
+        }
+    }
+}
+
+/// The monitor loop's changes to the cache, recorded so a tick can write back
+/// what it changed instead of its whole copy of the cache.
+///
+/// The cache is the source of truth: processes may be removed (`opm remove`
+/// compacts ids) or inserted (`SetState`) while a tick runs, and a whole-copy
+/// write resurrects the removed ones. Entries are keyed by identity, not by id,
+/// because compaction renumbers ids under the tick's feet.
+#[derive(Clone, Debug, Default)]
+struct DaemonDelta {
+    /// Whether this runner was started as a monitor tick.
+    active: bool,
+    /// Each process as the tick first saw it, to tell which ones it changed.
+    previous: BTreeMap<Identity, Process>,
+}
+
+/// Identifies a process across renumbering: the properties a user picks it by.
+pub(crate) type Identity = (String, String, PathBuf);
+
+pub(crate) fn identity(process: &Process) -> Identity {
+    (
+        process.name.clone(),
+        process.script.clone(),
+        process.path.clone(),
+    )
+}
+
+/// Whether the monitor loop changed anything it writes back: the runtime state
+/// it owns (`restarts`, `crash`, `errored`, `running`), not the user's config.
+fn changed_since_load(previous: &Process, current: &Process) -> bool {
+    previous.pid != current.pid
+        || previous.shell_pid != current.shell_pid
+        || previous.session_id != current.session_id
+        || previous.process_start_time != current.process_start_time
+        || previous.is_process_tree != current.is_process_tree
+        || previous.children != current.children
+        || previous.started != current.started
+        || previous.restarts != current.restarts
+        || previous.crash.crashed != current.crash.crashed
+        || previous.errored != current.errored
+        || previous.running != current.running
+        || previous.manual_stop != current.manual_stop
+        || previous.last_action_at != current.last_action_at
+        || previous.last_restart_attempt != current.last_restart_attempt
+        || previous.failed_restart_attempts != current.failed_restart_attempts
 }
 
 #[derive(Clone, Debug)]
@@ -547,6 +608,87 @@ impl Runner {
     pub fn new_direct() -> Self {
         dump::read_merged_direct()
     }
+
+    /// Start recording this tick's changes to the cache.
+    ///
+    /// Call this on the runner a tick loaded. From here on, changes are stored as
+    /// a delta applied to the cache under its lock ([`Runner::apply_daemon_delta`])
+    /// instead of the tick's whole copy being written back, which would
+    /// resurrect processes the cache has removed and drop processes merged into
+    /// it meanwhile.
+    pub fn start_daemon_delta(&mut self) {
+        self.daemon_delta = DaemonDelta {
+            active: true,
+            previous: self
+                .list
+                .values()
+                .map(|process| (identity(process), process.clone()))
+                .collect(),
+        };
+    }
+
+    /// Apply this tick's changes to the authoritative cache.
+    ///
+    /// Everything else in `self.list` is that tick's copy of the cache, which may
+    /// be stale: a process removed meanwhile (`opm remove` compacts ids) is gone
+    /// from the cache, and writing the copy back would resurrect it under a fresh
+    /// id; a process merged into the cache meanwhile is not in the copy at all.
+    /// So only the tick's own edits are written, each into the entry the cache
+    /// still holds for it, matched by identity because compaction moves ids.
+    ///
+    /// A process the cache no longer holds is skipped. Ids are never reused and
+    /// the counter never moves backwards.
+    pub fn apply_daemon_delta(&self, cache: &mut Runner) {
+        use std::sync::atomic::Ordering;
+
+        let mut applied = Vec::new();
+
+        for process in self.list.values() {
+            let Some(previous) = self.daemon_delta.previous.get(&identity(process)) else {
+                // A process this tick did not load: the tick inserted it.
+                let id = if cache.list.contains_key(&process.id) {
+                    cache.alloc_id()
+                } else {
+                    process.id
+                };
+
+                let mut process = process.clone();
+                process.id = id;
+                applied.push((id, process));
+                continue;
+            };
+
+            if !changed_since_load(previous, process) {
+                // Untouched by this tick: the cache may hold newer changes of
+                // its own, which writing this copy would roll back.
+                continue;
+            }
+
+            let Some(id) = cache
+                .list
+                .iter()
+                .find(|(_, cached)| identity(cached) == identity(process))
+                .map(|(id, _)| *id)
+            else {
+                // Removed meanwhile. Re-inserting would resurrect it.
+                continue;
+            };
+
+            let mut process = process.clone();
+            process.id = id;
+            applied.push((id, process));
+        }
+
+        for (id, process) in applied {
+            cache.list.insert(id, process);
+        }
+
+        let counter = self.id.counter.load(Ordering::SeqCst);
+        if counter > cache.id.counter.load(Ordering::SeqCst) {
+            cache.id.counter.store(counter, Ordering::SeqCst);
+        }
+    }
+
 
     /// Read state from daemon only (no disk fallback)
     /// Should only be used when daemon is guaranteed to be running (e.g., during restore)
@@ -1580,9 +1722,17 @@ impl Runner {
     /// Save runner state directly to memory cache without using socket
     /// This is used by the daemon itself to avoid serialization/deserialization
     /// that would lose fields marked with #[serde(skip)] like the restart counter
+    ///
+    /// The daemon's runner is a tick, not the cache: its changes are applied to
+    /// the cache as a delta (see [`Runner::apply_daemon_delta`]), never written
+    /// over it wholesale. When it was not started as a tick
+    /// ([`Runner::start_daemon_delta`]) nothing is recorded and the cache is left
+    /// alone rather than overwritten with a possibly stale copy.
     pub fn save_direct(&self) {
         if self.remote.is_none() {
-            dump::write_memory_direct(&self);
+            if self.daemon_delta.active {
+                dump::write_memory_delta(&self);
+            }
         }
     }
 
@@ -3516,9 +3666,125 @@ mod tests {
     fn setup_test_runner() -> Runner {
         Runner {
             id: id::Id::new(1),
-            list: BTreeMap::new(),
-            remote: None,
+            ..Default::default()
         }
+    }
+
+    fn delta_process(id: usize, name: &str, pid: i64) -> Process {
+        Process {
+            id,
+            pid,
+            name: name.to_string(),
+            ..alloc_test_process(id)
+        }
+    }
+
+    fn delta_names(runner: &Runner) -> Vec<(usize, String, i64)> {
+        runner
+            .list
+            .iter()
+            .map(|(id, process)| (*id, process.name.clone(), process.pid))
+            .collect()
+    }
+
+    #[test]
+    fn test_daemon_delta_does_not_resurrect_a_process_removed_meanwhile() {
+        // `opm remove` deletes a process (and compacts the ids) while the
+        // monitor loop holds its own copy. Writing that copy back resurrects the
+        // process under a fresh id — the residue reported after `opm remove 3,4`.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+        cache.list.insert(1, delta_process(1, "app5", 114280));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        tick.process(0).pid = 114999;
+
+        // `opm remove` deletes app5 and compacts app1 to id 0 (already there).
+        cache.list.remove(&1);
+
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            delta_names(&cache),
+            vec![(0, "app1".to_string(), 114999)],
+            "the removed process must stay removed; the tick's own edit must still land"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_loads_pids_for_dead_handles_after_processes_died() {
+        // A crashed process whose `Child` handle was already reaped cannot be
+        // probed. Without a delta the cache keeps the run's old pid, so the
+        // process looks alive and is never restarted.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        {
+            let process = tick.process(0);
+            process.pid = 114500;
+            process.children = vec![114501];
+        }
+
+        tick.apply_daemon_delta(&mut cache);
+
+        let entry = cache.list.get(&0).expect("process must survive");
+        assert_eq!(entry.pid, 114500, "the daemon's pid edit must be stored");
+        assert_eq!(
+            entry.children,
+            vec![114501],
+            "the daemon's children edit must be stored"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_leaves_a_process_the_tick_never_read_alone() {
+        // A caller's snapshot can merge a process into the cache while the tick
+        // runs. The tick has no copy of it, so writing the tick over the cache
+        // must not drop it.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        tick.process(0).pid = 114999;
+
+        // Inserted by `SetState` after the tick started.
+        cache.list.insert(7, delta_process(7, "late", 114777));
+
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            delta_names(&cache),
+            vec![
+                (0, "app1".to_string(), 114999),
+                (7, "late".to_string(), 114777),
+            ],
+            "a process the tick never read must be preserved"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_replay_is_idempotent() {
+        // A write that could not be applied leaves the delta pending; the next
+        // tick replays it. Replaying must not duplicate or reorder anything.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        tick.process(0).pid = 114999;
+
+        tick.apply_daemon_delta(&mut cache);
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            delta_names(&cache),
+            vec![(0, "app1".to_string(), 114999)],
+            "applying the same delta twice must be a no-op"
+        );
     }
 
     // Use a PID value that's unlikely to exist in the test environment
