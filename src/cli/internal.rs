@@ -261,7 +261,7 @@ impl<'i> Internal<'i> {
                 .map(|n| item.rename(n.trim().replace("\n", "")));
             item.restart(increment_counter);
 
-            self.runner = item.get_runner().clone();
+            self.runner = item.get_runner();
         } else {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -346,7 +346,7 @@ impl<'i> Internal<'i> {
         if matches!(self.server_name, "internal" | "local") {
             let mut item = self.runner.get(self.id);
             item.reload(true); // Reload command should increment counter
-            self.runner = item.get_runner().clone();
+            self.runner = item.get_runner();
         } else {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -441,7 +441,7 @@ impl<'i> Internal<'i> {
             .unwrap_or_default(); // Get name before stop
         let mut item = self.runner.get(self.id);
         item.stop();
-        self.runner = item.get_runner().clone();
+        self.runner = item.get_runner();
 
         if !silent {
             println!("{} Stopped {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);

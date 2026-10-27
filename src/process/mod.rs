@@ -2322,9 +2322,13 @@ impl ProcessWrapper {
         lock!(self.runner).restart(self.id, true, true);
     }
 
-    /// Get the borrowed runner reference (lives till program end)
-    pub fn get_runner(&mut self) -> &Runner {
-        Box::leak(Box::new(lock!(self.runner)))
+    /// Get an owned copy of the runner this wrapper acts on
+    ///
+    /// Callers that take a wrapper from a runner (`runner.get(id)`) need the
+    /// updated state back; it is cloned rather than leaked, so repeated
+    /// CLI stop/restart/remove calls do not accumulate dead runners in memory.
+    pub fn get_runner(&mut self) -> Runner {
+        lock!(self.runner).clone()
     }
 
     /// Append new environment values to the process item
@@ -4059,6 +4063,38 @@ mod tests {
         assert!(!runner.list.contains_key(&allocated));
         assert_eq!(allocated, 2);
         assert!(runner.list.len() == 3, "alloc_id must not insert entries");
+    }
+
+    #[test]
+    fn test_get_runner_returns_an_owned_copy_without_leaking() {
+        // Every stop/restart/remove of a CLI call takes the runner out of a
+        // ProcessWrapper. It used to be leaked (`Box::leak`) so the allocation
+        // and the env maps of every process lived until the program ended; the
+        // wrapper must hand out an owned copy instead.
+        let mut runner = setup_test_runner();
+        let mut process = alloc_test_process(1);
+        process.env.insert("OPM_LEAK_PROBE".to_string(), "value".to_string());
+        runner.list.insert(1, process);
+
+        let counter = runner.id.counter.load(std::sync::atomic::Ordering::SeqCst);
+        let mut item = runner.get(1);
+        let snapshot = item.get_runner();
+
+        assert_eq!(
+            std::mem::size_of_val(&snapshot),
+            std::mem::size_of::<Runner>(),
+            "get_runner must hand out a value, not a leaked reference"
+        );
+        assert_eq!(snapshot.list.len(), 1);
+        assert_eq!(
+            snapshot.list.get(&1).and_then(|p| p.env.get("OPM_LEAK_PROBE")),
+            Some(&"value".to_string())
+        );
+        assert_eq!(snapshot.list.get(&1).map(|p| p.id), Some(1));
+        assert_eq!(
+            snapshot.id.counter.load(std::sync::atomic::Ordering::SeqCst),
+            counter
+        );
     }
 
     #[test]
