@@ -17,6 +17,12 @@ impl Id {
     pub fn next(&self) -> usize {
         self.counter.fetch_add(1, Ordering::SeqCst)
     }
+
+    pub fn next_after(&self, value: usize) -> usize {
+        let candidate = value.max(self.counter.load(Ordering::SeqCst));
+        self.counter.fetch_max(candidate, Ordering::SeqCst);
+        candidate
+    }
 }
 
 impl Clone for Id {
