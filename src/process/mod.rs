@@ -1737,13 +1737,19 @@ impl Runner {
     ///
     /// The daemon's runner is a tick, not the cache: its changes are applied to
     /// the cache as a delta (see [`Runner::apply_daemon_delta`]), never written
-    /// over it wholesale. When it was not started as a tick
-    /// ([`Runner::start_daemon_delta`]) nothing is recorded and the cache is left
-    /// alone rather than overwritten with a possibly stale copy.
+    /// over it wholesale.
+    ///
+    /// A runner that was not started as a tick ([`Runner::start_daemon_delta`])
+    /// is a caller's own snapshot built with [`Runner::new`] — the web action
+    /// handlers and the agent dispatch mutate one and call this. Its changes are
+    /// persisted through the authoritative path `save()` uses, so they reach the
+    /// cache (or the daemon's `SetState` merge) instead of being dropped.
     pub fn save_direct(&self) {
         if self.remote.is_none() {
             if self.daemon_delta.active {
                 dump::write_memory_delta(&self);
+            } else {
+                dump::write_memory(&self);
             }
         }
     }
@@ -3947,6 +3953,288 @@ mod tests {
         init!("opm.logs.out", "/var/log/opm/{}-out.log");
         init!("opm.logs.error", "/var/log/opm/{}-error.log");
     }
+
+    /// Point every global the dump layer needs at a scratch directory under
+    /// /tmp, so the tests below drive the real `dump::MEMORY_CACHE` and the
+    /// real permanent dump file instead of the user's `~/.opm`.
+    ///
+    /// The socket path does not exist, so `dump::write_memory` falls back to the
+    /// in-process cache exactly like a runner without a daemon.
+    fn init_test_dump_globals(tag: &str) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        let base = std::env::temp_dir().join(format!(
+            "opm-dump-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&base).expect("scratch dir must be creatable");
+        let path = |name: &str| base.join(name).to_string_lossy().to_string();
+
+        init!("opm.base", format!("{}/", base.to_string_lossy()));
+        init!("opm.log", path("opm.log"));
+        init!("opm.pid", path("daemon.pid"));
+        init!("opm.socket", path("opm.sock"));
+        init!("opm.dump", path("process.dump"));
+        init!("opm.dump.temp", path("process.temp.dump"));
+        init!("opm.daemon.log", path("daemon.log"));
+        init!("opm.daemon.kind", "disabled");
+        init_test_log_globals();
+
+        // The memory cache is process-global and other tests leave state in it.
+        // Each test starts from an empty cache, exactly like the daemon does
+        // after `clear_memory()`.
+        dump::clear_memory();
+    }
+
+    fn seed_permanent_dump(runner: &Runner) {
+        dump::write(runner);
+    }
+
+    fn write_cache(runner: &Runner) {
+        dump::write_memory_direct(runner);
+    }
+
+    /// The exact shape the web/agent action handlers use:
+    /// `let mut item = runner.get(id); item.<action>(); item.get_runner().save_direct();`
+    fn action_runner_save(runner: Runner, id: usize, action: impl FnOnce(&mut ProcessWrapper)) {
+        let mut item = runner.get(id);
+        action(&mut item);
+        item.get_runner().save_direct();
+    }
+
+    fn cache_names() -> Vec<(usize, String, bool)> {
+        dump::read_memory()
+            .list
+            .into_iter()
+            .map(|(id, process)| (id, process.name, process.running))
+            .collect()
+    }
+
+    #[test]
+    fn regression_save_direct_on_a_non_tick_runner_persists_the_change() {
+        // The web API's action handlers (start/restart/reload/stop/reset_env, bulk
+        // actions, agent actions) build a runner with `Runner::new()` - it is not
+        // a monitor tick - mutate it through a wrapper and call `save_direct()`.
+        // That used to be a no-op, so the API reported success and the next tick
+        // rolled the change back.
+        init_test_dump_globals("save-direct-non-tick");
+
+        let mut seeded = setup_test_runner();
+        seeded.list.insert(0, reported_process(0, "app1", 4242));
+        seed_permanent_dump(&seeded);
+
+        // No cache yet: the runner is read from the permanent dump, exactly like
+        // `Runner::new()` in the handlers.
+        let runner = Runner::new();
+        assert!(!runner.daemon_delta.active, "Runner::new() is not a tick");
+        action_runner_save(runner, 0, |item| item.rename("renamed_app".to_string()));
+
+        assert_eq!(
+            cache_names(),
+            vec![(0, "renamed_app".to_string(), true)],
+            "save_direct() on a non-tick runner must persist the change, not drop it"
+        );
+
+        // Same shape for a status change (`start`/`stop` go through the runner).
+        let mut runner = Runner::new();
+        runner.set_status(0, Status::Offline);
+        runner.save_direct();
+        assert_eq!(
+            cache_names(),
+            vec![(0, "renamed_app".to_string(), false)],
+            "a second action must also be persisted"
+        );
+    }
+
+    #[test]
+    #[ignore = "known gap: apply_daemon_delta cannot tell a tick insertion from a removal"]
+    fn regression_daemon_delta_on_an_empty_cache_skips_an_unseeded_identity() {
+        // A tick inserts a process while it runs. An empty cache is seeded from
+        // the authoritative permanent dump; `apply_daemon_delta` sees an identity
+        // absent from the tick's `previous` map and treats it as an insertion,
+        // so a process the tick did NOT create (removed meanwhile) is installed
+        // too. Reported, not fixed here: telling insertions from removals needs
+        // `start_daemon_delta` to record what the tick inserted, or the cache to
+        // refuse identities it has never held.
+        init_test_dump_globals("delta-empty-cache-unseeded");
+
+        // A tick carrying two processes, one of which is deleted meanwhile.
+        let mut seeded = setup_test_runner();
+        seeded.list.insert(0, reported_process(0, "app1", 4242));
+        seeded.list.insert(1, reported_process(1, "gone_app", 4243));
+        seed_permanent_dump(&seeded);
+        write_cache(&seeded);
+
+        let mut tick = Runner::new_direct();
+        tick.start_daemon_delta();
+
+        // The tick inserts a process of its own while it runs (the monitor loop
+        // does this for a process it started): an identity its `previous` map
+        // does not carry.
+        tick.list.insert(2, reported_process(2, "created_by_tick", 4244));
+
+        // Deleted meanwhile in the cache and in the permanent dump.
+        let mut current = seeded.clone();
+        current.list.remove(&1);
+        current.compact();
+        seed_permanent_dump(&current);
+        dump::clear_memory();
+
+        tick.save_direct();
+
+        assert_eq!(
+            cache_names(),
+            vec![(0, "app1".to_string(), true)],
+            "a process removed meanwhile must not be resurrected by the tick's copy"
+        );
+    }
+
+    #[test]
+    fn regression_save_direct_keeps_delta_writes_of_a_tick() {
+        // The fix must not route ticks through the whole-runner path: a tick's
+        // change has to stay a delta, so a process removed meanwhile is not
+        // resurrected.
+        init_test_dump_globals("save-direct-tick");
+
+        let mut seeded = setup_test_runner();
+        seeded.list.insert(0, reported_process(0, "app1", 4242));
+        seeded.list.insert(1, reported_process(1, "app5", 4243));
+        seed_permanent_dump(&seeded);
+        write_cache(&seeded);
+
+        let mut tick = Runner::new_direct();
+        tick.start_daemon_delta();
+        tick.process(0).pid = 4244;
+
+        // `opm remove 1` deletes app5 while the tick holds its copy.
+        let mut cache = dump::read_memory();
+        cache.list.remove(&1);
+        cache.compact();
+        dump::write_memory_direct(&cache);
+
+        tick.save_direct();
+
+        assert_eq!(
+            cache_names(),
+            vec![(0, "app1".to_string(), true)],
+            "the tick's pid edit must be stored and the removed process must stay removed"
+        );
+        assert_eq!(
+            dump::read_memory().list.get(&0).map(|p| p.pid),
+            Some(4244),
+            "the tick's own edit must land"
+        );
+    }
+
+    #[test]
+    fn regression_save_direct_does_not_stale_merge_over_another_identity() {
+        // Two web action handlers can run at once, each with its own
+        // `Runner::new()` snapshot. The second one must not write its snapshot
+        // back over what the first one changed: matched by identity, the other
+        // process has to keep its update.
+        init_test_dump_globals("save-direct-concurrent");
+
+        let mut seeded = setup_test_runner();
+        seeded.list.insert(0, reported_process(0, "app1", 4242));
+        seeded.list.insert(1, reported_process(1, "app2", 4243));
+        seed_permanent_dump(&seeded);
+        write_cache(&seeded);
+
+        let mut first = Runner::new();
+        first.set_status(0, Status::Offline);
+        first.save_direct();
+
+        let mut second = Runner::new();
+        second.set_status(1, Status::Offline);
+        second.save_direct();
+
+        assert_eq!(
+            cache_names(),
+            vec![
+                (0, "app1".to_string(), false),
+                (1, "app2".to_string(), false),
+            ],
+            "both changes must be persisted"
+        );
+    }
+
+    #[test]
+    fn regression_rename_is_persisted_and_the_old_name_stays_until_written() {
+        // `opm set -n` and the agent rename through a `Runner::new()` snapshot
+        // and persist with `save_direct()`. The rename must reach the cache under
+        // the id it was made on; the snapshot the write started from must still
+        // read as the pre-rename state, like any snapshot held elsewhere.
+        init_test_dump_globals("rename-persisted");
+
+        let mut runner = setup_test_runner();
+        runner.list.insert(0, reported_process(0, "app1", 4242));
+        write_cache(&runner);
+        let snapshot_before = dump::read_memory();
+
+        let mut item = runner.get(0);
+        item.rename("renamed_app".to_string());
+        item.get_runner().save_direct();
+
+        let cached = dump::read_memory();
+        assert_eq!(
+            cached.list.get(&0).map(|p| p.name.as_str()),
+            Some("renamed_app"),
+            "the rename must be persisted under the same id"
+        );
+        assert_eq!(cached.list.len(), 1, "a rename must not add a row");
+        assert_eq!(
+            snapshot_before.list.get(&0).map(|p| p.name.as_str()),
+            Some("app1"),
+            "a snapshot taken before the rename keeps the old name"
+        );
+    }
+
+    #[test]
+    fn regression_daemon_delta_on_an_empty_cache_keeps_a_removed_process_removed() {
+        // `clear_memory()` runs at daemon init and `load_permanent_into_memory()`
+        // while a request is served, so the cache can be empty when a tick writes.
+        // Installing the tick's whole stale snapshot resurrected processes that
+        // had been deleted meanwhile; the cache must be seeded from the
+        // authoritative permanent dump instead.
+        init_test_dump_globals("delta-empty-cache");
+
+        let mut seeded = setup_test_runner();
+        seeded.list.insert(0, reported_process(0, "app1", 4242));
+        seeded.list.insert(1, reported_process(1, "app5", 4243));
+        seed_permanent_dump(&seeded);
+
+        let mut tick = Runner::new_direct();
+        tick.start_daemon_delta();
+
+        // Deleted meanwhile: `opm remove 1`, then the cache was cleared.
+        let mut current = seeded.clone();
+        current.list.remove(&1);
+        current.compact();
+        seed_permanent_dump(&current);
+        dump::clear_memory();
+
+        let seeded_started = dump::read_permanent_direct().list[&0].started;
+
+        // `started` is not runtime-only: it survives the permanent dump, so this
+        // is a state change the tick really owns.
+        tick.process(0).started = seeded_started + chrono::Duration::seconds(60);
+        let expected_started = tick.list[&0].started;
+        tick.save_direct();
+
+        assert_eq!(
+            cache_names(),
+            vec![(0, "app1".to_string(), true)],
+            "the deleted process must not be resurrected from the tick's stale copy"
+        );
+        assert_eq!(
+            dump::read_memory().list.get(&0).map(|p| p.started),
+            Some(expected_started),
+            "the tick's own edit must still be applied"
+        );
+    }
+
 
     #[test]
     fn test_log_path_pinned_survives_compaction() {
