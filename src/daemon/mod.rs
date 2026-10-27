@@ -52,8 +52,26 @@ static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 static RESTORE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const RESTORE_IN_PROGRESS_FILE: &str = "restore_in_progress.flag";
 
+/// Set by the termination signal handler: the main loop does the teardown,
+/// because only it can take the state lock without deadlocking against itself.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// How long the signal handler waits for the tracked processes to stop before
+/// exiting anyway.
+const TERMINATION_GRACE: Duration = Duration::from_secs(3);
+
 fn max_failed_restart_attempts(limit: u64) -> u32 {
     limit.min(u32::MAX as u64) as u32
+}
+
+/// Remove state that marks the daemon as alive, so the next `opm` can start one.
+fn clear_daemon_runtime_files() {
+    if let Some(home_dir) = home::home_dir() {
+        let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
+        let _ = std::fs::remove_file(&lock_path);
+    }
+
+    pid::remove();
 }
 
 extern "C" fn handle_termination_signal(_: libc::c_int) {
@@ -62,15 +80,33 @@ extern "C" fn handle_termination_signal(_: libc::c_int) {
     // if they want to persist process state across daemon restarts.
     // This prevents unexpected process.dump writes when daemon is stopped/restarted.
 
-    // Clean up lock file before exiting
-    if let Some(home_dir) = home::home_dir() {
-        let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
-        let _ = std::fs::remove_file(&lock_path);
-    }
+    // The main loop takes the state lock at the top of every tick, so taking it
+    // here would deadlock if the signal arrives mid-tick. Let the loop tear down
+    // when it can.
+    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 
-    pid::remove();
+    // Managed processes are spawned into their own session (setsid()), so they
+    // would outlive the daemon unless something signals them. This only signals
+    // PIDs; no allocation, locks or logging. A SIGTERM sent to the daemon
+    // already interrupted a blocking call, so the grace wait is bounded even if
+    // the daemon's own thread is still inside one.
+    let runner = dump::read_merged_direct();
+    opm::process::terminate_tracked_processes(&runner, TERMINATION_GRACE);
+
+    clear_daemon_runtime_files();
     log!("[daemon] killed", "pid" => process::id());
     unsafe { libc::_exit(0) }
+}
+
+/// Tear the daemon down on request: stop the managed processes, then exit the
+/// way the termination signal handler does.
+fn shutdown_if_requested() -> ! {
+    let runner = dump::read_merged_direct();
+    opm::process::terminate_tracked_processes(&runner, TERMINATION_GRACE);
+
+    clear_daemon_runtime_files();
+    log!("[daemon] killed", "pid" => process::id());
+    process::exit(0)
 }
 
 extern "C" fn handle_sigpipe(_: libc::c_int) {
@@ -949,12 +985,18 @@ pub fn stop(verbose: bool) {
         }
 
         match pid::read() {
-            Ok(pid) => {
-                if let Err(err) = opm::process::process_stop(pid.get()) {
+            Ok(daemon_pid) => {
+                // Managed processes run in their own session, so they outlive the
+                // daemon unless they are signalled first. Only tracked processes
+                // are touched.
+                let tracked = dump::read_merged_direct();
+                opm::process::terminate_tracked_processes(&tracked, TERMINATION_GRACE);
+
+                if let Err(err) = opm::process::process_stop(daemon_pid.get()) {
                     log!("[daemon] failed to stop", "error" => err);
                 }
                 pid::remove();
-                log!("[daemon] stopped", "pid" => pid);
+                log!("[daemon] stopped", "pid" => daemon_pid);
                 if verbose {
                     println!("{} OPM daemon stopped", *helpers::SUCCESS);
                 }
@@ -1074,6 +1116,10 @@ pub fn start(verbose: bool) {
                     libc::SIGTERM,
                     handle_termination_signal as *const () as usize,
                 );
+                libc::signal(
+                    libc::SIGINT,
+                    handle_termination_signal as *const () as usize,
+                );
                 libc::signal(libc::SIGPIPE, handle_sigpipe as *const () as usize);
             };
 
@@ -1191,6 +1237,12 @@ pub fn start(verbose: bool) {
         }
 
         loop {
+            // A termination signal may have arrived since the last pass (it
+            // cannot take the state lock itself); tear down from here instead.
+            if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+                shutdown_if_requested();
+            }
+
             if api_enabled {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {

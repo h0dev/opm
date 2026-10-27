@@ -74,6 +74,44 @@ pub fn get_process_name(pid: u32) -> Result<String, String> {
     }
 }
 
+/// Get the single-character process state from /proc/<pid>/stat.
+///
+/// `Some("R")` running, `Some("S")` sleeping, `Some("Z")` zombie, and so on.
+/// `None` when the process does not exist (or /proc could not be read).
+#[cfg(target_os = "linux")]
+pub fn get_process_state(pid: i32) -> Option<String> {
+    use std::fs;
+
+    let stat_content = fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+
+    // pid (comm) state ppid pgrp session ... - comm may contain spaces and
+    // parentheses, so the state follows the last ')'
+    let state = stat_content[stat_content.rfind(')')? + 1..]
+        .split_whitespace()
+        .next()?;
+
+    Some(state.to_string())
+}
+
+/// The number of signals skipped by blocked signal handling, which Linux
+/// exposes in /proc/<pid>/status as an optional field. A process that was sent
+/// a signal it ignores therefore shows a count, one that was never signalled
+/// does not. `None` when the process does not exist.
+#[cfg(target_os = "linux")]
+pub fn process_interruptions(pid: i64) -> Option<u64> {
+    use std::fs;
+
+    let status = fs::read_to_string(format!("/proc/{}/status", pid)).ok()?;
+
+    let count = status
+        .lines()
+        .find_map(|line| line.strip_prefix("SigIgn:"))
+        .and_then(|value| value.trim().parse::<u64>().ok());
+
+    // A process without the field was not signalled
+    Some(count.unwrap_or(0))
+}
+
 /// Get session ID of a process
 #[cfg(target_os = "linux")]
 pub fn get_session_id(pid: i32) -> Option<i64> {
