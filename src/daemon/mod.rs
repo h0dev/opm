@@ -209,6 +209,9 @@ fn restart_process() {
     // Use new_direct() instead of new() to read from memory cache directly
     // without trying to use the socket (which would cause recursion/deadlock)
     let mut runner = Runner::new_direct();
+    // Changes made below are applied to the cache as a delta when saved, so a
+    // process `opm remove` deletes while this tick runs is not written back.
+    runner.start_daemon_delta();
     // Collect IDs first to avoid borrowing issues during iteration
     // Use process_ids() instead of items().keys() to avoid cloning all processes
     let process_ids: Vec<usize> = runner.process_ids().collect();

@@ -504,15 +504,7 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
 }
 
 /// Identifies a process across renumbering: the properties a user picks it by.
-type Identity = (String, String, std::path::PathBuf);
-
-fn identity(process: &process::Process) -> Identity {
-    (
-        process.name.clone(),
-        process.script.clone(),
-        process.path.clone(),
-    )
-}
+type Identity = process::Identity;
 
 /// Merge a caller's `SetState` snapshot into the authoritative memory cache.
 ///
@@ -540,12 +532,12 @@ fn merge_setstate(mut current: Runner, incoming: Runner) -> Runner {
     let mut incoming_by_identity: HashMap<Identity, process::Process> = incoming
         .list
         .into_values()
-        .map(|process| (identity(&process), process))
+        .map(|process| (process::identity(&process), process))
         .collect();
 
     {
         for (id, existing) in current.list.iter_mut() {
-            let Some(mut process) = incoming_by_identity.remove(&identity(existing)) else {
+            let Some(mut process) = incoming_by_identity.remove(&process::identity(existing)) else {
                 continue;
             };
 
@@ -823,11 +815,10 @@ mod tests {
             list.insert(item.id, item);
         }
 
-        Runner {
-            id: crate::process::id::Id::new(counter),
-            list,
-            remote: None,
-        }
+        let mut runner = Runner::default();
+        runner.id = crate::process::id::Id::new(counter);
+        runner.list = list;
+        runner
     }
 
     fn names_and_pids(runner: &Runner) -> Vec<(usize, String, i64)> {
