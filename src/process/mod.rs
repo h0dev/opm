@@ -341,14 +341,26 @@ struct DaemonDelta {
 }
 
 /// Identifies a process across renumbering: the properties a user picks it by.
-pub(crate) type Identity = (String, String, PathBuf);
+pub type Identity = (String, String, PathBuf);
 
-pub(crate) fn identity(process: &Process) -> Identity {
+pub fn identity(process: &Process) -> Identity {
     (
         process.name.clone(),
         process.script.clone(),
         process.path.clone(),
     )
+}
+
+impl Runner {
+    /// The id of the process with this identity, or None if no such process is
+    /// in the list. Ids move on compaction, so callers holding an identity must
+    /// resolve it against current state before addressing a process by id.
+    pub fn id_of_identity(&self, wanted: &Identity) -> Option<usize> {
+        self.list
+            .iter()
+            .find(|(_, process)| identity(process) == *wanted)
+            .map(|(id, _)| *id)
+    }
 }
 
 /// Whether the monitor loop changed anything it writes back: the runtime state
