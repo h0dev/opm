@@ -813,6 +813,165 @@ mod remove_batch_tests {
         "local".to_string()
     }
 
+    // ---------------------------------------------------------------------
+    // Regression suite for the reported defects (fix-process-id-integrity).
+    // `opm remove 3,4` on a drifted list must delete the two rows it names.
+    // ---------------------------------------------------------------------
+
+    struct LiveState {
+        cache: std::cell::RefCell<Runner>,
+    }
+
+    impl LiveState {
+        fn new(runner: Runner) -> Self {
+            Self {
+                cache: std::cell::RefCell::new(runner),
+            }
+        }
+
+        fn snapshot(&self) -> Runner {
+            self.cache.borrow().clone()
+        }
+
+        fn remove(&self, id: usize) -> Option<String> {
+            let mut live = self.cache.borrow_mut();
+            let process = live.list.remove(&id)?;
+            live.compact();
+            Some(process.name)
+        }
+    }
+
+    fn names_and_pids(runner: &Runner) -> Vec<(usize, String, i64)> {
+        runner
+            .list
+            .iter()
+            .map(|(id, process)| (*id, process.name.clone(), process.pid))
+            .collect()
+    }
+
+    fn assert_clean_slots(runner: &Runner) {
+        assert_eq!(
+            runner.list.keys().copied().collect::<Vec<_>>(),
+            (0..runner.list.len()).collect::<Vec<_>>(),
+            "ids must stay a clean 0..n-1 range: {:?}",
+            names_and_pids(runner)
+        );
+        for (id, process) in &runner.list {
+            assert_eq!(process.id, *id, "entry at key {id} must carry its own id");
+        }
+        let mut names: Vec<&String> = runner.list.values().map(|p| &p.name).collect();
+        let total = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            total,
+            "no duplicate names may exist: {:?}",
+            names_and_pids(runner)
+        );
+    }
+
+    #[test]
+    fn remove_batch_reported_case_seven_processes_ids_not_starting_at_zero() {
+        let seeded = runner_with(vec![
+            process(2, "app1"),
+            process(3, "app2"),
+            process(4, "app3"),
+            process(5, "app4"),
+            process(6, "app5"),
+            process(7, "app6"),
+            process(8, "app7"),
+        ]);
+        let state = LiveState::new(seeded);
+
+        let targets = resolve_removal_targets(&[Item::Id(3), Item::Id(4)], &state.snapshot(), &server());
+
+        let mut removed = Vec::new();
+        remove_targets(
+            targets,
+            "",
+            || state.snapshot(),
+            |id| {
+                let name = state.remove(id).expect("resolved id must exist");
+                removed.push(name);
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            removed,
+            vec!["app2".to_string(), "app3".to_string()],
+            "ids 3 and 4 of a 2..8 list address app2 (id 3) and app3 (id 4)"
+        );
+        assert_eq!(
+            state.cache.borrow().list.len(),
+            5,
+            "exactly two processes must be gone: {:?}",
+            names_and_pids(&state.cache.borrow())
+        );
+        let left: Vec<String> = state
+            .cache
+            .borrow()
+            .list
+            .values()
+            .map(|p| p.name.clone())
+            .collect();
+        assert_eq!(
+            left,
+            vec!["app1", "app4", "app5", "app6", "app7"],
+            "app2 and app3 are the removed rows; the rest keep their order"
+        );
+        assert_clean_slots(&state.cache.borrow());
+    }
+
+    #[test]
+    fn remove_batch_reported_case_a_batch_from_a_drifted_list() {
+        let seeded = runner_with(vec![
+            process(4, "app1"),
+            process(5, "app2"),
+            process(6, "app3"),
+            process(7, "app4"),
+            process(8, "app5"),
+            process(9, "app6"),
+            process(10, "app7"),
+        ]);
+        let state = LiveState::new(seeded);
+        let snapshot = state.snapshot();
+
+        let targets = resolve_removal_targets(&[Item::Id(4), Item::Id(7)], &snapshot, &server());
+
+        let mut removed = Vec::new();
+        remove_targets(
+            targets,
+            "",
+            || state.snapshot(),
+            |id| {
+                let name = state.remove(id).expect("resolved id must exist");
+                removed.push(name);
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            removed,
+            vec!["app1".to_string(), "app4".to_string()],
+            "each target must be removed by identity after the previous compaction"
+        );
+        let left: Vec<String> = state
+            .cache
+            .borrow()
+            .list
+            .values()
+            .map(|p| p.name.clone())
+            .collect();
+        assert_eq!(
+            left,
+            vec!["app2", "app3", "app5", "app6", "app7"],
+            "ids 4 and 7 of a 4..10 list address app1 and app4"
+        );
+        assert_clean_slots(&state.cache.borrow());
+    }
+
     #[test]
     fn remove_batch_resolves_ids_to_identities() {
         let runner = runner_with(vec![
