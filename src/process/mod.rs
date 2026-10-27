@@ -4039,6 +4039,235 @@ mod tests {
         assert_eq!(logs.error, "/custom/pinned-error.log");
     }
 
+    // ---------------------------------------------------------------------
+    // Regression suite for the reported defects (fix-process-id-integrity).
+    // The `regression_reported_*` tests encode the user's reports: the batch
+    // removal, the daemon delta and the create collision each reproduce a
+    // defect that these fixed, and each fails on the pre-fix tree.
+    // ---------------------------------------------------------------------
+
+    /// Identity is `(name, script, path)`, so the fixtures keep one script and
+    /// path and let the name (like the reported apps) tell processes apart.
+    fn reported_process(id: usize, name: &str, pid: i64) -> Process {
+        let mut process = alloc_test_process(id);
+        process.name = name.to_string();
+        process.script = "node /tmp/probe.js".to_string();
+        process.path = PathBuf::from("/tmp/opm-e2e");
+        process.pid = pid;
+        process.running = pid > 0;
+        process
+    }
+
+    fn reported_names_and_ids(runner: &Runner) -> Vec<(usize, String)> {
+        runner
+            .list
+            .iter()
+            .map(|(id, process)| (*id, process.name.clone()))
+            .collect()
+    }
+
+    fn assert_clean_slots(runner: &Runner, context: &str) {
+        assert_eq!(
+            runner.list.keys().copied().collect::<Vec<_>>(),
+            (0..runner.list.len()).collect::<Vec<_>>(),
+            "{context}: ids must be 0..n-1, got {:?}",
+            reported_names_and_ids(runner)
+        );
+        for (id, process) in &runner.list {
+            assert_eq!(process.id, *id, "{context}: entry at {id} must carry its own id");
+        }
+        let mut names: Vec<&String> = runner.list.values().map(|p| &p.name).collect();
+        let total = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            total,
+            "{context}: duplicate names: {:?}",
+            reported_names_and_ids(runner)
+        );
+    }
+
+    fn drifted_runner() -> Runner {
+        let mut runner = setup_test_runner();
+        for (id, name) in (2usize..=8).zip(["app1", "app2", "app3", "app4", "app5", "app6", "app7"]) {
+            runner.list.insert(id, reported_process(id, name, 1000 + id as i64));
+        }
+        runner.id = id::Id::new(9);
+        runner
+    }
+
+    /// The CLI's pre-fix batch removal: resolve ids against one snapshot, sort
+    /// descending, then remove each id from a runner that compacts after every
+    /// removal. Kept here (process layer) because it exercises `compact`.
+    fn legacy_remove_batch(seeded: Runner, ids: &[usize]) -> (Runner, Vec<String>) {
+        let mut current = seeded;
+        let mut resolved: Vec<usize> = ids
+            .iter()
+            .map(|id| {
+                assert!(current.exists(*id), "snapshot must contain id {id}");
+                *id
+            })
+            .collect();
+        resolved.sort_by(|a, b| b.cmp(a));
+
+        let mut removed = Vec::new();
+        for id in resolved {
+            let process = current.list.remove(&id).expect("resolved id must still exist");
+            removed.push(process.name.clone());
+            current.compact();
+        }
+        (current, removed)
+    }
+
+    #[test]
+    fn regression_reported_seven_drifted_processes_batch_removal() {
+        let seeded = drifted_runner();
+        let expected_left = vec!["app1", "app4", "app5", "app6", "app7"];
+
+        // The reported defect: an id-driven batch on a drifted list. `compact()`
+        // renumbers to 0..n-1, so the second id addresses a DIFFERENT row than
+        // the snapshot meant: remove 4 deletes app3, then remove 3 (now app5)
+        // deletes app5. app2 survives and app4 is the wrong casualty.
+        let (legacy, legacy_removed) = legacy_remove_batch(seeded.clone(), &[3, 4]);
+        assert_eq!(
+            legacy_removed,
+            vec!["app3".to_string(), "app5".to_string()],
+            "the id-driven batch must be shown to hit the wrong row"
+        );
+        let legacy_left: Vec<String> = legacy.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(
+            legacy_left,
+            vec!["app1", "app2", "app4", "app6", "app7"],
+            "the wrong rows are gone: app2 was meant to be removed but was not"
+        );
+        assert!(
+            legacy_left.contains(&"app4".to_string()),
+            "app4 = the process the drifted id 3 actually addressed"
+        );
+        // `compact` itself stays clean even when the caller addressed the wrong
+        // row: ids are always 0..n-1 (the damage is the selection, not the map).
+        assert_clean_slots(&legacy, "legacy batch removal");
+
+        // The fix resolves each target to an identity once, then removes by
+        // identity against fresh state, so no id from the snapshot is reused.
+        let mut current = seeded;
+        let targets: Vec<Identity> = [3usize, 4]
+            .iter()
+            .map(|id| identity(current.info(*id).expect("snapshot id exists")))
+            .collect();
+
+        let mut removed = Vec::new();
+        for wanted in targets {
+            let id = current.id_of_identity(&wanted).expect("target must still exist");
+            let process = current.list.remove(&id).expect("resolved id must exist");
+            removed.push(process.name.clone());
+            current.compact();
+        }
+
+        assert_eq!(removed, vec!["app2".to_string(), "app3".to_string()]);
+        assert_eq!(current.list.len(), 5);
+        let left: Vec<String> = current.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(left, expected_left);
+        assert_clean_slots(&current, "identity batch removal");
+
+        for gone in ["app2", "app3"] {
+            assert!(
+                !current.list.values().any(|p| p.name == gone),
+                "{gone} must not be resurrected"
+            );
+        }
+    }
+
+    #[test]
+    fn regression_reported_batch_removal_leaves_a_clean_list() {
+        // The same drifted list, after the two removals: ids 0..n-1, no
+        // duplicates, and a fresh create lands past every id still in use.
+        let expected_left = ["app1", "app4", "app5", "app6", "app7"];
+        let mut current = drifted_runner();
+        let targets: Vec<Identity> = [3usize, 4]
+            .iter()
+            .map(|id| identity(current.info(*id).expect("snapshot id exists")))
+            .collect();
+        for wanted in targets {
+            let id = current.id_of_identity(&wanted).expect("target must still exist");
+            current.list.remove(&id).expect("resolved id must exist");
+            current.compact();
+        }
+
+        let left: Vec<String> = current.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(left, expected_left);
+        assert_clean_slots(&current, "clean list");
+
+        let next = current.alloc_id();
+        assert!(
+            !current.list.contains_key(&next) && next >= 5,
+            "next id must not reuse a live slot, got {next}"
+        );
+        current.list.insert(next, reported_process(next, "app8", 9000));
+        let names: Vec<String> = current.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(
+            names,
+            vec!["app1", "app4", "app5", "app6", "app7", "app8"],
+            "the created process must be appended, never inserted over an entry"
+        );
+        let mut unique: Vec<&String> = names.iter().collect();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 6, "the create must not overwrite an entry");
+    }
+
+    #[test]
+    fn regression_reported_daemon_delta_does_not_resurrect_a_removed_process() {
+        // Reported: a process `opm remove` deleted came back after the daemon's
+        // next tick wrote its stale copy back.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, reported_process(0, "app1", 114130));
+        cache.list.insert(1, reported_process(1, "app5", 114280));
+        cache.list.insert(2, reported_process(2, "app6", 114227));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        tick.process(0).pid = 114999;
+
+        // `opm remove 1` deletes app5 while the tick holds its copy.
+        cache.list.remove(&1);
+        cache.compact();
+
+        tick.apply_daemon_delta(&mut cache);
+
+        let names: Vec<String> = cache.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(
+            names,
+            vec!["app1", "app6"],
+            "the removed process must stay removed; got {:?}",
+            reported_names_and_ids(&cache)
+        );
+        assert!(!cache.list.values().any(|p| p.name == "app5"));
+        assert_clean_slots(&cache, "after the tick");
+    }
+
+    #[test]
+    fn regression_reported_created_process_never_overwrites_an_existing_entry() {
+        // Reported: creating a process whose allocated id collided with an
+        // existing entry overwrote it.
+        let mut runner = setup_test_runner();
+        runner.id = id::Id::new(0);
+        runner.list.insert(0, reported_process(0, "app1", 5000));
+        runner.list.insert(1, reported_process(1, "app2", 5001));
+
+        // The counter lagged behind: it still points at id 1.
+        let allocated = runner.alloc_id();
+        assert!(!runner.list.contains_key(&allocated));
+        assert_ne!(allocated, 1, "must not hand out an occupied id");
+        runner.list.insert(allocated, reported_process(allocated, "app3", 5002));
+
+        let names: Vec<String> = runner.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(names, vec!["app1", "app2", "app3"]);
+        assert_eq!(runner.list.get(&1).map(|p| p.name.as_str()), Some("app2"));
+        assert_clean_slots(&runner, "after create");
+    }
+
     #[test]
     fn test_alloc_id_skips_occupied_and_advances_counter() {
         let mut runner = setup_test_runner();

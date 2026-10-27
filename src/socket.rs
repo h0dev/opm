@@ -829,6 +829,176 @@ mod tests {
             .collect()
     }
 
+    // ---------------------------------------------------------------------
+    // Regression suite for the reported defects (fix-process-id-integrity).
+    // The stale-snapshot merge that used to duplicate the survivors and
+    // resurrect removed rows fails on the pre-fix (id-keyed) merge.
+    // ---------------------------------------------------------------------
+
+    pub(super) fn reported_process(id: usize, name: &str, pid: i64) -> Process {
+        // Identity is (name, script, path): the fixture keeps one script and
+        // path and lets the name, like the reported apps, tell them apart.
+        let mut process = process(id, name, pid, 1 + id as i64);
+        process.script = "node /tmp/probe.js".to_string();
+        process.path = std::path::PathBuf::from("/tmp/opm-e2e");
+        process.running = pid > 0;
+        process
+    }
+
+    pub(super) fn reported_runner(counter: usize, processes: Vec<Process>) -> Runner {
+        runner(counter, processes)
+    }
+
+    pub(super) fn reported_names(runner: &Runner) -> Vec<(usize, String)> {
+        runner
+            .list
+            .iter()
+            .map(|(id, process)| (*id, process.name.clone()))
+            .collect()
+    }
+
+
+    #[test]
+    fn regression_reported_stale_snapshot_merge_does_not_duplicate() {
+        // Reported: a stale snapshot (captured before `opm remove 3,4`, carrying
+        // pre-compaction ids) written through the merge path produced 8 rows for
+        // 6 real processes — app6 and app7 twice, each copy with the same PID —
+        // and moved app6/app7 onto other rows.
+        //
+        // A process absent from the current cache is new to the daemon (only
+        // RemoveProcess deletes), so the merge may accept it under a spare id.
+        // What it must never do is put an identity in the list twice or move a
+        // survivor off the id it already has.
+        let current = reported_runner(
+            9,
+            vec![
+                reported_process(0, "app1", 11301),
+                reported_process(1, "app4", 11304),
+                reported_process(2, "app5", 11305),
+                reported_process(3, "app6", 11306),
+                reported_process(4, "app7", 11307),
+            ],
+        );
+        let stale = reported_runner(
+            9,
+            vec![
+                reported_process(0, "app1", 11301),
+                reported_process(1, "app2", 11302),
+                reported_process(2, "app3", 11303),
+                reported_process(3, "app4", 11304),
+                reported_process(4, "app5", 11305),
+                reported_process(5, "app6", 11306),
+                reported_process(6, "app7", 11307),
+            ],
+        );
+
+        let merged = merge_setstate(current, stale);
+
+        for (id, name) in [
+            (0, "app1"),
+            (1, "app4"),
+            (2, "app5"),
+            (3, "app6"),
+            (4, "app7"),
+        ] {
+            let entry = merged
+                .list
+                .get(&id)
+                .unwrap_or_else(|| panic!("id {id} must still hold {name}: {:?}", reported_names(&merged)));
+            assert_eq!(entry.name, name, "id {id} must keep {name}: {:?}", reported_names(&merged));
+        }
+        let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for process in merged.list.values() {
+            *counts.entry(process.name.as_str()).or_default() += 1;
+        }
+        let duplicated: Vec<(&str, usize)> = counts
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .map(|(name, count)| (*name, *count))
+            .collect();
+        assert!(
+            duplicated.is_empty(),
+            "no identity may appear twice (the report: 8 rows for 6 processes); duplicated {duplicated:?} in {:?}",
+            reported_names(&merged)
+        );
+        assert_eq!(
+            merged.list.len(),
+            7,
+            "5 survivors plus the two rows a plain SetState may re-accept: {:?}",
+            reported_names(&merged)
+        );
+    }
+
+    #[test]
+    fn regression_reported_stale_snapshot_never_duplicates_a_survivor() {
+        // The rows that survive a removal must be matched by identity even though
+        // the stale snapshot pairs them with their pre-removal ids. There must be
+        // exactly one row per identity afterwards, whatever id the extra entries
+        // take.
+        let current = reported_runner(
+            9,
+            vec![
+                reported_process(0, "app1", 11301),
+                reported_process(1, "app5", 11305),
+                reported_process(2, "app6", 11306),
+                reported_process(3, "app7", 11307),
+            ],
+        );
+        let stale = reported_runner(
+            9,
+            vec![
+                reported_process(0, "app1", 11301),
+                reported_process(1, "app2", 11302),
+                reported_process(2, "app3", 11303),
+                reported_process(3, "app4", 11304),
+                reported_process(4, "app5", 11305),
+                reported_process(5, "app6", 11306),
+                reported_process(6, "app7", 11307),
+            ],
+        );
+
+        let merged = merge_setstate(current, stale);
+
+        for (id, name) in [
+            (0, "app1"),
+            (1, "app5"),
+            (2, "app6"),
+            (3, "app7"),
+        ] {
+            let entry = merged.list.get(&id).unwrap_or_else(|| {
+                panic!("id {id} must still hold {name}: {:?}", reported_names(&merged))
+            });
+            assert_eq!(entry.name, name, "stale ids must not move {name}: {:?}", reported_names(&merged));
+        }
+
+        // One row per identity: a duplicated identity is what the report saw as
+        // two rows with the same live PID.
+        for name in ["app1", "app5", "app6", "app7"] {
+            assert_eq!(
+                merged.list.values().filter(|p| p.name == name).count(),
+                1,
+                "{name} must appear exactly once: {:?}",
+                reported_names(&merged)
+            );
+        }
+        // The rows the plan allows a plain SetState to re-accept (absent from
+        // current; only RemoveProcess deletes) must each be inserted once.
+        for name in ["app2", "app3", "app4"] {
+            assert!(
+                merged.list.values().filter(|p| p.name == name).count() <= 1,
+                "{name} may be accepted at most once: {:?}",
+                reported_names(&merged)
+            );
+        }
+        for id in [0usize, 1, 2, 3] {
+            assert!(
+                merged.list.get(&id).map(|p| ["app1", "app5", "app6", "app7"].contains(&p.name.as_str())) == Some(true),
+                "survivor id {id} was overwritten: {:?}",
+                reported_names(&merged)
+            );
+        }
+    }
+
     #[test]
     fn test_setstate_stale_snapshot_does_not_duplicate_processes() {
         // Real reproduction (base commit): seven processes, then `opm remove 3,4`.
