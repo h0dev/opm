@@ -11,7 +11,7 @@ use std::{
     env,
     fs::File,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::Ordering, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -544,6 +544,19 @@ impl Runner {
         dump::read_from_daemon_only()
     }
 
+    /// Allocate an id that is not currently present in the process list.
+    ///
+    /// Starts from the current counter and skips any candidate that is
+    /// already occupied, so inserting a new process can never overwrite an
+    /// existing entry in `list`. The counter is advanced past the returned id.
+    pub fn alloc_id(&self) -> usize {
+        let mut candidate = self.id.counter.load(Ordering::SeqCst);
+        while self.list.contains_key(&candidate) {
+            candidate += 1;
+        }
+        self.id.next_after(candidate)
+    }
+
     /// Refresh the runner state
     /// Note: This uses Runner::new() which queries via socket.
     /// Do not call from daemon context - use new_direct() instead.
@@ -598,7 +611,7 @@ impl Runner {
                 );
             };
         } else {
-            let id = self.id.next();
+            let id = self.alloc_id();
             let config = config::read().runner;
             let crash = Crash { crashed: false };
 
@@ -3463,6 +3476,65 @@ mod tests {
 
     // Use a PID value that's unlikely to exist in the test environment
     const UNLIKELY_PID: i64 = i32::MAX as i64 - 1000;
+
+    fn alloc_test_process(id: usize) -> Process {
+        Process {
+            id,
+            pid: 0,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: format!("test_{id}"),
+            path: PathBuf::from("/tmp"),
+            script: "echo 'hello world'".to_string(),
+            restarts: 0,
+            running: false,
+            crash: Crash { crashed: false },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: Utc::now(),
+            manual_stop: false,
+            errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
+            session_id: None,
+            process_start_time: None,
+            is_process_tree: false,
+        }
+    }
+
+    #[test]
+    fn test_alloc_id_skips_occupied_and_advances_counter() {
+        let mut runner = setup_test_runner();
+        runner.list.insert(1, alloc_test_process(1));
+        runner.list.insert(2, alloc_test_process(2));
+
+        assert_eq!(runner.alloc_id(), 3);
+        runner.list.insert(3, alloc_test_process(3));
+        assert_eq!(runner.alloc_id(), 4);
+    }
+
+    #[test]
+    fn test_alloc_id_counter_behind_existing_ids_does_not_return_occupied_id() {
+        let mut runner = setup_test_runner();
+        runner.id = id::Id::new(0);
+        runner.list.insert(0, alloc_test_process(0));
+        runner.list.insert(1, alloc_test_process(1));
+        runner.list.insert(4, alloc_test_process(4));
+
+        let allocated = runner.alloc_id();
+
+        assert!(!runner.list.contains_key(&allocated));
+        assert_eq!(allocated, 2);
+        assert!(runner.list.len() == 3, "alloc_id must not insert entries");
+    }
 
     #[test]
     fn test_extract_search_pattern_from_command_jar() {
