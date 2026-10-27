@@ -7,7 +7,10 @@ pub(crate) mod internal;
 
 use internal::{Internal, STATS_PRE_LIST_DELAY_MS};
 use macros_rs::{crashln, string, ternary};
-use opm::{config, helpers, process::Runner};
+use opm::{
+    config, helpers,
+    process::{Identity, Runner},
+};
 use std::env;
 use std::thread;
 use std::time::Duration;
@@ -329,65 +332,55 @@ pub fn remove(items: &Items, server_name: &String) {
             *helpers::SUCCESS
         );
 
-        // Sort IDs in descending order to avoid ID shift issues during removal
-        // When removing multiple processes, compaction happens after each removal
-        // By removing from highest to lowest ID, we prevent lower IDs from shifting
-        let mut process_ids: Vec<usize> = runner.items().keys().copied().collect();
-        process_ids.sort_by(|a, b| b.cmp(a)); // Sort descending
-
-        if process_ids.is_empty() {
+        if runner.items().is_empty() {
             println!("{} Cannot remove all, no processes found", *helpers::FAIL);
-        } else {
-            for id in process_ids {
-                Internal {
-                    id,
-                    runner: runner.clone(),
-                    server_name,
-                    kind: kind.clone(),
-                }
-                .remove();
-            }
+            return;
         }
+
+        let requested: Vec<Item> = runner.items().keys().map(|id| Item::Id(*id)).collect();
+        remove_targets_by_identity(
+            resolve_removal_targets(&requested, &runner, server_name),
+            server_name,
+            &kind,
+        );
     } else {
-        // Resolve all items to IDs first, then sort in descending order
-        // This prevents ID shift issues when removing multiple processes
-        let mut ids_to_remove: Vec<usize> = Vec::new();
-
-        for item in &items.items {
-            match item {
-                Item::Id(id) => {
-                    if runner.exists(*id) {
-                        ids_to_remove.push(*id);
-                    } else {
-                        crashln!("{} Process (id={}) not found", *helpers::FAIL, id);
-                    }
-                }
-                Item::Name(name) => match runner.find(&name, server_name) {
-                    Some(id) => ids_to_remove.push(id),
-                    None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
-                },
-            }
-        }
-
-        // Sort IDs in descending order to avoid ID compaction issues
-        ids_to_remove.sort_by(|a, b| b.cmp(a));
-
-        // Now remove all processes in descending ID order
-        for id in ids_to_remove {
-            Internal {
-                id,
-                runner: runner.clone(),
-                server_name,
-                kind: kind.clone(),
-            }
-            .remove();
-        }
+        remove_targets_by_identity(
+            resolve_removal_targets(&items.items, &runner, server_name),
+            server_name,
+            &kind,
+        );
     }
 
     // NOTE: Removed daemon::reset() call here to fix Bug #2
     // Deletions should only be persisted to disk when user explicitly runs 'opm save'
     // The reset() function was directly writing to permanent storage (process.dump)
     // which violated the memory-first architecture where changes stay in RAM until saved
+}
+
+/// Remove the resolved targets one at a time.
+///
+/// The identity resolution in [`remove_targets`] is what keeps a batch safe: each
+/// removal compacts the ids, so an id from the batch snapshot must never be
+/// reused to address the list again. A remote server cannot be addressed by
+/// identity, so there the id the target had when the batch was resolved is used.
+fn remove_targets_by_identity(targets: Vec<RemovalTarget>, server_name: &String, kind: &str) {
+    let local = LOCAL_SERVER_NAMES.contains(&server_name.as_str());
+
+    remove_targets(
+        targets,
+        kind,
+        || if local { Runner::new() } else { Runner::default() },
+        |id| {
+            Internal {
+                id,
+                server_name,
+                kind: kind.to_string(),
+                runner: Runner::default(),
+            }
+            .remove();
+            Ok(())
+        },
+    );
 }
 
 pub fn info(item: &Item, format: &String, server_name: &String) {
@@ -690,5 +683,244 @@ pub fn adjust(item: &Item, command: &Option<String>, name: &Option<String>, serv
             .adjust(command, name),
             None => crashln!("{} Process ({item_name}) not found", *helpers::FAIL),
         },
+    }
+}
+
+/// A process picked for deletion, identified by what the user picks it by rather
+/// than by its id: compaction renumbers ids, so an id from a snapshot taken
+/// earlier can address a different process by the time it is used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemovalTarget {
+    identity: Identity,
+    /// The id it had when picked, used only to address a remote server.
+    id: usize,
+}
+
+/// Resolve the requested items to the identity of the process each one names.
+pub(crate) fn resolve_removal_targets(
+    requested: &[Item],
+    runner: &Runner,
+    server_name: &String,
+) -> Vec<RemovalTarget> {
+    requested
+        .iter()
+        .map(|item| {
+            let id = match item {
+                Item::Id(id) => *id,
+                Item::Name(name) => match runner.find(name, server_name) {
+                    Some(id) => id,
+                    None => crashln!("{} Process ({name}) not found", *helpers::FAIL),
+                },
+            };
+
+            let Some(process) = runner.info(id) else {
+                crashln!("{} Process (id={}) not found", *helpers::FAIL, id);
+            };
+
+            RemovalTarget {
+                identity: opm::process::identity(process),
+                id,
+            }
+        })
+        .collect()
+}
+
+/// Remove every target by identity, re-reading state between targets.
+///
+/// Each target is looked up by identity in a fresh snapshot, so an id that moved
+/// because another target's removal compacted the list cannot address the wrong
+/// process. A target that is already gone is skipped with a warning.
+///
+/// `reload` must return current state (`Runner::new` — the daemon's cache while
+/// it runs), and `remove_by_id` receives the id resolved against that state.
+pub(crate) fn remove_targets<F>(
+    targets: Vec<RemovalTarget>,
+    kind: &str,
+    mut reload: impl FnMut() -> Runner,
+    mut remove_by_id: F,
+) where
+    F: FnMut(usize) -> Result<(), String>,
+{
+    for target in targets {
+        let runner = reload();
+        let Some(id) = runner.id_of_identity(&target.identity) else {
+            println!(
+                "{} Skipping {}({}) — no longer exists",
+                *helpers::WARN,
+                kind,
+                target.id
+            );
+            continue;
+        };
+
+        if let Err(err) = remove_by_id(id) {
+            crashln!("{} {}", *helpers::FAIL, err);
+        }
+    }
+}
+
+#[cfg(test)]
+mod remove_batch_tests {
+    use super::*;
+    use opm::process::{Crash, Process, Watch};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn process(id: usize, name: &str) -> Process {
+        Process {
+            id,
+            pid: 0,
+            shell_pid: None,
+            env: BTreeMap::new(),
+            name: name.to_string(),
+            path: PathBuf::from("/tmp/opm-remove-batch"),
+            script: format!("node {name}.js"),
+            restarts: 0,
+            running: false,
+            crash: Crash { crashed: false },
+            watch: Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: chrono::Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: chrono::Utc::now(),
+            manual_stop: false,
+            errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
+            session_id: None,
+            process_start_time: None,
+            is_process_tree: false,
+            log_out: None,
+            log_error: None,
+        }
+    }
+
+    fn runner_with(processes: Vec<Process>) -> Runner {
+        let mut runner = Runner::default();
+        for item in processes {
+            runner.list.insert(item.id, item);
+        }
+        runner
+    }
+
+    fn server() -> String {
+        "local".to_string()
+    }
+
+    #[test]
+    fn remove_batch_resolves_ids_to_identities() {
+        let runner = runner_with(vec![
+            process(0, "app1"),
+            process(1, "app2"),
+            process(2, "app3"),
+        ]);
+
+        let targets = resolve_removal_targets(&[Item::Id(0), Item::Id(2)], &runner, &server());
+
+        assert_eq!(
+            targets,
+            vec![
+                RemovalTarget {
+                    identity: (
+                        "app1".to_string(),
+                        "node app1.js".to_string(),
+                        PathBuf::from("/tmp/opm-remove-batch"),
+                    ),
+                    id: 0,
+                },
+                RemovalTarget {
+                    identity: (
+                        "app3".to_string(),
+                        "node app3.js".to_string(),
+                        PathBuf::from("/tmp/opm-remove-batch"),
+                    ),
+                    id: 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_batch_resolves_names_to_identities() {
+        let runner = runner_with(vec![process(0, "app1"), process(1, "app2")]);
+
+        let targets = resolve_removal_targets(&[Item::Name("app2".to_string())], &runner, &server());
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, 1);
+        assert_eq!(targets[0].identity.0, "app2");
+    }
+
+    #[test]
+    fn remove_batch_addresses_a_target_that_moved_because_another_compacted() {
+        let runner = runner_with(vec![
+            process(0, "app1"),
+            process(1, "app2"),
+            process(2, "app3"),
+            process(3, "app4"),
+        ]);
+        let targets = resolve_removal_targets(&[Item::Id(3), Item::Id(2)], &runner, &server());
+
+        let state = std::cell::RefCell::new(runner);
+        let mut removed_names = Vec::new();
+
+        remove_targets(
+            targets,
+            "",
+            || state.borrow().clone(),
+            |id| {
+                let mut live = state.borrow_mut();
+                let removed = live.list.remove(&id).expect("resolved id must exist");
+                removed_names.push(removed.name);
+                live.compact();
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            removed_names,
+            vec!["app4".to_string(), "app3".to_string()],
+            "each target must be removed by identity after the previous compaction"
+        );
+        let live = state.borrow();
+        let left: Vec<String> = live.list.values().map(|p| p.name.clone()).collect();
+        assert_eq!(left, vec!["app1".to_string(), "app2".to_string()]);
+    }
+
+    #[test]
+    fn remove_batch_skips_a_target_that_no_longer_exists() {
+        let runner = runner_with(vec![process(0, "app1"), process(1, "app2")]);
+        let targets = resolve_removal_targets(&[Item::Id(0), Item::Id(1)], &runner, &server());
+
+        let state = std::cell::RefCell::new(runner_with(vec![process(0, "app1")]));
+        let mut removed_names = Vec::new();
+
+        remove_targets(
+            targets,
+            "",
+            || state.borrow().clone(),
+            |id| {
+                let mut live = state.borrow_mut();
+                let Some(removed) = live.list.remove(&id) else {
+                    return Err(format!("Process ({id}) not found"));
+                };
+                removed_names.push(removed.name);
+                live.compact();
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            removed_names,
+            vec!["app1".to_string()],
+            "the vanished target must be skipped, not delete whatever sits at its old id"
+        );
+        assert!(state.borrow().list.is_empty());
     }
 }

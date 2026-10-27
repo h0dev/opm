@@ -462,13 +462,6 @@ impl<'i> Internal<'i> {
     }
 
     pub fn remove(mut self) {
-        println!(
-            "{} Applying {}action removeProcess on ({})",
-            *helpers::SUCCESS,
-            self.kind,
-            self.id
-        );
-
         if !matches!(self.server_name, "internal" | "local") {
             let Some(servers) = config::servers().servers else {
                 crashln!("{} Failed to read servers", *helpers::FAIL)
@@ -492,6 +485,31 @@ impl<'i> Internal<'i> {
                 )
             };
         }
+
+        // Re-read the state right before acting on the id. The id may have been
+        // issued against a snapshot another removal has since compacted, and
+        // this call is also reached directly, so never delete whatever process
+        // now happens to sit at that id.
+        if self.runner.remote.is_none() {
+            self.runner = Runner::new();
+        }
+
+        if !self.runner.exists(self.id) {
+            println!(
+                "{} Skipping {}({}) — no longer exists",
+                *helpers::WARN,
+                self.kind,
+                self.id
+            );
+            return;
+        }
+
+        println!(
+            "{} Applying {}action removeProcess on ({})",
+            *helpers::SUCCESS,
+            self.kind,
+            self.id
+        );
 
         // Get process info before removal for event emission
         let process_name = self.runner.info(self.id).map(|p| p.name.clone());
