@@ -3060,6 +3060,108 @@ pub fn process_find_children(parent_pid: i64) -> Vec<i64> {
 
     children
 }
+
+/// Whether the process is stopped, as opposed to running or already gone.
+///
+/// Signals are delivered but blocked while a signal handler runs, so a process
+/// that dies stops showing up in /proc even though the handler cannot `wait()`
+/// for it until it returns. Treating ENOENT as "dead" lets a fixed grace period
+/// be enough instead of waiting on a zombie the signal-blocked waiter cannot reap.
+#[cfg(target_os = "linux")]
+fn is_pid_terminating(pid: i64) -> bool {
+    if pid <= 0 {
+        return true;
+    }
+
+    match unix::get_process_state(pid as i32).as_deref() {
+        None => true,
+        Some("Z") | Some("X") => true,
+        Some(_) => false,
+    }
+}
+
+/// Every process a daemon stop must signal, sorted and without duplicates.
+///
+/// A managed process is spawned into its own session (`setsid()` in
+/// `process_run`), so the runner's `pid` is not enough to reach it: the shell
+/// wrapper can exit while the application keeps running, parented to init, with
+/// only the session id still pointing at it. This collects the tracked pid, its
+/// recorded children, its session and the whole process tree under those pids.
+///
+/// Only PIDs the runner tracks are included. The daemon's own process and its
+/// session are dropped: PID 0, negative PIDs and the daemon's session would
+/// signal the daemon itself (and the daemon's session is shared with `opm` CLI
+/// invocations, which must keep running).
+#[cfg(target_os = "linux")]
+pub fn termination_targets(runner: &Runner) -> Vec<i64> {
+    let daemon_pid = std::process::id() as i64;
+    let daemon_session = unix::get_session_id(daemon_pid as i32);
+    let mut targets = BTreeMap::<i64, ()>::new();
+
+    let push = |targets: &mut BTreeMap<i64, ()>, pid: i64| {
+        if pid > 0 && pid != daemon_pid {
+            targets.insert(pid, ());
+        }
+    };
+
+    for process in runner.list.values() {
+        push(&mut targets, process.pid);
+
+        for &child in &process.children {
+            push(&mut targets, child);
+        }
+
+        if let Some(session_id) = process.session_id {
+            if Some(session_id) != daemon_session {
+                push(&mut targets, session_id);
+            }
+        }
+    }
+
+    // The recorded children go stale as shells exit and applications keep
+    // running, so expand what is left into the full tree.
+    for root in targets.keys().copied().collect::<Vec<_>>() {
+        for descendant in process_find_children(root) {
+            push(&mut targets, descendant);
+        }
+    }
+
+    targets.into_keys().collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn termination_targets(_runner: &Runner) -> Vec<i64> {
+    Vec::new()
+}
+
+/// SIGTERM every process a daemon stop must signal and wait up to `grace` for
+/// them to stop before the daemon itself exits.
+///
+/// Safe to call from a signal handler: it only signals PIDs, so no allocation,
+/// locks or logging (once a signal is being handled it cannot be interrupted by
+/// itself, so any lock a nested call takes would be taken again and spin).
+#[cfg(target_os = "linux")]
+pub fn terminate_tracked_processes(runner: &Runner, grace: Duration) {
+    let targets = termination_targets(runner);
+    if targets.is_empty() {
+        return;
+    }
+
+    for &pid in &targets {
+        let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+    }
+
+    let deadline = std::time::Instant::now() + grace;
+    while std::time::Instant::now() < deadline
+        && targets.iter().any(|&pid| !is_pid_terminating(pid))
+    {
+        thread::sleep(Duration::from_millis(TERMINATION_CHECK_INTERVAL_MS));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn terminate_tracked_processes(_runner: &Runner, _grace: Duration) {}
+
 /// Check if any descendant (or the root PID) in the tracked set is alive
 /// This includes the root pid, children, and grandchildren
 pub fn is_any_descendant_alive(root_pid: i64, children: &[i64]) -> bool {
@@ -7335,5 +7437,211 @@ mod tests {
         let processes = vec![];
         let result = kill_old_processes_before_restore(&processes);
         assert!(result.is_ok(), "Should succeed with empty list");
+    }
+
+    // ------------------------------------------------------------------
+    // daemon stop: termination targets and signalling
+    // ------------------------------------------------------------------
+
+    #[cfg(target_os = "linux")]
+    fn spawn_session_script(tag: &str) -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg("while true; do sleep 1; done");
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        let child = command
+            .spawn()
+            .unwrap_or_else(|err| panic!("{tag} fixture failed to spawn: {err}"));
+
+        // Give setsid() time to run and /proc/<pid>/stat to appear
+        for _ in 0..100 {
+            if unix::get_session_id(child.id() as i32) == Some(child.id() as i64) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        child
+    }
+
+    #[cfg(target_os = "linux")]
+    fn kill_and_reap(child: &mut std::process::Child) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    fn termination_test_process(
+        name: &str,
+        pid: i64,
+        session_id: Option<i64>,
+        children: Vec<i64>,
+    ) -> Process {
+        Process {
+            pid,
+            shell_pid: None,
+            children,
+            session_id,
+            name: name.to_string(),
+            ..alloc_test_process(0)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_skip_invalid_pids() {
+        // PID 0 and negative PIDs must never reach kill(): PID 0 signals the
+        // caller's own process group and negative PIDs signal process groups.
+        let mut runner = setup_test_runner();
+        runner.list.insert(0, termination_test_process("zero", 0, None, vec![0, -7]));
+        runner.list.insert(1, termination_test_process("neg", -5, Some(-5), vec![-1]));
+
+        assert!(termination_targets(&runner).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_exclude_the_daemon_itself() {
+        // A tracked entry pointing back at the daemon must not be signalled.
+        let mut runner = setup_test_runner();
+        runner.list.insert(
+            0,
+            termination_test_process("self", std::process::id() as i64, None, vec![]),
+        );
+
+        assert!(termination_targets(&runner).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_cover_pid_children_and_session() {
+        // A stale entry (dead pid) still carries the session id of the process
+        // that escaped into its own session; that session must be signalled.
+        let mut runner = setup_test_runner();
+        runner
+            .list
+            .insert(0, termination_test_process("app", 0, Some(4242), vec![4243, 4244]));
+        runner
+            .list
+            .insert(1, termination_test_process("other", 0, Some(4242), vec![]));
+
+        let mut targets = termination_targets(&runner);
+        targets.sort_unstable();
+
+        assert_eq!(targets, vec![4242, 4243, 4244]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_follow_a_longer_lived_session_than_a_pid() {
+        // Reported scenario: the shell recorded as the process pid is gone and a
+        // fresh application lives only in the tracked session. Whatever the
+        // session still holds is alive and part of the process's tree.
+        let mut fixture = spawn_session_script("session owner");
+        let fixture_pid = fixture.id() as i64;
+        let session_id = unix::get_session_id(fixture_pid as i32).expect("fixture session id");
+
+        let mut runner = setup_test_runner();
+        runner.list.insert(
+            0,
+            termination_test_process("owner", fixture_pid, Some(session_id), vec![]),
+        );
+
+        let targets = termination_targets(&runner);
+        kill_and_reap(&mut fixture);
+
+        assert!(targets.contains(&fixture_pid));
+        assert!(targets.contains(&session_id));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_exclude_a_session_shared_with_the_daemon() {
+        // On macOS the session id falls back to the pid, so a bogus value can
+        // equal the daemon's own session. Signalling that would hang the caller:
+        // SIGTERM is blocked while the handler runs, so kill() would just wait.
+        let daemon_session = unix::get_session_id(std::process::id() as i32);
+
+        let mut runner = setup_test_runner();
+        runner.list.insert(0, termination_test_process("app", 0, daemon_session, vec![]));
+
+        assert!(termination_targets(&runner).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_terminate_tracked_processes_terminates_a_process_that_outlived_its_parent() {
+        // The reported bug: a managed process was spawned with setsid() while the
+        // shell wrapper exited, so it is now parented to init (pid 1) and only the
+        // session id still ties it to opm. Signalling the stale pids alone leaves
+        // it running, and the daemon then exits.
+        let mut fixture = spawn_session_script("session escapee");
+        let pid = fixture.id() as i64;
+        let session_id = unix::get_session_id(pid as i32).expect("fixture must have a session id");
+
+        let mut runner = setup_test_runner();
+        runner.list.insert(
+            0,
+            termination_test_process("escapee", 0, Some(session_id), vec![pid]),
+        );
+
+        terminate_tracked_processes(&runner, Duration::from_secs(5));
+
+        let mut exited = None;
+        for _ in 0..300 {
+            if let Ok(Some(status)) = fixture.try_wait() {
+                exited = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        if exited.is_none() {
+            kill_and_reap(&mut fixture);
+            panic!("process {} survived the daemon stop sweep", pid);
+        }
+
+        assert!(is_pid_terminating(pid), "PID {pid} should be unobstructed by its repeated signals");
+        let _ = fixture.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_terminate_tracked_processes_leaves_untracked_processes_alone() {
+        // Only processes the runner tracks may be signalled, not everything that
+        // happens to live in the same session.
+        let mut bystander = spawn_session_script("bystander");
+        let bystander_pid = bystander.id() as i64;
+        let bystander_interruptions = unix::process_interruptions(bystander_pid);
+
+        let mut fixture = spawn_session_script("tracked");
+        let fixture_pid = fixture.id() as i64;
+        let fixture_session = unix::get_session_id(fixture_pid as i32);
+
+        let mut runner = setup_test_runner();
+        runner.list.insert(
+            0,
+            termination_test_process("tracked", 0, fixture_session, vec![fixture_pid]),
+        );
+
+        terminate_tracked_processes(&runner, Duration::from_secs(5));
+
+        let interrupted = unix::process_interruptions(bystander_pid);
+        let bystander_alive = is_pid_alive(bystander_pid);
+        kill_and_reap(&mut bystander);
+        kill_and_reap(&mut fixture);
+
+        assert!(
+            bystander_alive,
+            "an untracked process must survive the daemon stop sweep"
+        );
+        assert_eq!(
+            interrupted, bystander_interruptions,
+            "an untracked process must not be signalled by the daemon stop sweep"
+        );
     }
 }

@@ -14,6 +14,8 @@ pub use process_info::{
     get_parent_pid, get_process_cmdline, get_process_name, get_process_start_time, get_session_id,
     is_process_zombie,
 };
+#[cfg(target_os = "linux")]
+pub use process_info::{get_process_state, process_interruptions};
 pub use process_list::native_processes;
 
 pub const PROCESS_OPERATION_DELAY_MS: u64 = 500;
