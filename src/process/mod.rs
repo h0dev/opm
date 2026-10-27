@@ -1481,56 +1481,66 @@ impl Runner {
 
     /// Compact process IDs by reindexing all processes to fill gaps
     /// Example: if processes 0, 2, 5 exist, they become 0, 1, 2
+    ///
+    /// Only remove/reset paths may call this: live PIDs are never renumbered
+    /// here, and `Process::log_out` / `Process::log_error` are left untouched.
+    ///
+    /// The id counter never moves backwards. Renumbering shrinks the id space,
+    /// so the counter is set to `max(list.len(), previous_counter)`: the next
+    /// id handed out stays beyond every id that was ever issued.
     pub fn compact(&mut self) {
         if self.remote.is_some() {
             return; // Don't compact remote processes
         }
 
-        // If list is empty, reset ID counter to 0
-        if self.list.is_empty() {
-            self.id = id::Id::new(0);
-            log::debug!("[compact] Empty list, reset ID counter to 0");
-            return;
-        }
+        let counter_floor = self.id.counter.load(Ordering::SeqCst);
 
-        // Check if compaction is needed by comparing keys to sequential range
-        let keys: Vec<usize> = self.list.keys().copied().collect();
-        let expected_keys: Vec<usize> = (0..keys.len()).collect();
-        if keys == expected_keys {
-            // Already compact, just ensure ID counter is correct
-            self.id = id::Id::new(keys.len());
+        // Renumber in a single pass on a rebuilt map. BTreeMap is already
+        // sorted, so into_iter() yields items in ascending key order.
+        let old_list = std::mem::replace(&mut self.list, BTreeMap::new());
+        let was_compact = old_list.keys().copied().eq(0..old_list.len());
+
+        if was_compact {
+            self.list = old_list;
+        } else {
+            let keys: Vec<usize> = old_list.keys().copied().collect();
             log::debug!(
-                "[compact] Already compact, IDs: {:?}, next ID: {}",
+                "[compact] Compacting IDs from {:?} to 0..{}",
                 keys,
                 keys.len()
             );
-            return;
+
+            for (new_id, (old_id, mut process)) in old_list.into_iter().enumerate() {
+                process.id = new_id;
+                self.list.insert(new_id, process);
+                log::debug!("[compact] Remapped process ID {} -> {}", old_id, new_id);
+            }
         }
 
-        log::debug!(
-            "[compact] Compacting IDs from {:?} to 0..{}",
-            keys,
-            keys.len()
+        // The rebuilt map must be exactly 0..list.len()-1 with matching ids.
+        let expected_len = self.list.len();
+        assert_eq!(
+            self.list.keys().copied().collect::<Vec<_>>(),
+            (0..expected_len).collect::<Vec<_>>(),
+            "[compact] process map keys must be 0..{} after compaction",
+            expected_len
         );
-
-        // BTreeMap is already sorted, so we can use into_iter() directly
-        // Extract all processes by replacing the list with an empty one
-        let old_list = std::mem::replace(&mut self.list, BTreeMap::new());
-
-        // Re-insert with new sequential IDs starting from 0
-        // BTreeMap::into_iter() yields items in sorted key order
-        for (new_id, (old_id, mut process)) in old_list.into_iter().enumerate() {
-            // Update the process ID to match the new ID
-            process.id = new_id;
-            self.list.insert(new_id, process);
-            log::debug!("[compact] Remapped process ID {} -> {}", old_id, new_id);
+        for (id, process) in &self.list {
+            assert_eq!(
+                process.id, *id,
+                "[compact] process entry at key {} still carries id {}",
+                id, process.id
+            );
         }
 
-        // Reset the ID counter to the next available ID
-        self.id = id::Id::new(self.list.len());
+        // Keep the counter ahead: never below the compacted length, never
+        // below the highest id issued so far.
+        let next_id = expected_len.max(counter_floor);
+        self.id = id::Id::new(next_id);
         log::debug!(
-            "[compact] Compaction complete, next ID: {}",
-            self.list.len()
+            "[compact] Compaction complete, {} process(es), next ID: {}",
+            expected_len,
+            next_id
         );
     }
 
@@ -5576,9 +5586,112 @@ mod tests {
             "Third process should be process_4 (was ID 5)"
         );
 
-        // Verify ID counter is reset correctly
+        // The counter may never move backwards: it was already 6 (ids 1..=5 were
+        // handed out), so it stays ahead of the renumbered 0..2 list.
+        assert_eq!(
+            runner.id.counter.load(Ordering::SeqCst),
+            6,
+            "Counter must not be rewound below the highest id ever issued"
+        );
         let next_id = runner.id.next();
-        assert_eq!(next_id, 3, "Next ID should be 3 (after processes 0, 1, 2)");
+        assert_eq!(next_id, 6, "Next ID must stay ahead of the compacted list");
+        assert!(
+            !runner.exists(next_id),
+            "Next ID from the counter must never collide with a compacted entry"
+        );
+    }
+
+    #[test]
+    fn test_compact_counter_never_decreases() {
+        let mut runner = setup_test_runner();
+
+        // Two processes plus a counter far ahead of them (ids up to 24 were
+        // handed out in the past). The naive `max(list.len(), counter)` and the
+        // old `Id::new(list.len())` both lose that floor.
+        runner.list.insert(10, alloc_test_process(10));
+        runner.list.insert(20, alloc_test_process(20));
+        runner.id = id::Id::new(25); // ids up to 24 were handed out in the past
+
+        runner.compact();
+
+        assert_eq!(runner.id.counter.load(Ordering::SeqCst), 25);
+        assert_eq!(runner.alloc_id(), 25, "fresh ids continue past the counter");
+        assert!(!runner.list.contains_key(&25));
+    }
+
+    #[test]
+    fn test_compact_empty_list_keeps_counter_floor() {
+        let mut runner = setup_test_runner();
+        // A run that already consumed ids 1..=4 must not serve id 0 again as if new.
+        runner.id = id::Id::new(4);
+        runner.list.clear();
+
+        runner.compact();
+
+        assert_eq!(
+            runner.id.counter.load(Ordering::SeqCst),
+            4,
+            "Empty compaction must not rewind the counter (previous floor is 4)"
+        );
+    }
+
+    #[test]
+    fn test_compact_raises_counter_to_list_length_when_it_lagged() {
+        let mut runner = setup_test_runner();
+        runner.list.insert(0, alloc_test_process(0));
+        runner.list.insert(1, alloc_test_process(1));
+        runner.list.insert(2, alloc_test_process(2));
+        runner.id = id::Id::new(0); // corrupted / stale dump with a lagging counter
+
+        runner.compact();
+
+        assert_eq!(
+            runner.id.counter.load(Ordering::SeqCst),
+            3,
+            "Counter must be at least list.len() so the next id is fresh"
+        );
+        assert_eq!(runner.alloc_id(), 3);
+    }
+
+    #[test]
+    fn test_compact_renumbers_without_collisions_or_log_mixups() {
+        init_test_log_globals();
+        let mut runner = setup_test_runner();
+        for id in [5usize, 9, 12] {
+            let mut process = alloc_test_process(id);
+            let name = process.name.clone();
+            process.log_out = Some(format!("/var/log/opm/{name}-out.log"));
+            process.log_error = Some(format!("/var/log/opm/{name}-error.log"));
+            runner.list.insert(id, process);
+        }
+        runner.id = id::Id::new(13);
+
+        runner.compact();
+
+        let ids: Vec<usize> = runner.list.keys().copied().collect();
+        assert_eq!(ids, vec![0, 1, 2], "ids must be renumbered 0..n-1");
+        assert_eq!(
+            runner.list.get(&0).map(|p| p.id),
+            Some(0),
+            "process.id must match its new map key"
+        );
+        assert_eq!(runner.list.get(&1).map(|p| p.id), Some(1));
+        assert_eq!(runner.list.get(&2).map(|p| p.id), Some(2));
+
+        // Each remapped process keeps the log paths it was started with.
+        assert_eq!(
+            runner.list.get(&0).unwrap().logs().out,
+            "/var/log/opm/test_5-out.log"
+        );
+        assert_eq!(
+            runner.list.get(&1).unwrap().logs().out,
+            "/var/log/opm/test_9-out.log"
+        );
+        assert_eq!(
+            runner.list.get(&2).unwrap().logs().out,
+            "/var/log/opm/test_12-out.log"
+        );
+        assert_eq!(runner.id.counter.load(Ordering::SeqCst), 13);
     }
 
     #[test]
@@ -5780,9 +5893,15 @@ mod tests {
             "ID 3 should be process_5"
         );
 
-        // Verify ID counter is correct
+        // The counter may never move backwards: it was already 7 (ids 1..=6 were
+        // handed out), so it stays ahead of the renumbered 0..3 list.
+        assert_eq!(
+            runner.id.counter.load(Ordering::SeqCst),
+            7,
+            "Counter must not be rewound below the highest id ever issued"
+        );
         let next_id = runner.id.next();
-        assert_eq!(next_id, 4, "Next ID should be 4");
+        assert_eq!(next_id, 7, "Next ID must stay ahead of the compacted list");
     }
 
     #[test]
