@@ -205,11 +205,21 @@ pub fn write_memory_direct(dump: &Runner) {
 /// those changes are applied — replacing the cache with the tick would resurrect
 /// processes `opm remove` deleted meanwhile (under fresh ids, after compaction)
 /// and drop processes merged in by `SetState`. See `Runner::apply_daemon_delta`.
+///
+/// An empty cache (`clear_memory()` at daemon init, `load_permanent_into_memory()`
+/// while a request is served) is seeded from the authoritative permanent dump,
+/// never from the tick: the tick's copy can predate a removal, and installing it
+/// would bring the removed process back. Only processes the tick itself changed
+/// are then applied; anything else belongs to the cache, not to this write.
 pub fn write_memory_delta(dump: &Runner) {
     let mut cache = MEMORY_CACHE.lock().unwrap();
     match cache.as_mut() {
         Some(current) => dump.apply_daemon_delta(current),
-        None => *cache = Some(dump.clone()),
+        None => {
+            let mut seeded = read_permanent_dump();
+            dump.apply_daemon_delta(&mut seeded);
+            *cache = Some(seeded);
+        }
     }
 
     log!("[dump::write_memory_delta] Applied daemon changes to in-memory process cache");
