@@ -1782,6 +1782,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         }
     }
 

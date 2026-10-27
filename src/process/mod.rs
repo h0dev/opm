@@ -31,6 +31,8 @@ use nix::{
 
 use chrono::{DateTime, Utc};
 use global_placeholders::global;
+#[cfg(test)]
+use global_placeholders::init;
 use macros_rs::{crashln, string, ternary, then};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -251,6 +253,14 @@ pub struct Process {
     /// Used to display tree indicator in UI
     #[serde(default)]
     pub is_process_tree: bool,
+    /// Concrete stdout log path pinned when the process is first started.
+    /// None = derive from the process name (old dumps). Never changed by compaction.
+    #[serde(default)]
+    pub log_out: Option<String>,
+    /// Concrete stderr log path pinned when the process is first started.
+    /// None = derive from the process name (old dumps). Never changed by compaction.
+    #[serde(default)]
+    pub log_error: Option<String>,
 }
 
 impl Process {
@@ -771,9 +781,15 @@ impl Runner {
                     session_id: result.session_id, // Store session ID for tracking
                     process_start_time: result.start_time, // Store for PID reuse detection
                     is_process_tree: result.shell_pid.is_some(), // Mark as tree if has shell wrapper
+                    log_out: None,              // Pinned below from the concrete paths
+                    log_error: None,
                 },
             );
 
+            let logs = self.list.get(&id).expect("process was just inserted").default_logs();
+            let process = self.process(id);
+            process.log_out = Some(logs.out);
+            process.log_error = Some(logs.error);
         }
 
         return self;
@@ -1849,7 +1865,18 @@ impl Runner {
                 );
             };
         } else {
-            self.process(id).name = name;
+            let process = self.process(id);
+            let logs = if process.log_out.is_none() || process.log_error.is_none() {
+                Some(process.default_logs())
+            } else {
+                None
+            };
+
+            process.name = name;
+            if let Some(logs) = logs {
+                process.log_out = process.log_out.take().or(Some(logs.out));
+                process.log_error = process.log_error.take().or(Some(logs.error));
+            }
         }
 
         return self;
@@ -2064,13 +2091,23 @@ impl LogInfo {
 }
 
 impl Process {
-    /// Get a log paths of the process item
-    pub fn logs(&self) -> LogInfo {
+    /// Log paths a process gets on its first start, derived from its name
+    pub fn default_logs(&self) -> LogInfo {
         let name = self.name.replace(" ", "_");
 
         LogInfo {
             out: global!("opm.logs.out", name.as_str()),
             error: global!("opm.logs.error", name.as_str()),
+        }
+    }
+
+    /// Get a log paths of the process item
+    pub fn logs(&self) -> LogInfo {
+        let derived = self.default_logs();
+
+        LogInfo {
+            out: self.log_out.clone().unwrap_or(derived.out),
+            error: self.log_error.clone().unwrap_or(derived.error),
         }
     }
 }
@@ -3507,7 +3544,105 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         }
+    }
+
+    fn init_test_log_globals() {
+        init!("opm.logs.out", "/var/log/opm/{}-out.log");
+        init!("opm.logs.error", "/var/log/opm/{}-error.log");
+    }
+
+    #[test]
+    fn test_log_path_pinned_survives_compaction() {
+        init_test_log_globals();
+        let mut runner = setup_test_runner();
+        runner.list.insert(3, alloc_test_process(3));
+        runner.list.insert(7, alloc_test_process(7));
+
+        // Simulate the first start of id 3: paths are pinned to that id
+        {
+            let process = runner.process(3);
+            let logs = process.default_logs();
+            process.log_out = Some(logs.out);
+            process.log_error = Some(logs.error);
+        }
+
+        runner.compact();
+
+        // id 3 was remapped to id 0, but its log paths must still point at its original files
+        let pinned = runner.list.get(&0).expect("remapped process must exist");
+        assert_eq!(pinned.id, 0);
+        let logs = pinned.logs();
+        assert!(
+            logs.out.contains("test_3-out.log"),
+            "log path must stay pinned to the original id after compaction, got {}",
+            logs.out
+        );
+        assert!(
+            logs.error.contains("test_3-error.log"),
+            "error log path must stay pinned to the original id after compaction, got {}",
+            logs.error
+        );
+
+        // A stale snapshot of the old state merged into a compacted runner must keep
+        // following the stored paths instead of whatever the current name/id derives.
+        {
+            let process = runner.process(0);
+            process.name = "renamed_after_compaction".to_string();
+            process.id = 4;
+        }
+
+        let logs = runner.list.get(&0).expect("process still present").logs();
+        assert!(
+            logs.out.contains("test_3-out.log"),
+            "pinned path must not be re-derived from a changed name/id, got {}",
+            logs.out
+        );
+    }
+
+    #[test]
+    fn test_log_path_pinned_missing_from_old_dump_derives_from_name() {
+        init_test_log_globals();
+        let process = alloc_test_process(0);
+        let mut json = serde_json::to_value(&process).expect("process must serialize");
+        let object = json.as_object_mut().expect("process must serialize to an object");
+        object.remove("log_out");
+        object.remove("log_error");
+
+        let restored: Process = serde_json::from_value(json).expect("old dumps must still deserialize");
+
+        assert_eq!(restored.log_out, None);
+        assert_eq!(restored.log_error, None);
+        let logs = restored.logs();
+        assert_eq!(logs.out, "/var/log/opm/test_0-out.log");
+        assert_eq!(logs.error, "/var/log/opm/test_0-error.log");
+    }
+
+    #[test]
+    fn test_log_path_pinned_derived_from_name_when_unset() {
+        init_test_log_globals();
+        let process = alloc_test_process(0);
+        assert_eq!(process.name, "test_0");
+
+        let logs = process.logs();
+
+        assert_eq!(logs.out, "/var/log/opm/test_0-out.log");
+        assert_eq!(logs.error, "/var/log/opm/test_0-error.log");
+    }
+
+    #[test]
+    fn test_log_path_pinned_uses_stored_paths_when_present() {
+        init_test_log_globals();
+        let mut process = alloc_test_process(0);
+        process.log_out = Some("/custom/pinned-out.log".to_string());
+        process.log_error = Some("/custom/pinned-error.log".to_string());
+
+        let logs = process.logs();
+
+        assert_eq!(logs.out, "/custom/pinned-out.log");
+        assert_eq!(logs.error, "/custom/pinned-error.log");
     }
 
     #[test]
@@ -3591,6 +3726,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         assert_eq!(process.restart_cooldown_remaining_secs(), 0);
@@ -3628,6 +3765,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         let remaining = process.restart_cooldown_remaining_secs();
@@ -3669,6 +3808,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         assert_eq!(process.restart_cooldown_remaining_secs(), 0);
@@ -3709,6 +3850,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -3766,6 +3909,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -3860,6 +4005,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4028,6 +4175,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4082,6 +4231,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4136,6 +4287,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4192,6 +4345,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4242,6 +4397,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4300,6 +4457,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4364,6 +4523,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -4437,6 +4598,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -4485,6 +4648,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4541,6 +4706,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4600,6 +4767,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4662,6 +4831,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4723,6 +4894,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4789,6 +4962,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -4934,6 +5109,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -5046,6 +5223,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -5148,6 +5327,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -5327,6 +5508,8 @@ mod tests {
                 session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
             };
             runner.list.insert(id, process);
         }
@@ -5435,6 +5618,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -5530,6 +5715,8 @@ mod tests {
                 session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
             };
             runner.list.insert(id, process);
         }
@@ -5634,6 +5821,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -5705,6 +5894,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -5773,6 +5964,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -5855,6 +6048,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process.clone());
@@ -5940,6 +6135,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6030,6 +6227,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6120,6 +6319,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6185,6 +6386,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6252,6 +6455,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6303,6 +6508,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6359,6 +6566,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
@@ -6436,6 +6645,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process_from_dump.clone());
@@ -6569,6 +6780,8 @@ mod tests {
             session_id: None,
             process_start_time: None,
             is_process_tree: false,
+            log_out: None,
+            log_error: None,
         };
 
         runner.list.insert(id, process);
