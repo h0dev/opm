@@ -3954,6 +3954,18 @@ mod tests {
         init!("opm.logs.error", "/var/log/opm/{}-error.log");
     }
 
+    /// Global placeholders and `dump::MEMORY_CACHE` are process-wide singletons,
+    /// and each test below writes the same global state. Take this lock so the
+    /// cache tests never interleave under the default parallel test runner.
+    /// (`global_placeholders::init!` only takes effect once, so per-test paths
+    /// cannot isolate them.)
+    fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Point every global the dump layer needs at a scratch directory under
     /// /tmp, so the tests below drive the real `dump::MEMORY_CACHE` and the
     /// real permanent dump file instead of the user's `~/.opm`.
@@ -4014,6 +4026,7 @@ mod tests {
 
     #[test]
     fn regression_save_direct_on_a_non_tick_runner_persists_the_change() {
+        let _cache_guard = cache_test_lock();
         // The web API's action handlers (start/restart/reload/stop/reset_env, bulk
         // actions, agent actions) build a runner with `Runner::new()` - it is not
         // a monitor tick - mutate it through a wrapper and call `save_direct()`.
@@ -4051,6 +4064,7 @@ mod tests {
     #[test]
     #[ignore = "known gap: apply_daemon_delta cannot tell a tick insertion from a removal"]
     fn regression_daemon_delta_on_an_empty_cache_skips_an_unseeded_identity() {
+        let _cache_guard = cache_test_lock();
         // A tick inserts a process while it runs. An empty cache is seeded from
         // the authoritative permanent dump; `apply_daemon_delta` sees an identity
         // absent from the tick's `previous` map and treats it as an insertion,
@@ -4093,6 +4107,7 @@ mod tests {
 
     #[test]
     fn regression_save_direct_keeps_delta_writes_of_a_tick() {
+        let _cache_guard = cache_test_lock();
         // The fix must not route ticks through the whole-runner path: a tick's
         // change has to stay a delta, so a process removed meanwhile is not
         // resurrected.
@@ -4130,6 +4145,7 @@ mod tests {
 
     #[test]
     fn regression_save_direct_does_not_stale_merge_over_another_identity() {
+        let _cache_guard = cache_test_lock();
         // Two web action handlers can run at once, each with its own
         // `Runner::new()` snapshot. The second one must not write its snapshot
         // back over what the first one changed: matched by identity, the other
@@ -4162,6 +4178,7 @@ mod tests {
 
     #[test]
     fn regression_rename_is_persisted_and_the_old_name_stays_until_written() {
+        let _cache_guard = cache_test_lock();
         // `opm set -n` and the agent rename through a `Runner::new()` snapshot
         // and persist with `save_direct()`. The rename must reach the cache under
         // the id it was made on; the snapshot the write started from must still
@@ -4193,6 +4210,7 @@ mod tests {
 
     #[test]
     fn regression_daemon_delta_on_an_empty_cache_keeps_a_removed_process_removed() {
+        let _cache_guard = cache_test_lock();
         // `clear_memory()` runs at daemon init and `load_permanent_into_memory()`
         // while a request is served, so the cache can be empty when a tick writes.
         // Installing the tick's whole stale snapshot resurrected processes that
