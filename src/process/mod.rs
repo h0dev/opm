@@ -365,6 +365,11 @@ impl Runner {
 
 /// Whether the monitor loop changed anything it writes back: the runtime state
 /// it owns (`restarts`, `crash`, `errored`, `running`), not the user's config.
+///
+/// `watch` is here because the tick reloads on a hash mismatch and the reload
+/// stores the new hash; `frozen_until` because freeze/unfreeze go through the
+/// tick's save; `env` because a reload caller can set or clear it. All three are
+/// written by the tick, so comparing them does not make every tick look changed.
 fn changed_since_load(previous: &Process, current: &Process) -> bool {
     previous.pid != current.pid
         || previous.shell_pid != current.shell_pid
@@ -381,6 +386,11 @@ fn changed_since_load(previous: &Process, current: &Process) -> bool {
         || previous.last_action_at != current.last_action_at
         || previous.last_restart_attempt != current.last_restart_attempt
         || previous.failed_restart_attempts != current.failed_restart_attempts
+        || previous.watch.enabled != current.watch.enabled
+        || previous.watch.path != current.watch.path
+        || previous.watch.hash != current.watch.hash
+        || previous.frozen_until != current.frozen_until
+        || previous.env != current.env
 }
 
 #[derive(Clone, Debug)]
@@ -3946,6 +3956,111 @@ mod tests {
                 (7, "late".to_string(), 114777),
             ],
             "a process the tick never read must be preserved"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_applies_a_watch_hash_only_change() {
+        // The monitor loop reloads a watched process when the file's hash
+        // differs from the stored one (src/daemon/mod.rs), and the reload stores
+        // the new hash. If the delta drops that write the hash never advances and
+        // every tick reloads the process again.
+        let mut cache = setup_test_runner();
+        let mut watched = delta_process(0, "app1", 114130);
+        watched.watch = Watch {
+            enabled: true,
+            path: "script.sh".to_string(),
+            hash: "old-hash".to_string(),
+        };
+        cache.list.insert(0, watched);
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        tick.process(0).watch.hash = "new-hash".to_string();
+
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            cache.list.get(&0).expect("process must survive").watch.hash,
+            "new-hash",
+            "a watch hash the tick advanced must reach the cache, or watch mode reloads forever"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_applies_a_watch_config_change() {
+        // Enabling/disabling watch rewrites the whole watch config, so the delta
+        // must carry `enabled` and `path` too, not just the hash.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        tick.process(0).watch = Watch {
+            enabled: true,
+            path: "script.sh".to_string(),
+            hash: "h1".to_string(),
+        };
+
+        tick.apply_daemon_delta(&mut cache);
+
+        let watch = &cache.list.get(&0).expect("process must survive").watch;
+        assert!(
+            watch.enabled && watch.path == "script.sh" && watch.hash == "h1",
+            "the tick's watch config change must reach the cache, got {watch:?}"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_applies_a_freeze_and_an_env_change() {
+        // `frozen_until` (freeze/unfreeze) and `env` (set_env/clear_env) are
+        // written by the same save path the tick uses, so the delta must see them.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        let frozen_until = Utc::now() + chrono::Duration::seconds(30);
+        tick.process(0).frozen_until = Some(frozen_until);
+        tick.process(0)
+            .env
+            .insert("KEY".to_string(), "value".to_string());
+
+        tick.apply_daemon_delta(&mut cache);
+
+        let entry = cache.list.get(&0).expect("process must survive");
+        assert_eq!(
+            entry.frozen_until,
+            Some(frozen_until),
+            "the tick's freeze must reach the cache"
+        );
+        assert_eq!(
+            entry.env.get("KEY").map(String::as_str),
+            Some("value"),
+            "the tick's env change must reach the cache"
+        );
+    }
+
+    #[test]
+    fn test_daemon_delta_skips_an_untouched_process() {
+        // The delta exists so an untouched process is never written back over
+        // newer cache state. Everything compared must be something the tick
+        // actually changes; a tick that edits nothing must apply nothing.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+
+        // A change only the cache sees while the tick holds an unedited copy.
+        cache.list.get_mut(&0).expect("process").pid = 55555;
+
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            cache.list.get(&0).expect("process must survive").pid,
+            55555,
+            "an untouched tick must not roll the cache back"
         );
     }
 
