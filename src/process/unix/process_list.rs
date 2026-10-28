@@ -94,7 +94,12 @@ pub fn native_processes() -> Result<Vec<NativeProcess>, String> {
             if let Ok(entry) = entry {
                 if let Ok(file_name) = entry.file_name().into_string() {
                     if let Ok(pid) = file_name.parse::<u32>() {
-                        if let Ok(process) = NativeProcess::new(pid) {
+                        // `NativeProcess::new` measures CPU by sampling twice with a
+                        // 500 ms sleep between samples. Doing that for every PID in
+                        // /proc turned one listing into minutes (120 PIDs = 60 s),
+                        // and callers such as the pre-restore cleanup call this once
+                        // per managed process. Use the one-shot reading instead.
+                        if let Ok(process) = NativeProcess::new_fast(pid) {
                             processes.push(process);
                         }
                     }

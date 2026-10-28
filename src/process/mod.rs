@@ -3040,6 +3040,22 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64
         return Ok(());
     }
     
+    // Read the process table ONCE for the whole batch. Calling
+    // `find_processes_by_command_pattern` per process re-scanned /proc (and read
+    // every PID's cmdline) once per managed process, which made a 40-process
+    // restore scan 40 times before it could even start spawning.
+    let cmdlines: Vec<(i64, String)> = unix::native_processes()
+        .map(|processes| {
+            processes
+                .into_iter()
+                .filter_map(|process| {
+                    let pid = process.pid() as i64;
+                    unix::get_process_cmdline(pid as i32).map(|cmdline| (pid, cmdline))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     for (_id, script, _session_id) in processes {
         // Extract search pattern from command (same logic as daemon adoption)
         let pattern = extract_search_pattern_from_command(script);
@@ -3048,8 +3064,12 @@ pub fn kill_old_processes_before_restore(processes: &[(usize, String, Option<i64
             continue;
         }
         
-        // Find all processes matching this pattern
-        let matching_pids = find_processes_by_command_pattern(&pattern);
+        // Find all processes matching this pattern in the table read above
+        let matching_pids: Vec<i64> = cmdlines
+            .iter()
+            .filter(|(_, cmdline)| cmdline.contains(&pattern))
+            .map(|(pid, _)| *pid)
+            .collect();
         
         for pid in matching_pids {
             // Skip if we already killed this PID
