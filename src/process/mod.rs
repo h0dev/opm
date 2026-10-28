@@ -1300,10 +1300,18 @@ impl Runner {
             const POLL_INTERVAL_MS: u64 = 50;
             let mut elapsed_ms = 0;
 
-            while elapsed_ms < MAX_DISCOVERY_TIME_MS {
-                thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-                elapsed_ms += POLL_INTERVAL_MS;
+            // Only a shell-wrapped spawn can have children to discover; a direct
+            // spawn is the application itself, so polling it would always burn the
+            // full wait for nothing.
+            let has_shell_wrapper = result.shell_pid.is_some();
 
+            loop {
+                if !has_shell_wrapper {
+                    break;
+                }
+
+                // Check before waiting: a tree that already registered (the usual
+                // case) must not pay a 50 ms tick just to be discovered.
                 let discovered_children = process_find_children(result.pid);
                 if !discovered_children.is_empty() {
                     process.children = discovered_children;
@@ -1315,6 +1323,13 @@ impl Runner {
                     );
                     break;
                 }
+
+                if elapsed_ms >= MAX_DISCOVERY_TIME_MS {
+                    break;
+                }
+
+                thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                elapsed_ms += POLL_INTERVAL_MS;
             }
 
             // If no children found after polling, that's OK - the daemon will discover them later

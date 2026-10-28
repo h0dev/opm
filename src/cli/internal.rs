@@ -1490,7 +1490,10 @@ impl<'i> Internal<'i> {
             process.pid = 0;
             process.shell_pid = None;
             process.children.clear();
-            process.session_id = None;
+            // Keep `session_id`: it is what lets the NEXT restore recognise and
+            // stop this generation (`kill_old_processes_before_restore` skips
+            // everything when no session id is recorded). It is replaced with the
+            // fresh session of the process about to be spawned.
             process.process_start_time = None;
         }
         

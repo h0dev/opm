@@ -59,7 +59,12 @@ fn permanent_snapshot(source: &Runner) -> Runner {
         process.pid = 0;
         process.shell_pid = None;
         process.children.clear();
-        process.session_id = None;
+        // `session_id` is deliberately kept. It is how
+        // `kill_old_processes_before_restore` recognises processes opm started
+        // (it skips the whole cleanup when no session id is recorded), so
+        // clearing it here made every restore leave the previous generation
+        // running. Unlike a pid it is not reused by unrelated processes while
+        // its leader lives.
         process.process_start_time = None;
         process.is_process_tree = false;
     }
