@@ -2033,6 +2033,46 @@ impl Runner {
         return self;
     }
 
+    /// Apply an edit to one process in place, addressed by id.
+    ///
+    /// This is the one implementation of a rename: the daemon's `EditProcess`
+    /// handler and the CLI (`opm set -n`/`opm restart -n` via [`Runner::rename`],
+    /// and `opm adjust`) all go through it, so a daemon-backed cache and a
+    /// daemon-less one behave identically. The id is the address and does not
+    /// move; nothing is reindexed.
+    ///
+    /// A rename must never travel inside a `SetState` snapshot: the new name is
+    /// a new identity to that merge, so it would be inserted as a second process
+    /// and the old name would stay.
+    ///
+    /// Returns false when no process has that id; the caller decides how to
+    /// report it.
+    pub fn edit(&mut self, id: usize, name: Option<String>, command: Option<String>) -> bool {
+        let Some(process) = self.list.get_mut(&id) else {
+            return false;
+        };
+
+        if let Some(new_name) = name {
+            let logs = if process.log_out.is_none() || process.log_error.is_none() {
+                Some(process.default_logs())
+            } else {
+                None
+            };
+
+            process.name = new_name;
+            if let Some(logs) = logs {
+                process.log_out = process.log_out.take().or(Some(logs.out));
+                process.log_error = process.log_error.take().or(Some(logs.error));
+            }
+        }
+
+        if let Some(new_command) = command {
+            process.script = new_command;
+        }
+
+        true
+    }
+
     pub fn rename(&mut self, id: usize, name: String) -> &mut Self {
         if let Some(remote) = &self.remote {
             if let Err(err) = http::rename(remote, id, name) {
@@ -2043,18 +2083,37 @@ impl Runner {
                 );
             };
         } else {
-            let process = self.process(id);
-            let logs = if process.log_out.is_none() || process.log_error.is_none() {
-                Some(process.default_logs())
-            } else {
-                None
-            };
-
-            process.name = name;
-            if let Some(logs) = logs {
-                process.log_out = process.log_out.take().or(Some(logs.out));
-                process.log_error = process.log_error.take().or(Some(logs.error));
+            // A rename must not travel in a SetState snapshot: the daemon merges
+            // that by identity, so the new name matches nothing and would land as
+            // a second process while the old name stays. Send it as an edit by id.
+            let socket_path = global!("opm.socket");
+            if crate::socket::is_daemon_running(&socket_path) {
+                match crate::socket::send_request(
+                    &socket_path,
+                    crate::socket::SocketRequest::EditProcess {
+                        id,
+                        name: Some(name.clone()),
+                        command: None,
+                    },
+                ) {
+                    Ok(crate::socket::SocketResponse::Success) => {
+                        // Reload state to reflect the rename
+                        *self = Runner::new();
+                        return self;
+                    }
+                    Ok(crate::socket::SocketResponse::Error(msg)) => {
+                        crashln!("{} Failed to rename process {id}: {msg}", *helpers::FAIL);
+                    }
+                    Ok(_) => {
+                        crashln!("{} Unexpected response from daemon", *helpers::FAIL);
+                    }
+                    Err(_) => {
+                        // Fall through to the direct rename if the socket fails
+                    }
+                }
             }
+
+            self.edit(id, Some(name), None);
         }
 
         return self;
