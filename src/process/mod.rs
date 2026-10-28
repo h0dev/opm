@@ -3190,6 +3190,31 @@ fn is_pid_terminating(pid: i64) -> bool {
     }
 }
 
+/// Whether a tracked process still exists, zombie included, for a shutdown wait.
+///
+/// [`is_pid_terminating`] runs where a signal is blocked and must not wait on a
+/// zombie nobody can reap, so it reports a zombie as gone. A shutdown that
+/// blocks signals around its whole wait can see the zombie: it still holds the
+/// pid until reaped, so it counts as not finished. sysinfo lists such a process
+/// but reports its status, which is also how a pid whose reading is unreliable
+/// here is told apart from a live one.
+#[cfg(target_os = "linux")]
+pub fn is_pid_finished(pid: i64) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    if pid <= 0 {
+        return true;
+    }
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
+
+    match system.process(Pid::from_u32(pid as u32)) {
+        Some(process) => matches!(process.status(), sysinfo::ProcessStatus::Zombie),
+        None => false,
+    }
+}
+
 /// The current start time of a live process, as sysinfo reports it (the same
 /// clock `validate_process_with_sysinfo` records into `process_start_time`).
 /// `None` when the pid no longer exists.

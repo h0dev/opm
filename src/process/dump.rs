@@ -192,11 +192,38 @@ pub fn read_memory_direct_option() -> Option<Runner> {
     cache.clone()
 }
 
+/// Called after the cache changed, so a daemon exit can signal what it now
+/// holds. The daemon installs it; a CLI process has nothing to exit for.
+type StateListener = fn(&Runner);
+
+static STATE_CHANGED: std::sync::Mutex<Option<StateListener>> = std::sync::Mutex::new(None);
+
+pub fn set_state_listener(listener: StateListener) {
+    if let Ok(mut slot) = STATE_CHANGED.lock() {
+        *slot = Some(listener);
+    }
+}
+
+fn notify_state_changed(runner: &Runner) {
+    if let Ok(slot) = STATE_CHANGED.lock() {
+        if let Some(listener) = *slot {
+            listener(runner);
+        }
+    }
+}
+
 /// Public version for socket server to avoid recursion
 pub fn write_memory_direct(dump: &Runner) {
     let mut cache = MEMORY_CACHE.lock().unwrap();
     *cache = Some(dump.clone());
     log!("[dump::write_memory_direct] Updated in-memory process cache");
+    drop(cache);
+
+    // Every state change - a CLI start, stop or remove as much as a tick - is a
+    // chance to refresh what a signal exit must signal. The monitor loop may be
+    // inside a blocking call when SIGTERM lands, and the file it writes also
+    // serves the next daemon if this one is killed without an exit path.
+    notify_state_changed(dump);
 }
 
 /// Write the monitor loop's changes back to the cache under its lock.
@@ -724,4 +751,10 @@ pub fn restore_from_backup() -> Result<(), String> {
 pub fn has_backup() -> bool {
     let backup_path = format!("{}.bak", global!("opm.dump"));
     Exists::check(&backup_path).file()
+}
+
+/// The daemon's state lock, for tests that prove a code path does not take it.
+/// Holding it simulates a monitor pass in progress.
+pub fn memory_cache_mutex() -> &'static Mutex<Option<Runner>> {
+    &MEMORY_CACHE
 }

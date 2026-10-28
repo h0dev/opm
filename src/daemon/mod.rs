@@ -2,6 +2,8 @@
 mod log;
 mod api;
 mod fork;
+mod pids;
+mod safe_exit;
 
 use api::{
     DAEMON_CPU_PERCENTAGE, DAEMON_MEM_USAGE, DAEMON_START_TIME, GLOBAL_EVENT_MANAGER,
@@ -21,6 +23,8 @@ use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{process, thread::sleep, time::Duration};
+
+use safe_exit::{FALLBACK_ARMED, FALLBACK_DEADLINE_US, SHUTDOWN_REQUESTED};
 
 use opm::{
     config,
@@ -52,59 +56,81 @@ static ENABLE_WEBUI: AtomicBool = AtomicBool::new(false);
 static RESTORE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const RESTORE_IN_PROGRESS_FILE: &str = "restore_in_progress.flag";
 
-/// Set by the termination signal handler: the main loop does the teardown,
-/// because only it can take the state lock without deadlocking against itself.
-static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-/// How long the signal handler waits for the tracked processes to stop before
-/// exiting anyway.
+/// How long a shutdown waits for the tracked processes to stop before exiting
+/// anyway.
 const TERMINATION_GRACE: Duration = Duration::from_secs(3);
+/// The alarm that backs up the loop teardown: the fallback exits when it fires.
+const FALLBACK_ALARM_SECS: u32 = 10;
 
 fn max_failed_restart_attempts(limit: u64) -> u32 {
     limit.min(u32::MAX as u64) as u32
 }
 
-/// Remove state that marks the daemon as alive, so the next `opm` can start one.
-fn clear_daemon_runtime_files() {
-    if let Some(home_dir) = home::home_dir() {
-        let lock_path = format!("{}/.opm/daemon.lock", home_dir.display());
-        let _ = std::fs::remove_file(&lock_path);
-    }
-
-    pid::remove();
-}
-
 extern "C" fn handle_termination_signal(_: libc::c_int) {
-    // SAFETY: Signal handlers should be kept simple and avoid complex operations.
-    // Don't save process state on daemon shutdown - users should explicitly use 'opm save'
-    // if they want to persist process state across daemon restarts.
-    // This prevents unexpected process.dump writes when daemon is stopped/restarted.
-
-    // The main loop takes the state lock at the top of every tick, so taking it
-    // here would deadlock if the signal arrives mid-tick. Let the loop tear down
-    // when it can.
+    // Signal context: no allocation, no lock, no logging. The monitor loop takes
+    // the state lock at the top of every tick, so work here could deadlock
+    // against a tick the signal interrupted. It observes the flag and tears down
+    // with `shutdown_if_requested`, where all of that is safe again.
+    // Don't save process state on daemon shutdown - users should explicitly use
+    // 'opm save' if they want to persist process state across daemon restarts.
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 
-    // Managed processes are spawned into their own session (setsid()), so they
-    // would outlive the daemon unless something signals them. This only signals
-    // PIDs; no allocation, locks or logging. A SIGTERM sent to the daemon
-    // already interrupted a blocking call, so the grace wait is bounded even if
-    // the daemon's own thread is still inside one.
-    let runner = dump::read_merged_direct();
-    opm::process::terminate_tracked_processes(&runner, TERMINATION_GRACE);
+    if FALLBACK_ARMED.swap(true, Ordering::SeqCst) {
+        // The loop had its chance after the first signal and did not take it, or
+        // someone is asking twice: give up now on the pre-computed snapshot.
+        safe_exit::run_fallback();
+    }
 
-    clear_daemon_runtime_files();
-    log!("[daemon] killed", "pid" => process::id());
-    unsafe { libc::_exit(0) }
+    // The only fallback left is time: start the clock the loop's first pass may
+    // spend and arm the alarm that fires regardless of it. Both are plain
+    // stores and one syscall. The loop's own progress is deliberately left
+    // alone, so a handler that never lets the loop run cannot make it look
+    // recent. A second signal and SIGALRM exit at once (see above / below).
+    let now = safe_exit::elapsed_us();
+    FALLBACK_DEADLINE_US.store(now + safe_exit::MONITOR_GRACE_US, Ordering::SeqCst);
+    unsafe { libc::alarm(FALLBACK_ALARM_SECS) };
 }
 
-/// Tear the daemon down on request: stop the managed processes, then exit the
-/// way the termination signal handler does.
-fn shutdown_if_requested() -> ! {
-    let runner = dump::read_merged_direct();
-    opm::process::terminate_tracked_processes(&runner, TERMINATION_GRACE);
+extern "C" fn handle_alarm(_: libc::c_int) {
+    // Reached only when the loop did not finish its teardown before the alarm;
+    // outside a shutdown it must not exit anything.
+    if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+        safe_exit::run_fallback();
+    }
+}
 
-    clear_daemon_runtime_files();
+/// Record what a daemon exit must signal, from the state just written.
+///
+/// Runs after `dump::write_memory_direct` released the state lock, so it may
+/// allocate and log. Never called from a handler.
+fn record_exit_snapshot(runner: &Runner) {
+    let targets = opm::process::termination_targets(runner);
+    let session = opm::process::unix::get_session_id(process::id() as i32);
+    safe_exit::store_pids(&targets, session);
+    safe_exit::record_snapshot();
+}
+
+/// Tear the daemon down on request: stop the managed processes, then exit.
+///
+/// Runs in the monitor loop, so taking the state lock and logging are fine.
+/// Signals are blocked for the teardown so a second signal cannot interrupt it
+/// half way or deadlock against the lock it takes.
+fn shutdown_if_requested() -> ! {
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGALRM);
+        libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+    }
+
+    let runner = dump::read_merged_direct();
+    let targets = opm::process::termination_targets(&runner);
+    safe_exit::store_pids(&targets, opm::process::unix::get_session_id(process::id() as i32));
+    safe_exit::terminate_snapshot(TERMINATION_GRACE);
+
+    safe_exit::clear_runtime_files();
     log!("[daemon] killed", "pid" => process::id());
     process::exit(0)
 }
@@ -1111,17 +1137,13 @@ pub fn start(verbose: bool) {
             let api_enabled = ENABLE_API.load(Ordering::Acquire);
             let ui_enabled = ENABLE_WEBUI.load(Ordering::Acquire);
 
-            unsafe {
-                libc::signal(
-                    libc::SIGTERM,
-                    handle_termination_signal as *const () as usize,
-                );
-                libc::signal(
-                    libc::SIGINT,
-                    handle_termination_signal as *const () as usize,
-                );
-                libc::signal(libc::SIGPIPE, handle_sigpipe as *const () as usize);
-            };
+            // Installed here, after the daemon's own fork: a timer set up before
+            // it would be inherited by the forked child.
+            safe_exit::start();
+            // First snapshot from disk (a killed daemon's leftovers); the next
+            // state change replaces it with the live one.
+            safe_exit::restore_snapshot();
+            dump::set_state_listener(record_exit_snapshot);
 
             DAEMON_START_TIME.set(Utc::now().timestamp_millis() as f64);
 
@@ -1239,7 +1261,10 @@ pub fn start(verbose: bool) {
         loop {
             // A termination signal may have arrived since the last pass (it
             // cannot take the state lock itself); tear down from here instead.
+            // Seeing the request is also what spends the fallback's buffer, so a
+            // loop that keeps passing cannot postpone the bounded exit.
             if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+                safe_exit::clear_fallback_after_a_shutdown_request();
                 shutdown_if_requested();
             }
 
@@ -1280,6 +1305,19 @@ pub fn start(verbose: bool) {
                     eprintln!(
                         "[daemon] Warning: process monitoring encountered an error but daemon continues running"
                     );
+                }
+
+                // The tick is over: mark the loop as alive, and keep the
+                // fallback's alarm from firing while it demonstrably is.
+                safe_exit::monitor_loop_progress();
+                if !FALLBACK_ARMED.load(Ordering::SeqCst) {
+                    unsafe { libc::alarm(FALLBACK_ALARM_SECS) };
+                } else if safe_exit::fallback_grace_expired() {
+                    // A signal asked for the shutdown, the loop kept passing,
+                    // and the buffer is spent without a teardown having started:
+                    // the passes are not getting anywhere, exit on the snapshot.
+                    log!("[daemon] shutdown grace expired, exiting", "pid" => process::id());
+                    safe_exit::run_fallback();
                 }
             }
 
@@ -1640,7 +1678,8 @@ pub fn is_restore_in_progress() -> bool {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use opm::process::{Crash, Process as OpmProcess, Watch};
+    use super::safe_exit::{LOOP_SHUTDOWN, MONITOR_LOOP_PROGRESS};
+    use opm::process::{dump, Crash, Process as OpmProcess, Watch};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -1873,4 +1912,253 @@ mod tests {
         assert_eq!(max_failed_restart_attempts(0), 0);
         assert_eq!(max_failed_restart_attempts(u64::MAX), u32::MAX);
     }
+
+    /// The handler must not do work that can block behind the state lock: a
+    /// SIGTERM arriving while the monitor loop holds the cache would otherwise
+    /// deadlock the daemon and the grace timeout would never run.
+    #[test]
+    fn test_termination_handler_only_flags_and_arms_the_fallback() {
+        // Runs where a `libc::alarm` only costs this process's own timer: the
+        // terminal signals a test runner sends are kept away for its duration.
+        let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGTERM);
+            libc::sigaddset(&mut set, libc::SIGALRM);
+            libc::sigaddset(&mut set, libc::SIGINT);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        }
+
+        let guard = dump::memory_cache_mutex()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        arm_fallback_at_clock_zero();
+        SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+
+        // The cache lock is held for the whole handler, exactly as it is while
+        // the monitor loop runs a tick.
+        handle_termination_signal(libc::SIGTERM);
+
+        assert!(
+            SHUTDOWN_REQUESTED.load(Ordering::SeqCst),
+            "the handler must request the shutdown the loop performs"
+        );
+        assert!(
+            FALLBACK_ARMED.load(Ordering::SeqCst),
+            "a signal must arm the bounded fallback in case the loop never observes the flag"
+        );
+        assert!(
+            FALLBACK_DEADLINE_US.load(Ordering::SeqCst) > 0,
+            "the fallback deadline must be set so a blocked loop cannot hang the daemon"
+        );
+        drop(guard);
+
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+        unsafe {
+            libc::alarm(0);
+            libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+        }
+    }
+
+    /// A second signal must exit immediately instead of waiting out the
+    /// fallback. A test process cannot survive `_exit`, so the handler is run
+    /// for real in a child forked from this test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_second_termination_signal_exits_immediately() {
+        let mut pipe_fds = [0 as libc::c_int; 2];
+        assert_eq!(
+            unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+            0,
+            "pipe() failed"
+        );
+        let (read_fd, write_fd) = (pipe_fds[0], pipe_fds[1]);
+
+        // SAFETY: the child only calls async-signal-safe functions (close,
+        // fcntl, the handler, write, `_exit`) between fork and exit.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "fork() failed");
+
+        if child == 0 {
+            unsafe {
+                libc::close(read_fd);
+                libc::fcntl(write_fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
+                FALLBACK_ARMED.store(false, Ordering::SeqCst);
+                handle_termination_signal(libc::SIGTERM);
+                handle_termination_signal(libc::SIGINT);
+                // The handler must not return after the second signal.
+                libc::write(write_fd, b"returned".as_ptr() as *const libc::c_void, 8);
+                libc::_exit(3);
+            }
+        }
+
+        unsafe {
+            libc::close(write_fd);
+        }
+
+        let mut status = 0;
+        let mut buffer = [0u8; 8];
+        let read = unsafe {
+            libc::read(
+                read_fd,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                buffer.len(),
+            )
+        };
+        unsafe {
+            libc::close(read_fd);
+            libc::waitpid(child, &mut status, 0);
+        }
+
+        assert_eq!(
+            read, 0,
+            "the handler returned after a second signal instead of exiting"
+        );
+        assert!(
+            libc::WIFEXITED(status),
+            "second signal must exit the process, not kill it by signal"
+        );
+        assert_eq!(
+            libc::WEXITSTATUS(status),
+            1,
+            "second signal must exit through the fallback"
+        );
+    }
+
+    /// Zero the fallback counters without zeroing the clock under them: a
+    /// deadline of 0 means "no clock armed", a clock of 0 would never expire.
+    fn arm_fallback_at_clock_zero() {
+        FALLBACK_DEADLINE_US.store(0, Ordering::SeqCst);
+        MONITOR_LOOP_PROGRESS.store(0, Ordering::SeqCst);
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+        LOOP_SHUTDOWN.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_restart_progress_is_spent_once() {
+        arm_fallback_at_clock_zero();
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+        LOOP_SHUTDOWN.store(false, Ordering::SeqCst);
+        // A signal armed the fallback but the loop has not passed since.
+        SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+        FALLBACK_ARMED.store(true, Ordering::SeqCst);
+        FALLBACK_DEADLINE_US.store(0, Ordering::SeqCst);
+        MONITOR_LOOP_PROGRESS.store(0, Ordering::SeqCst);
+
+        assert!(
+            safe_exit::fallback_grace_expired(),
+            "a loop that has not passed for the grace gives up"
+        );
+
+        // The pass that observes the request spends the buffer.
+        let before = safe_exit::elapsed_us();
+        safe_exit::clear_fallback_after_a_shutdown_request();
+        let spent = FALLBACK_DEADLINE_US.load(Ordering::SeqCst);
+        // The clock is read again inside, so `spent` is at least `before` plus
+        // the grace, and the grace is wider than any tick this test can take.
+        assert!(
+            spent >= before + safe_exit::MONITOR_GRACE_US,
+            "the first pass after the request must leave the shutdown its grace"
+        );
+
+        // A further pass does not extend it: a loop that keeps ticking but never
+        // reaches its teardown cannot postpone the fallback forever.
+        std::thread::sleep(Duration::from_millis(2));
+        safe_exit::clear_fallback_after_a_shutdown_request();
+        assert_eq!(
+            FALLBACK_DEADLINE_US.load(Ordering::SeqCst),
+            spent,
+            "a further pass must not push the deadline out"
+        );
+
+        // The loop tore down normally; the next signal starts a fresh window.
+        SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+        MONITOR_LOOP_PROGRESS.store(0, Ordering::SeqCst);
+        assert!(!safe_exit::fallback_grace_expired());
+    }
+
+    #[test]
+    fn test_fallback_grace_expires_after_the_deadline() {
+        arm_fallback_at_clock_zero();
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+        LOOP_SHUTDOWN.store(false, Ordering::SeqCst);
+
+        assert!(!safe_exit::fallback_grace_expired());
+
+        // A blocked loop never spends a pass; only the wall clock matters then.
+        FALLBACK_ARMED.store(true, Ordering::SeqCst);
+        FALLBACK_DEADLINE_US.store(1, Ordering::SeqCst);
+        assert!(
+            safe_exit::fallback_grace_expired(),
+            "the deadline alone must expire the grace"
+        );
+
+        FALLBACK_ARMED.store(false, Ordering::SeqCst);
+        assert!(
+            !safe_exit::fallback_grace_expired(),
+            "no armed fallback, nothing to expire"
+        );
+    }
+
+    #[test]
+    fn test_fallback_terminates_the_snapshot_without_touching_the_cache() {
+        // The fallback runs in signal context, where taking the cache lock can
+        // deadlock against a handler that interrupted the loop holding it.
+        let guard = dump::memory_cache_mutex()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let fixture = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("fixture failed to spawn");
+        let pid = fixture.id() as i64;
+        safe_exit::store_pids(&[pid], None);
+
+        // The wait polls /proc only: the locked cache above proves no lock is taken.
+        safe_exit::terminate_snapshot(Duration::from_millis(1500));
+
+        let mut status = 0;
+        let reaped = unsafe { libc::waitpid(pid as libc::pid_t, &mut status, 0) };
+        let terminated = reaped == pid as libc::pid_t
+            && libc::WIFSIGNALED(status)
+            && libc::WTERMSIG(status) == libc::SIGTERM;
+        drop(guard);
+        safe_exit::store_pids(&[], None);
+
+        assert!(
+            terminated,
+            "the exit path must SIGTERM the snapshot it was given"
+        );
+    }
+
+    /// The fallback must never signal the daemon's own pid or session, even if
+    /// the snapshot was filled by a buggy caller.
+    #[test]
+    fn test_pid_snapshot_drops_the_daemon_itself() {
+        let own_pid = std::process::id() as i64;
+        let session = opm::process::unix::get_session_id(own_pid as i32);
+
+        safe_exit::store_pids(&[own_pid, 424242], None);
+        let snapshot = safe_exit::snapshot_pids();
+        assert!(
+            !snapshot.contains(&own_pid),
+            "the daemon must not signal itself"
+        );
+        assert!(snapshot.contains(&424242));
+
+        if let Some(session) = session {
+            safe_exit::store_pids(&[session], Some(session));
+            assert!(
+                safe_exit::snapshot_pids().is_empty(),
+                "the daemon's own session must not be signalled"
+            );
+        }
+        safe_exit::store_pids(&[], None);
+    }
 }
+
