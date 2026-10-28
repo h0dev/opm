@@ -147,21 +147,22 @@ pub fn get_cpu_percent(pid: u32) -> f64 {
     0.0
 }
 
-/// Get approximate CPU percentage without delay-based sampling
-/// This is much faster but less accurate than get_cpu_percent
-/// Returns average CPU usage since process start
 #[cfg(target_os = "linux")]
-pub fn get_cpu_percent_fast(pid: u32) -> f64 {
-    use std::fs;
+fn effective_cpu_count_cached() -> f64 {
     use std::sync::OnceLock;
 
     // Cache the effective number of CPUs (respects container limits)
     static EFFECTIVE_CPUS: OnceLock<f64> = OnceLock::new();
-    let num_cpus = *EFFECTIVE_CPUS.get_or_init(|| get_effective_cpu_count());
+    *EFFECTIVE_CPUS.get_or_init(|| get_effective_cpu_count())
+}
+
+#[cfg(target_os = "linux")]
+fn clock_ticks_per_sec() -> f64 {
+    use std::sync::OnceLock;
 
     // Cache clock ticks per second - retrieve it once from the system
     static CLOCK_TICKS_PER_SEC: OnceLock<f64> = OnceLock::new();
-    let clock_ticks = *CLOCK_TICKS_PER_SEC.get_or_init(|| {
+    *CLOCK_TICKS_PER_SEC.get_or_init(|| {
         // Try to get actual system value using sysconf
         unsafe {
             let ticks = libc::sysconf(libc::_SC_CLK_TCK);
@@ -172,7 +173,41 @@ pub fn get_cpu_percent_fast(pid: u32) -> f64 {
                 100.0
             }
         }
-    });
+    })
+}
+
+/// Seconds since boot, read from /proc/uptime.
+///
+/// Listings measure many processes one after another, so the caller can read
+/// this once and hand it to [`get_cpu_percent_fast_with`] instead of paying a
+/// /proc/uptime read per process.
+#[cfg(target_os = "linux")]
+pub fn get_system_uptime() -> Option<f64> {
+    std::fs::read_to_string("/proc/uptime")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse::<f64>()
+        .ok()
+}
+
+/// Get approximate CPU percentage without delay-based sampling
+/// This is much faster but less accurate than get_cpu_percent
+/// Returns average CPU usage since process start
+#[cfg(target_os = "linux")]
+pub fn get_cpu_percent_fast(pid: u32) -> f64 {
+    let uptime = get_system_uptime();
+    get_cpu_percent_fast_with(pid, uptime)
+}
+
+/// [`get_cpu_percent_fast`] with the system uptime already sampled.
+/// `None` re-reads /proc/uptime, so a failed read degrades instead of panicking.
+#[cfg(target_os = "linux")]
+pub fn get_cpu_percent_fast_with(pid: u32, system_uptime: Option<f64>) -> f64 {
+    use std::fs;
+
+    let num_cpus = effective_cpu_count_cached();
+    let clock_ticks = clock_ticks_per_sec();
 
     let stat_path = format!("/proc/{}/stat", pid);
     if let Ok(stat_content) = fs::read_to_string(&stat_path) {
@@ -192,32 +227,74 @@ pub fn get_cpu_percent_fast(pid: u32) -> f64 {
             let starttime = parts[STARTTIME_INDEX].parse::<u64>().unwrap_or(0) as f64;
 
             // Get system uptime
-            if let Ok(uptime_content) = fs::read_to_string("/proc/uptime") {
-                if let Some(uptime_str) = uptime_content.split_whitespace().next() {
-                    if let Ok(uptime) = uptime_str.parse::<f64>() {
-                        // Calculate process uptime in seconds
-                        let process_uptime = uptime - (starttime / clock_ticks);
+            if let Some(uptime) = system_uptime.or_else(get_system_uptime) {
+                // Calculate process uptime in seconds
+                let process_uptime = uptime - (starttime / clock_ticks);
 
-                        if process_uptime > 0.0 {
-                            // Total CPU time used by process in seconds
-                            let process_cpu_time = (utime + stime) / clock_ticks;
+                if process_uptime > 0.0 {
+                    // Total CPU time used by process in seconds
+                    let process_cpu_time = (utime + stime) / clock_ticks;
 
-                            // CPU percentage = (CPU time / elapsed time) * 100
-                            // This gives percentage relative to ONE full core
-                            // We then normalize by dividing by available CPUs
-                            let cpu_percent =
-                                (process_cpu_time / process_uptime) * 100.0 / num_cpus;
+                    // CPU percentage = (CPU time / elapsed time) * 100
+                    // This gives percentage relative to ONE full core
+                    // We then normalize by dividing by available CPUs
+                    let cpu_percent = (process_cpu_time / process_uptime) * 100.0 / num_cpus;
 
-                            // Clamp to 100% - represents full utilization of available CPU
-                            return cpu_percent.min(100.0);
-                        }
-                    }
+                    // Clamp to 100% - represents full utilization of available CPU
+                    return cpu_percent.min(100.0);
                 }
             }
         }
     }
 
     0.0
+}
+
+#[cfg(target_os = "linux")]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_cpu_reading_uses_the_uptime_the_caller_supplied() {
+        let pid = std::process::id();
+        let uptime = get_system_uptime().expect("/proc/uptime must be readable on linux");
+        let clock = clock_ticks_per_sec();
+
+        let starttime = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .expect("/proc/<pid>/stat must be readable")
+            .split_whitespace()
+            .nth(21)
+            .expect("stat has a starttime field")
+            .parse::<f64>()
+            .expect("starttime is a number");
+        let age = uptime - starttime / clock;
+
+        // A process that started when the system did has no elapsed time to
+        // average over, so the reading must come from the uptime handed in.
+        let started_at_boot = get_cpu_percent_fast_with(pid, Some(starttime / clock));
+        let sampled = get_cpu_percent_fast_with(pid, Some(uptime));
+
+        assert_eq!(
+            started_at_boot, 0.0,
+            "an uptime equal to the process start leaves no elapsed time"
+        );
+        assert!(
+            sampled >= 0.0 && (0.0..=100.0).contains(&sampled),
+            "the supplied uptime must still give a percentage: age={age}, sampled={sampled}"
+        );
+    }
+
+    #[test]
+    fn fast_cpu_reading_with_an_empty_uptime_still_answers() {
+        let pid = std::process::id();
+        let percent = get_cpu_percent_fast_with(pid, None);
+
+        assert!(
+            (0.0..=100.0).contains(&percent),
+            "percentage must stay in range, got {percent}"
+        );
+    }
 }
 
 #[cfg(target_os = "macos")]

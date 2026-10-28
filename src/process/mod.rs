@@ -2210,27 +2210,38 @@ impl Runner {
             .map(|(id, _)| *id)
     }
 
-    /// Helper method to build ProcessItem from Process
-    fn build_process_item(&self, id: usize, item: &Process) -> ProcessItem {
+    /// The row a listing renders for one process: the fast (average since
+    /// start) CPU reading, never the delay-based one, because a listing measures
+    /// every process it renders. `id` is the entry id; the process is measured
+    /// under its tracked PIDs.
+    pub fn build_process_item(&self, id: usize, item: &Process) -> ProcessItem {
+        let mut item = item.clone();
+        // The listing measures the tracked ids, not the entry id (a pid-0 entry
+        // is keyed by its id but tracked by its shell pid).
+        item.id = id;
+        let item = &item;
+
         let mut memory_usage: Option<MemoryInfo> = None;
         let mut cpu_percent: Option<f64> = None;
 
-        // Use new_fast() to avoid CPU measurement delays for list view
+        // Never sleeps: a listing measures every process, so the two-sample
+        // reading would cost PROCESS_OPERATION_DELAY_MS per row. One /proc/uptime
+        // read serves the whole listing.
         // For shell scripts, try shell_pid first to capture the entire process tree
+        let listing_uptime = get_system_uptime();
         let mut pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-        let mut process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
 
-        // If shell_pid fails (process exited), try the actual script pid
-        if process_result.is_err() && item.shell_pid.is_some() {
+        // If shell_pid is gone (process exited), try the actual script pid
+        if !has_live_pid(pid_for_monitoring) && item.shell_pid.is_some() {
             pid_for_monitoring = item.pid;
-            process_result = unix::NativeProcess::new_fast(pid_for_monitoring as u32);
         }
 
-        if let Ok(process) = process_result {
-            if let Ok(_mem_info_native) = process.memory_info() {
-                cpu_percent = Some(get_process_cpu_usage_with_children_fast(pid_for_monitoring));
-                memory_usage = get_process_memory_with_children(pid_for_monitoring);
-            }
+        if has_live_pid(pid_for_monitoring) {
+            cpu_percent = Some(get_process_cpu_usage_with_children_with_uptime(
+                pid_for_monitoring,
+                listing_uptime,
+            ));
+            memory_usage = get_process_memory_with_children(pid_for_monitoring);
         }
 
         let cpu_percent = match cpu_percent {
@@ -2585,6 +2596,47 @@ impl ProcessWrapper {
     }
 }
 
+/// Whether a listing may measure `pid`: the process must exist and expose its
+/// own stat file, so a stuck reading can never cost a PROCESS_OPERATION_DELAY_MS
+/// sleep in a renderer. Read-only, so it cannot sample CPU.
+pub fn has_live_pid(pid: i64) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        pid > 0 && std::path::Path::new(&format!("/proc/{pid}/stat")).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        is_pid_alive(pid)
+    }
+}
+
+/// Average CPU usage since start for a process (no delay-based sampling).
+///
+/// Plain CPU percentage of the process itself, without its children, so a
+/// listing can compute the tree aggregate in one pass (one /proc/uptime read
+/// for the whole listing instead of one per row). `None` re-reads /proc/uptime.
+pub fn get_process_cpu_usage_percentage_fast_with_uptime(
+    pid: i64,
+    system_uptime: Option<f64>,
+) -> f64 {
+    match unix::NativeProcess::new_fast_with_uptime(pid as u32, system_uptime) {
+        Ok(process) => process.cpu_percent().unwrap_or(0.0),
+        Err(_) => 0.0,
+    }
+}
+
+/// Read seconds since boot once, for reuse across a whole listing.
+pub fn get_system_uptime() -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    {
+        unix::get_system_uptime()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 /// Get the CPU usage percentage of the process
 pub fn get_process_cpu_usage_percentage(pid: i64) -> f64 {
     match unix::NativeProcess::new(pid as u32) {
@@ -2635,12 +2687,23 @@ pub fn get_process_cpu_usage_with_children_from_process(
 
 /// Get the total CPU usage percentage of the process and its children (fast version)
 pub fn get_process_cpu_usage_with_children_fast(pid: i64) -> f64 {
-    let parent_cpu = get_process_cpu_usage_percentage_fast(pid);
+    get_process_cpu_usage_with_children_with_uptime(pid, get_system_uptime())
+}
+
+/// [`get_process_cpu_usage_with_children_fast`] with the system uptime already
+/// sampled, so a listing reads /proc/uptime once for all of its rows.
+pub fn get_process_cpu_usage_with_children_with_uptime(
+    pid: i64,
+    system_uptime: Option<f64>,
+) -> f64 {
+    let parent_cpu = get_process_cpu_usage_percentage_fast_with_uptime(pid, system_uptime);
     let children = process_find_children(pid);
 
     let children_cpu: f64 = children
         .iter()
-        .map(|&child_pid| get_process_cpu_usage_percentage_fast(child_pid))
+        .map(|&child_pid| {
+            get_process_cpu_usage_percentage_fast_with_uptime(child_pid, system_uptime)
+        })
         .sum();
 
     parent_cpu + children_cpu
@@ -5337,13 +5400,50 @@ mod tests {
     }
 
     #[test]
+    fn test_cpu_usage_with_children_with_uptime_passes_the_uptime_to_every_row() {
+        let uptime = get_system_uptime().expect("/proc/uptime must be readable on linux");
+        let clock = 100.0;
+        let pid = std::process::id() as i64;
+
+        let starttime: f64 = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .expect("/proc/<pid>/stat must be readable")
+            .split_whitespace()
+            .nth(21)
+            .expect("stat has a starttime field")
+            .parse()
+            .expect("starttime is a number");
+
+        // An uptime equal to the process start leaves no elapsed time, so both
+        // the parent and any child read as 0% — only true if every row in the
+        // aggregate used the uptime handed in.
+        let started_at_boot =
+            get_process_cpu_usage_with_children_with_uptime(pid, Some(starttime / clock));
+
+        assert_eq!(
+            started_at_boot, 0.0,
+            "the aggregate must use the supplied uptime for every process"
+        );
+
+        let aggregate = get_process_cpu_usage_with_children_with_uptime(pid, Some(uptime));
+        assert!(
+            (0.0..=10_000.0).contains(&aggregate),
+            "aggregate must stay finite and non-negative, got {aggregate}"
+        );
+    }
+
+    #[test]
     fn test_cpu_usage_consistency() {
         // Test that CPU measurements are consistent and within expected ranges
         let current_pid = std::process::id() as i64;
 
         // Get CPU usage with different methods
         let fast_cpu = get_process_cpu_usage_percentage_fast(current_pid);
-        let fast_cpu_with_children = get_process_cpu_usage_with_children_fast(current_pid);
+        // Both readings need the same uptime, or the later one sees a shorter
+        // elapsed time and reports a larger average (this process only burns CPU
+        // while it starts, so its average falls).
+        let uptime = get_system_uptime();
+        let fast_cpu = get_process_cpu_usage_percentage_fast_with_uptime(current_pid, uptime);
+        let fast_cpu_with_children = get_process_cpu_usage_with_children_with_uptime(current_pid, uptime);
 
         // Single process should be 0-100%
         assert!(fast_cpu >= 0.0);
