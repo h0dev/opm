@@ -3649,9 +3649,17 @@ pub fn validate_process_with_sysinfo(
     }
 
     let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::new());
-
+    // Refresh only the pid that was asked about. `ProcessesToUpdate::All` re-read
+    // the whole process table for a single lookup, and the list renderer calls
+    // this once per managed process, so its cost scaled with every process on
+    // the machine.
     let sysinfo_pid = Pid::from_u32(pid as u32);
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        ProcessRefreshKind::new(),
+    );
+
     if let Some(process) = system.process(sysinfo_pid) {
         let current_start_time = process.start_time();
 
