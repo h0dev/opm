@@ -788,6 +788,7 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
+            session_start_time: None,
             process_start_time: None,
             is_process_tree: false,
             log_out: Some(format!("/root/.opm/logs/{name}-out.log")),
