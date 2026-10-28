@@ -436,25 +436,15 @@ fn handle_client(mut stream: UnixStream) -> Result<()> {
             }
         }
         SocketRequest::EditProcess { id, name, command } => {
-            // Edit a process's name and/or command in RAM
+            // Edit a process's name and/or command in RAM. `Runner::edit` is the
+            // one implementation of a rename, shared with the CLI paths, so the
+            // daemon and a daemon-less cache behave identically.
             let permanent = dump::read_permanent_direct();
             let memory = dump::read_memory_direct_option();
             let mut runner = dump::merge_runners_public(permanent, memory);
 
-            if runner.exists(id) {
-                // Update name if provided
-                if let Some(new_name) = name {
-                    runner.process(id).name = new_name;
-                }
-
-                // Update command/script if provided
-                if let Some(new_command) = command {
-                    runner.process(id).script = new_command;
-                }
-
-                // Write to memory cache only
+            if runner.edit(id, name, command) {
                 dump::write_memory_direct(&runner);
-
                 SocketResponse::Success
             } else {
                 SocketResponse::Error(format!("Process {} not found", id))
@@ -520,9 +510,10 @@ type Identity = process::Identity;
 ///   its own id, or under a freshly allocated id when that id is taken.
 /// - A process in `current` that no incoming process claims is preserved: only
 ///   an explicit deletion (`RemoveProcess`) removes a process.
-/// - `opm adjust` and `opm restore --name` resolve an id against the current
-///   list, so a rename whose snapshot id still matches the current id is applied;
-///   this daemon's monitoring loop renames in place and never moves an identity.
+/// - A rename never travels in a snapshot: the new name is a new identity, so
+///   it would be inserted as a second process and the old name would stay.
+///   Renames are edits by id (`SocketRequest::EditProcess`), applied to the
+///   cache in place without reindexing.
 /// - The id counter never moves backwards.
 fn merge_setstate(mut current: Runner, incoming: Runner) -> Runner {
     use std::collections::HashMap;
@@ -541,12 +532,7 @@ fn merge_setstate(mut current: Runner, incoming: Runner) -> Runner {
                 continue;
             };
 
-            // `opm <cmd> <id>` resolves ids against the current list, so the id a
-            // caller passes is a command-line fact, not a stale leftover: honour it.
-            let renamed_by_id = process.name != existing.name && process.id == *id;
-            if !renamed_by_id {
-                process.name = existing.name.clone();
-            }
+            process.name = existing.name.clone();
 
             process.id = *id;
             process.log_out = existing.log_out.clone();
@@ -1263,6 +1249,91 @@ mod tests {
             "live children must be preserved"
         );
         assert!(entry.running, "running state must be preserved");
+    }
+
+    #[test]
+    fn rename_through_editprocess_lands_in_place() {
+        // The rename path is an edit by id, applied to the cache in place. The
+        // id is the address and does not move, and the live runtime state stays
+        // attached to the process: a rename must never be a `SetState` snapshot,
+        // because the merge matches by identity `(name, script, path)` and the
+        // new name matches nothing (see the test below for that defect).
+        let mut runner = runner(3, vec![reported_process(0, "app1", 4242)]);
+
+        assert!(
+            runner.edit(0, Some("renamed_app".to_string()), None),
+            "EditProcess must find the process by id"
+        );
+        assert_eq!(
+            reported_names(&runner),
+            vec![(0, "renamed_app".to_string())],
+            "an edit by id must rename in place: {:?}",
+            reported_names(&runner)
+        );
+        assert_eq!(
+            runner.list.get(&0).map(|p| p.pid),
+            Some(4242),
+            "the live pid must survive the rename"
+        );
+    }
+
+    #[test]
+    fn edit_process_reports_a_missing_id_instead_of_creating_one() {
+        // The `EditProcess` handler answers `Error("Process N not found")` when
+        // `edit` returns false, so an edit of a removed process must not insert
+        // anything.
+        let mut runner = runner(3, vec![reported_process(0, "app1", 4242)]);
+
+        assert!(!runner.edit(9, Some("ghost".to_string()), None));
+        assert_eq!(
+            reported_names(&runner),
+            vec![(0, "app1".to_string())],
+            "an edit of a missing id must not add a row"
+        );
+    }
+
+    #[test]
+    fn edit_process_applies_a_command_change_without_touching_the_name() {
+        let mut runner = runner(3, vec![reported_process(0, "app1", 4242)]);
+
+        assert!(runner.edit(0, None, Some("node other.js".to_string())));
+
+        let process = runner.list.get(&0).expect("process must survive");
+        assert_eq!(process.script, "node other.js");
+        assert_eq!(process.name, "app1", "a command change must not rename");
+    }
+
+    #[test]
+    fn rename_that_travels_as_a_snapshot_is_lost() {
+        // Pins the defect that routed renames through `EditProcess`: a rename
+        // carried by a `SetState` snapshot is a new identity to the merge, so it
+        // lands as a second process and the old name keeps the live pid.
+        let current = runner(3, vec![reported_process(0, "app1", 4242)]);
+        let mut renamed = reported_process(0, "renamed_app", 4242);
+        renamed.pid = 0;
+        let incoming = runner(3, vec![renamed]);
+
+        let merged = merge_setstate(current, incoming);
+        let names: Vec<String> = merged
+            .list
+            .values()
+            .map(|process| process.name.clone())
+            .collect();
+
+        assert_eq!(
+            names.len(),
+            2,
+            "a snapshot rename is inserted as a second process: {names:?}"
+        );
+        assert_eq!(
+            merged.list.get(&0).map(|p| (p.name.as_str(), p.pid)),
+            Some(("app1", 4242)),
+            "the old name keeps the live process: {names:?}"
+        );
+        assert!(
+            names.contains(&"renamed_app".to_string()),
+            "the renamed copy is a separate row: {names:?}"
+        );
     }
 
     #[test]

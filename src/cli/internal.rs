@@ -1216,32 +1216,30 @@ impl<'i> Internal<'i> {
         // Give it 5 seconds freeze window - enough for edit to complete
         self.runner.freeze(self.id, 5);
 
-        let process = self.runner.process(self.id);
-
-        // Update command if provided
         if let Some(new_command) = command {
             println!(
                 "  {} Updating command from '{}' to '{}'",
                 *helpers::SUCCESS,
-                process.script,
+                self.runner.try_info(self.id).script,
                 new_command
             );
-            process.script = new_command.clone();
         }
 
-        // Update name if provided
         if let Some(new_name) = name {
             println!(
                 "  {} Updating name from '{}' to '{}'",
                 *helpers::SUCCESS,
-                process.name,
+                self.runner.try_info(self.id).name,
                 new_name
             );
-            process.name = new_name.clone();
         }
 
-        // Save changes and unfreeze
-        self.runner.save();
+        // The edit is an operation on the process by id, not a snapshot: a rename
+        // inside a snapshot is a new identity to the daemon's merge, which would
+        // insert it as a second process and leave the old name in place.
+        self.edit_process(command, name);
+
+        // The edit reloaded the runner (daemon path) or saved it; unfreeze.
         self.runner.unfreeze(self.id);
 
         println!(
@@ -1251,6 +1249,53 @@ impl<'i> Internal<'i> {
             self.id
         );
         log!("process adjusted (id={})", self.id);
+    }
+
+    /// Persist a name/command edit for `self.id`.
+    ///
+    /// Delegates to the daemon (`SocketRequest::EditProcess`) when one is
+    /// listening, so the edit lands on the daemon's cache by id; otherwise it is
+    /// applied to this runner and written through the usual path. A rename sent
+    /// as a `SetState` snapshot is a new identity to the daemon's merge, which
+    /// inserts it as a second process and keeps the old name.
+    fn edit_process(&mut self, command: &Option<String>, name: &Option<String>) {
+        use global_placeholders::global;
+
+        if self.runner.remote.is_none() {
+            let socket_path = global!("opm.socket");
+            if opm::socket::is_daemon_running(&socket_path) {
+                match opm::socket::send_request(
+                    &socket_path,
+                    opm::socket::SocketRequest::EditProcess {
+                        id: self.id,
+                        name: name.clone(),
+                        command: command.clone(),
+                    },
+                ) {
+                    Ok(opm::socket::SocketResponse::Success) => {
+                        // Reload state to reflect the edit
+                        self.runner = Runner::new();
+                        return;
+                    }
+                    Ok(opm::socket::SocketResponse::Error(msg)) => {
+                        crashln!(
+                            "{} Failed to adjust process {}: {msg}",
+                            *helpers::FAIL,
+                            self.id
+                        );
+                    }
+                    Ok(_) => {
+                        crashln!("{} Unexpected response from daemon", *helpers::FAIL);
+                    }
+                    Err(_) => {
+                        // Fall through to the direct edit if the socket fails
+                    }
+                }
+            }
+        }
+
+        self.runner.edit(self.id, name.clone(), command.clone());
+        self.runner.save();
     }
 
     pub fn save(server_name: &String) {
@@ -2263,5 +2308,169 @@ impl<'i> Internal<'i> {
             // For remote servers or when no runner provided, use standard list
             Self::list(format, server_name);
         }
+    }
+}
+
+/// `opm adjust` must persist its edit by id, whichever transport it uses.
+///
+/// These pin the CLI's end state. The defect they accompany — a rename sent as a
+/// `SetState` snapshot is inserted by the daemon's identity merge as a second
+/// process while the old name stays — is pinned where it lives, in
+/// `socket::tests::rename_that_travels_as_a_snapshot_is_lost` and
+/// `socket::tests::rename_through_editprocess_lands_in_place`.
+#[cfg(test)]
+mod adjust_rename_tests {
+    use super::*;
+    use global_placeholders::init;
+    use opm::process::dump;
+    use std::path::PathBuf;
+
+    fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Point the dump layer at a scratch directory under /tmp. The socket path
+    /// does not exist, so `Runner::save` falls back to the in-process cache,
+    /// which is exactly the daemon-equivalent cache a rename must land in.
+    fn init_test_dump_globals(tag: &str) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        let base = std::env::temp_dir().join(format!(
+            "opm-adjust-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&base).expect("scratch dir must be creatable");
+        let path = |name: &str| base.join(name).to_string_lossy().to_string();
+
+        init!("opm.base", format!("{}/", base.to_string_lossy()));
+        init!("opm.log", path("opm.log"));
+        init!("opm.pid", path("daemon.pid"));
+        init!("opm.socket", path("opm.sock"));
+        init!("opm.dump", path("process.dump"));
+        init!("opm.dump.temp", path("process.temp.dump"));
+        init!("opm.daemon.log", path("daemon.log"));
+        init!("opm.daemon.kind", "disabled");
+        init!("opm.logs.out", "/var/log/opm/{}-out.log");
+        init!("opm.logs.error", "/var/log/opm/{}-error.log");
+
+        dump::clear_memory();
+    }
+
+    fn adjust_process(id: usize, name: &str, script: &str) -> opm::process::Process {
+        opm::process::Process {
+            id,
+            pid: 0,
+            shell_pid: None,
+            env: std::collections::BTreeMap::new(),
+            name: name.to_string(),
+            path: PathBuf::from("/tmp/opm-adjust"),
+            script: script.to_string(),
+            restarts: 0,
+            running: false,
+            crash: opm::process::Crash { crashed: false },
+            watch: opm::process::Watch {
+                enabled: false,
+                path: String::new(),
+                hash: String::new(),
+            },
+            children: vec![],
+            started: chrono::Utc::now(),
+            max_memory: 0,
+            agent_id: None,
+            frozen_until: None,
+            last_action_at: chrono::Utc::now(),
+            manual_stop: false,
+            errored: false,
+            last_restart_attempt: None,
+            failed_restart_attempts: 0,
+            session_id: None,
+            process_start_time: None,
+            is_process_tree: false,
+            log_out: Some("/var/log/opm/app1-out.log".to_string()),
+            log_error: Some("/var/log/opm/app1-error.log".to_string()),
+        }
+    }
+
+    fn cached_names() -> Vec<(usize, String)> {
+        dump::read_memory()
+            .list
+            .iter()
+            .map(|(id, process)| (*id, process.name.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn adjust_rename_persists_with_a_cache_present() {
+        let _cache_guard = cache_test_lock();
+        init_test_dump_globals("rename");
+
+        let mut cache = Runner::default();
+        cache.list.insert(0, adjust_process(0, "app1", "node app1.js"));
+        dump::write_memory_direct(&cache);
+
+        // `opm adjust 0 -n renamed` starts from its own snapshot and persists.
+        let mut runner = Runner::default();
+        runner.list.insert(0, adjust_process(0, "app1", "node app1.js"));
+
+        Internal {
+            id: 0,
+            runner,
+            kind: "process".to_string(),
+            server_name: "local",
+        }
+        .adjust(&None, &Some("renamed_app".to_string()));
+
+        let cached = dump::read_memory();
+        assert_eq!(
+            cached.list.get(&0).map(|p| p.name.as_str()),
+            Some("renamed_app"),
+            "an adjust rename must persist under the same id: {:?}",
+            cached_names()
+        );
+        assert_eq!(cached.list.len(), 1, "a rename must not add a row: {:?}", cached_names());
+        assert!(
+            !cached.list.values().any(|p| p.name == "app1"),
+            "the old name must not survive the rename: {:?}",
+            cached_names()
+        );
+    }
+
+    #[test]
+    fn adjust_command_change_persists_with_a_cache_present() {
+        let _cache_guard = cache_test_lock();
+        init_test_dump_globals("command");
+
+        let mut cache = Runner::default();
+        cache.list.insert(0, adjust_process(0, "app1", "node app1.js"));
+        dump::write_memory_direct(&cache);
+
+        let mut runner = Runner::default();
+        runner.list.insert(0, adjust_process(0, "app1", "node app1.js"));
+
+        Internal {
+            id: 0,
+            runner,
+            kind: "process".to_string(),
+            server_name: "local",
+        }
+        .adjust(&Some("node app1-v2.js".to_string()), &None);
+
+        let cached = dump::read_memory();
+        assert_eq!(
+            cached.list.get(&0).map(|p| p.script.as_str()),
+            Some("node app1-v2.js"),
+            "a command change must persist under the same id"
+        );
+        assert_eq!(
+            cached.list.get(&0).map(|p| p.name.as_str()),
+            Some("app1"),
+            "a command change must not touch the name"
+        );
+        assert_eq!(cached.list.len(), 1, "a command change must not add a row");
     }
 }
