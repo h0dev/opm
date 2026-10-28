@@ -7,7 +7,7 @@ pub mod unix;
 use crate::{config, config::structs::Server, file, helpers};
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     env,
     fs::File,
     path::PathBuf,
@@ -338,6 +338,10 @@ struct DaemonDelta {
     active: bool,
     /// Each process as the tick first saw it, to tell which ones it changed.
     previous: BTreeMap<Identity, Process>,
+    /// The identities the tick itself created while it ran
+    /// ([`Runner::note_inserted`]). An identity absent from `previous` is only
+    /// an insertion if it is here; otherwise the cache simply lost it.
+    inserted: BTreeSet<Identity>,
 }
 
 /// Identifies a process across renumbering: the properties a user picks it by.
@@ -646,7 +650,21 @@ impl Runner {
                 .values()
                 .map(|process| (identity(process), process.clone()))
                 .collect(),
+            inserted: BTreeSet::new(),
         };
+    }
+
+    /// Record that this tick created this identity, so
+    /// [`Runner::apply_daemon_delta`] installs it in the cache.
+    ///
+    /// An identity absent from the tick's `previous` map is not enough to tell
+    /// an insertion from a process the cache removed meanwhile: only identities
+    /// recorded here are insertions. Called by [`Runner::start`], which is the
+    /// only way a process enters the list. No-op unless this runner is a tick.
+    pub fn note_inserted(&mut self, process: &Process) {
+        if self.daemon_delta.active {
+            self.daemon_delta.inserted.insert(identity(process));
+        }
     }
 
     /// Apply this tick's changes to the authoritative cache.
@@ -667,7 +685,14 @@ impl Runner {
 
         for process in self.list.values() {
             let Some(previous) = self.daemon_delta.previous.get(&identity(process)) else {
-                // A process this tick did not load: the tick inserted it.
+                // Not loaded by the tick. Only an identity the tick recorded as
+                // created ([`Runner::note_inserted`]) goes in; anything else
+                // absent from the tick's copy was removed from the cache
+                // meanwhile, and installing it would resurrect it.
+                if !self.daemon_delta.inserted.contains(&identity(process)) {
+                    continue;
+                }
+
                 let id = if cache.list.contains_key(&process.id) {
                     cache.alloc_id()
                 } else {
@@ -954,6 +979,12 @@ impl Runner {
             let process = self.process(id);
             process.log_out = Some(logs.out);
             process.log_error = Some(logs.error);
+
+            // Tell the tick's delta this identity is its own creation, so
+            // `apply_daemon_delta` installs it instead of taking it for a
+            // process the cache removed meanwhile.
+            let created = self.list.get(&id).expect("process was just inserted").clone();
+            self.note_inserted(&created);
         }
 
         return self;
@@ -4266,16 +4297,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known gap: apply_daemon_delta cannot tell a tick insertion from a removal"]
     fn regression_daemon_delta_on_an_empty_cache_skips_an_unseeded_identity() {
         let _cache_guard = cache_test_lock();
-        // A tick inserts a process while it runs. An empty cache is seeded from
-        // the authoritative permanent dump; `apply_daemon_delta` sees an identity
-        // absent from the tick's `previous` map and treats it as an insertion,
-        // so a process the tick did NOT create (removed meanwhile) is installed
-        // too. Reported, not fixed here: telling insertions from removals needs
-        // `start_daemon_delta` to record what the tick inserted, or the cache to
-        // refuse identities it has never held.
+        // An empty cache is seeded from the authoritative permanent dump;
+        // `apply_daemon_delta` then sees identities absent from the tick's
+        // `previous` map. Only one the tick recorded as created may be installed,
+        // so a process the cache dropped meanwhile must be skipped.
         init_test_dump_globals("delta-empty-cache-unseeded");
 
         // A tick carrying two processes, one of which is deleted meanwhile.
@@ -4288,10 +4315,14 @@ mod tests {
         let mut tick = Runner::new_direct();
         tick.start_daemon_delta();
 
-        // The tick inserts a process of its own while it runs (the monitor loop
-        // does this for a process it started): an identity its `previous` map
-        // does not carry.
-        tick.list.insert(2, reported_process(2, "created_by_tick", 4244));
+        // Two processes of the tick that its `previous` map does not carry, the
+        // way the monitor loop ends up with processes it started: one it created
+        // (recorded), and one it did not - the cache had it and dropped it
+        // meanwhile. Only the recorded one is an insertion.
+        let created = reported_process(2, "created_by_tick", 4244);
+        tick.list.insert(2, created.clone());
+        tick.note_inserted(&created);
+        tick.list.insert(3, reported_process(3, "dropped_meanwhile", 4245));
 
         // Deleted meanwhile in the cache and in the permanent dump.
         let mut current = seeded.clone();
@@ -4304,8 +4335,61 @@ mod tests {
 
         assert_eq!(
             cache_names(),
-            vec![(0, "app1".to_string(), true)],
-            "a process removed meanwhile must not be resurrected by the tick's copy"
+            vec![
+                (0, "app1".to_string(), true),
+                (2, "created_by_tick".to_string(), true),
+            ],
+            "a process removed meanwhile must not be resurrected by the tick's copy, \
+             while the one the tick created must be installed"
+        );
+    }
+
+    #[test]
+    fn regression_daemon_delta_installs_an_identity_the_tick_recorded() {
+        // The other half of the distinction: a process the tick created while it
+        // ran and recorded with `note_inserted` must still reach the cache, which
+        // the tick's `previous` map cannot show.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+        let created = delta_process(4, "created_by_tick", 114444);
+        tick.list.insert(4, created.clone());
+        tick.note_inserted(&created);
+
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            delta_names(&cache),
+            vec![
+                (0, "app1".to_string(), 114130),
+                (4, "created_by_tick".to_string(), 114444),
+            ],
+            "a process the tick created must be installed in the cache"
+        );
+    }
+
+    #[test]
+    fn regression_daemon_delta_skips_an_unrecorded_identity_in_a_loaded_cache() {
+        // A process absent from the tick's `previous` map but not recorded as
+        // created: the cache removed it meanwhile. It must not come back.
+        let mut cache = setup_test_runner();
+        cache.list.insert(0, delta_process(0, "app1", 114130));
+        cache.list.insert(1, delta_process(1, "gone_app", 114131));
+
+        let mut tick = cache.clone();
+        tick.start_daemon_delta();
+
+        cache.list.remove(&1);
+        cache.compact();
+
+        tick.apply_daemon_delta(&mut cache);
+
+        assert_eq!(
+            delta_names(&cache),
+            vec![(0, "app1".to_string(), 114130)],
+            "a dropped identity the tick never created must stay dropped"
         );
     }
 
