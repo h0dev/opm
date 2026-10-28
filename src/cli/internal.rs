@@ -499,16 +499,22 @@ impl<'i> Internal<'i> {
                 "{} Skipping {}({}) — no longer exists",
                 *helpers::WARN,
                 self.kind,
-                self.id
+                self.runner
+                    .info(self.id)
+                    .map(|process| process.name.clone())
+                    .unwrap_or_else(|| self.id.to_string())
             );
             return;
         }
 
         println!(
-            "{} Applying {}action removeProcess on ({})",
+            "{} Applying {}action removeProcess on {}",
             *helpers::SUCCESS,
             self.kind,
-            self.id
+            self.runner
+                .info(self.id)
+                .map(|process| process.name.clone())
+                .unwrap_or_else(|| format!("({})", self.id))
         );
 
         // Get process info before removal for event emission
@@ -519,7 +525,14 @@ impl<'i> Internal<'i> {
         self.runner.freeze(self.id, 10);
 
         self.runner.remove(self.id);
-        println!("{} Removed {}({}) ✓", *helpers::SUCCESS, self.kind, self.id);
+        println!(
+            "{} Removed {} ✓",
+            *helpers::SUCCESS,
+            match &process_name {
+                Some(name) => format!("{}", name),
+                None => format!("({})", self.id),
+            }
+        );
         log!("process removed (id={})", self.id);
 
         // Emit event for CLI operation if on local server

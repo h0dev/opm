@@ -202,13 +202,19 @@ pub fn rename(
     Remote { address, token, .. }: &Remote,
     id: usize,
     name: String,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/rename"))
-        .body(name)
-        .headers(headers)
-        .send()?)
+    // The request body is plain text, but the response is the same
+    // `ActionResponse` every other action answers with, so a failed rename must
+    // surface like one instead of reporting success.
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/rename"))
+            .body(name)
+            .headers(headers)
+            .send()?,
+        "rename",
+    )
 }
 
 // merge into one function
@@ -369,5 +375,25 @@ mod tests {
     fn http_action_accepts_a_success_body() {
         action_response(StatusCode::OK, r#"{"done":true,"action":"remove"}"#, "remove")
             .expect("a done:true body is a successful action");
+    }
+
+    /// A rename answers with `ActionResponse` like every other action, so a
+    /// remote rename that did not happen must not be reported as success.
+    #[test]
+    fn http_rename_rejects_a_failed_rename_response() {
+        let err = action_response(
+            StatusCode::OK,
+            r#"{"done":false,"action":"DOES_NOT_EXIST"}"#,
+            "rename",
+        )
+        .expect_err("a failed rename must not be reported as successful");
+
+        assert!(err.to_string().contains("rename"), "got: {err}");
+    }
+
+    #[test]
+    fn http_rename_accepts_a_successful_rename_response() {
+        action_response(StatusCode::OK, r#"{"done":true,"action":"rename"}"#, "rename")
+            .expect("a done:true body is a successful rename");
     }
 }
