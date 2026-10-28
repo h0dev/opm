@@ -4,6 +4,7 @@ pub use args::*;
 pub(crate) mod events;
 pub(crate) mod import;
 pub(crate) mod internal;
+pub(crate) mod update;
 
 use internal::{Internal, STATS_PRE_LIST_DELAY_MS};
 use macros_rs::{crashln, string, ternary};

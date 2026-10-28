@@ -239,7 +239,8 @@ enum Commands {
     },
 
     /// Adjust process command and/or name
-    #[command(visible_alias = "update", visible_alias = "modify")]
+    // `update` is the real Update command; the alias became ambiguous with it.
+    #[command(visible_alias = "rename", visible_alias = "modify")]
     Adjust {
         #[clap(value_parser = cli::validate::<Item>)]
         item: Item,
@@ -266,6 +267,25 @@ enum Commands {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
+    },
+
+    /// Replace this binary with the latest release from GitHub
+    Update {
+        /// Report the available release without writing anything
+        #[arg(long)]
+        check: bool,
+        /// Replace the binary without asking for confirmation
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Reinstall even when the version matches this build
+        #[arg(long)]
+        force: bool,
+        /// Release asset to download (defaults to this OS/arch/webui build)
+        #[arg(long)]
+        asset: Option<String>,
+        /// GitHub repository to download from, as <owner>/<name>
+        #[arg(long, default_value_t = string!(cli::update::DEFAULT_REPO))]
+        repo: String,
     },
 }
 
@@ -1115,6 +1135,20 @@ fn main() {
             AgentCommand::Disconnect => agent_disconnect(),
             AgentCommand::Status => agent_status(),
         },
+
+        Commands::Update {
+            check,
+            yes,
+            force,
+            asset,
+            repo,
+        } => cli::update::run(cli::update::Options {
+            check: *check,
+            yes: *yes,
+            force: *force,
+            asset: asset.clone(),
+            repo: repo.clone(),
+        }),
     };
 
     if !matches!(&cli.command, Commands::Daemon { .. })
@@ -1124,6 +1158,7 @@ fn main() {
         && !matches!(&cli.command, Commands::GetCommand { .. })
         && !matches!(&cli.command, Commands::Adjust { .. })
         && !matches!(&cli.command, Commands::Agent { .. })
+        && !matches!(&cli.command, Commands::Update { .. })
     {
         // When auto-starting daemon, read API/WebUI settings from config
         if !daemon::pid::exists() {
