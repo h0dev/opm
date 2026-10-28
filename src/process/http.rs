@@ -1,13 +1,48 @@
 use crate::process::Remote;
 use macros_rs::{fmtstr, string};
+use anyhow::{bail, Context};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING};
-use reqwest::Client;
-use serde::Serialize;
+use reqwest::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Serialize)]
 struct ActionBody {
     pub method: String,
+}
+
+#[derive(Deserialize)]
+struct ActionResponse {
+    pub done: bool,
+}
+
+/// Fail an action unless the remote reported a 2xx status and a completed action.
+/// `daemon/api/routes.rs::action_handler` answers `{ "done": bool, "action": String }`.
+fn action_response(
+    status: StatusCode,
+    body: &str,
+    method: &str,
+) -> Result<(), anyhow::Error> {
+    if !status.is_success() {
+        bail!("remote reported {status} for action `{method}`: {body}");
+    }
+
+    let response: ActionResponse = serde_json::from_str(body).with_context(|| {
+        format!("remote returned an unreadable response for action `{method}`: {body}")
+    })?;
+
+    if !response.done {
+        bail!("remote reported action `{method}` as failed: {body}");
+    }
+
+    Ok(())
+}
+
+/// Check the response to an action POST and fail when the remote did not do it.
+pub fn check_action(response: sync::Response, method: &str) -> Result<(), anyhow::Error> {
+    let status = response.status();
+    let body = response.text()?;
+    action_response(status, &body, method)
 }
 
 pub struct LogResponse {
@@ -128,33 +163,39 @@ pub fn create(
 pub fn restart(
     Remote { address, token, .. }: &Remote,
     id: usize,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
     let content = ActionBody {
         method: string!("restart"),
     };
 
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/action"))
-        .json(&content)
-        .headers(headers)
-        .send()?)
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&content)
+            .headers(headers)
+            .send()?,
+        &content.method,
+    )
 }
 
 pub fn reload(
     Remote { address, token, .. }: &Remote,
     id: usize,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
     let content = ActionBody {
         method: string!("reload"),
     };
 
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/action"))
-        .json(&content)
-        .headers(headers)
-        .send()?)
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&content)
+            .headers(headers)
+            .send()?,
+        &content.method,
+    )
 }
 
 pub fn rename(
@@ -174,65 +215,77 @@ pub fn rename(
 pub fn stop(
     Remote { address, token, .. }: &Remote,
     id: usize,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
     let content = ActionBody {
         method: string!("stop"),
     };
 
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/action"))
-        .json(&content)
-        .headers(headers)
-        .send()?)
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&content)
+            .headers(headers)
+            .send()?,
+        &content.method,
+    )
 }
 
 pub fn remove(
     Remote { address, token, .. }: &Remote,
     id: usize,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
     let content = ActionBody {
         method: string!("remove"),
     };
 
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/action"))
-        .json(&content)
-        .headers(headers)
-        .send()?)
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&content)
+            .headers(headers)
+            .send()?,
+        &content.method,
+    )
 }
 
 pub fn flush(
     Remote { address, token, .. }: &Remote,
     id: usize,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
     let content = ActionBody {
         method: string!("flush"),
     };
 
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/action"))
-        .json(&content)
-        .headers(headers)
-        .send()?)
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&content)
+            .headers(headers)
+            .send()?,
+        &content.method,
+    )
 }
 
 pub fn clear_env(
     Remote { address, token, .. }: &Remote,
     id: usize,
-) -> Result<sync::Response, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let (client, headers) = sync::client(token);
     let content = ActionBody {
         method: string!("clear_env"),
     };
 
-    Ok(client
-        .post(fmtstr!("{address}/process/{id}/action"))
-        .json(&content)
-        .headers(headers)
-        .send()?)
+    check_action(
+        client
+            .post(fmtstr!("{address}/process/{id}/action"))
+            .json(&content)
+            .headers(headers)
+            .send()?,
+        &content.method,
+    )
 }
 
 /// Get list of connected agents from server
@@ -266,4 +319,55 @@ pub fn agent_processes(
         .get(fmtstr!("{address}/daemon/agents/{agent_id}/processes"))
         .headers(headers)
         .send()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::action_response;
+    use reqwest::StatusCode;
+
+    #[test]
+    fn http_action_rejects_a_non_2xx_status() {
+        let err = action_response(StatusCode::NOT_FOUND, r#"{"code":404,"message":"Process was not found"}"#, "remove")
+            .expect_err("a 404 must not be reported as a successful action");
+
+        assert!(
+            err.to_string().contains("404"),
+            "error should carry the status, got: {err}"
+        );
+    }
+
+    #[test]
+    fn http_action_rejects_a_500_status() {
+        let err = action_response(StatusCode::INTERNAL_SERVER_ERROR, "boom", "stop")
+            .expect_err("a 500 must not be reported as a successful action");
+
+        assert!(err.to_string().contains("500"), "got: {err}");
+    }
+
+    #[test]
+    fn http_action_rejects_a_body_that_reports_failure() {
+        let err = action_response(
+            StatusCode::OK,
+            r#"{"done":false,"action":"DOES_NOT_EXIST"}"#,
+            "remove",
+        )
+        .expect_err("a done:false body must not be reported as a successful action");
+
+        assert!(err.to_string().contains("remove"), "got: {err}");
+    }
+
+    #[test]
+    fn http_action_rejects_an_unparseable_success_body() {
+        let err = action_response(StatusCode::OK, "not json", "start")
+            .expect_err("an unreadable body must not be reported as a successful action");
+
+        assert!(err.to_string().contains("start"), "got: {err}");
+    }
+
+    #[test]
+    fn http_action_accepts_a_success_body() {
+        action_response(StatusCode::OK, r#"{"done":true,"action":"remove"}"#, "remove")
+            .expect("a done:true body is a successful action");
+    }
 }
