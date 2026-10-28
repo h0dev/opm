@@ -1669,69 +1669,60 @@ impl<'i> Internal<'i> {
         use chrono::Utc;
         let batch_start_time = Utc::now();
 
-        // PARALLEL RESTORATION: Spawn all processes concurrently
-        // This dramatically reduces restore time for multiple processes
-        use std::sync::{Arc, Mutex};
-        use std::thread;
+        // PARALLEL RESTORATION: spawn every process concurrently.
+        //
+        // Each worker only spawns: it is handed an immutable snapshot of what
+        // the process needs (command, working directory, environment) and
+        // returns the outcome. No runner is shared between workers, so no
+        // thread can write an entry while another one reads or writes it; the
+        // outcomes are merged into this runner, one at a time, below.
+        let spawn_config = config::read().runner;
+        let jobs: Vec<opm::process::RestoreSpawn> = processes_to_restore
+            .iter()
+            .filter_map(|(id, _name, _was_running, _was_crashed)| {
+                runner
+                    .info(*id)
+                    .map(|process| opm::process::RestoreSpawn::new(process, &spawn_config))
+            })
+            .collect();
 
-        let runner_arc = Arc::new(Mutex::new(runner.clone()));
-        let mut handles = vec![];
-
-        for (id, name, _was_running, _was_crashed) in &processes_to_restore {
-            let id = *id;
-            let name = name.clone();
-            let runner_arc_clone = Arc::clone(&runner_arc);
-
-            let handle = thread::spawn(move || {
-                // Get the runner guard for this thread
-                let mut runner_guard = match runner_arc_clone.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => {
-                        ::log::error!(
-                            "Mutex poisoned during restore for process {}: {}",
-                            id,
-                            poisoned
+        let mut spawn_results: Vec<(usize, String)> = Vec::with_capacity(processes_to_restore.len());
+        for (result, (id, name, _was_running, _was_crashed)) in opm::process::spawn_restore_batch(jobs)
+            .into_iter()
+            .zip(processes_to_restore.iter())
+        {
+            match result {
+                Ok(spawned) => {
+                    if !runner.merge_restore_spawn(*id, spawned) {
+                        ::log::warn!(
+                            "Restore of process '{}' (id={}) was not installed; its spawned pid is already tracked",
+                            name,
+                            id
                         );
-                        // Recover from poison by taking ownership of the data
-                        poisoned.into_inner()
                     }
-                };
-
-                // Always start fresh process during restore (no re-attachment)
-                // This prevents false positives from matching unrelated system processes
-                // Call restart directly on the shared runner without cloning to avoid lost updates
-                // Parameters: id, dead=false (user-initiated), increment_counter=false (counters reset later)
-                // Note: restart() already creates the action timestamp file internally
-                runner_guard.restart(id, false, false);
-
-                // Return (id, name)
-                (id, name)
-            });
-
-            handles.push(handle);
+                }
+                Err(err) => {
+                    // Same state the restart path leaves on a failed start: the
+                    // process never got a pid here, so it is not marked crashed;
+                    // the verification below reports it.
+                    if let Some(process) = runner.list.get_mut(id) {
+                        process.running = false;
+                        process.children = vec![];
+                        process.pid = 0;
+                        process.shell_pid = None;
+                    }
+                    ::log::error!("Failed to restore process '{}' (id={}): {}", name, id, err);
+                    println!(
+                        "{} Failed to restore process '{}' (id={}): {}",
+                        *helpers::FAIL,
+                        name,
+                        id,
+                        err
+                    );
+                }
+            }
+            spawn_results.push((*id, name.clone()));
         }
-
-        // Wait for all spawns to complete
-        let spawn_results: Vec<(usize, String)> =
-            handles.into_iter().filter_map(|h| h.join().ok()).collect();
-
-        // Get the updated runner state after all parallel spawns
-        runner = match Arc::try_unwrap(runner_arc) {
-            Ok(mutex) => match mutex.into_inner() {
-                Ok(inner) => inner,
-                Err(poisoned) => {
-                    ::log::warn!("Mutex poisoned during restore, recovering data");
-                    poisoned.into_inner()
-                }
-            },
-            Err(arc) => match arc.lock() {
-                Ok(guard) => guard.clone(),
-                Err(poisoned) => {
-                    ::log::warn!("Mutex poisoned during restore, recovering data");
-                    poisoned.into_inner().clone()
-                }
-            },
-        };
 
         // Wait 2 seconds for all processes to stabilize after parallel spawning
         // This gives the OS time to register all process trees before verification

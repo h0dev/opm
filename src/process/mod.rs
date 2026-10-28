@@ -426,6 +426,7 @@ impl Status {
 }
 
 /// Process metadata
+#[derive(Clone, Debug)]
 pub struct ProcessMetadata {
     /// Process name
     pub name: String,
@@ -1353,6 +1354,62 @@ impl Runner {
         }
 
         return self;
+    }
+
+    /// Install what a restore worker spawned into this runner's entry for `id`.
+    ///
+    /// This is the merge half of [`RestoreSpawn::spawn`]: workers only report
+    /// the outcome, and exactly one thread installs it, so no runner entry is
+    /// written from two threads. It performs the same entry update `restart`
+    /// does after `process_run`; the returned bool is false when another process
+    /// already tracks the spawned pid (nothing was installed then).
+    pub fn merge_restore_spawn(&mut self, id: usize, result: ProcessRunResult) -> bool {
+        let Some(existing) = self.list.get(&id) else {
+            kill_children(vec![result.pid]);
+            let _ = process_stop(result.pid);
+            return false;
+        };
+        let name = existing.name.clone();
+        let dotenv_vars = load_dotenv(&existing.path);
+
+        let (has_duplicate, error_msg) =
+            check_duplicate_pid(&self.list, id, result.pid, result.shell_pid);
+        if has_duplicate {
+            log::warn!(
+                "[process] Duplicate PID detected on restore: process '{}' (id={}). {}",
+                name,
+                id,
+                error_msg
+            );
+            println!(
+                "{} Process '{}' (id={}) restore aborted: {}",
+                *helpers::FAIL,
+                name,
+                id,
+                error_msg
+            );
+            kill_children(vec![result.pid]);
+            let _ = process_stop(result.pid);
+            return false;
+        }
+
+        let process = self.process(id);
+        process.pid = result.pid;
+        process.shell_pid = result.shell_pid;
+        process.session_id = result.session_id;
+        process.process_start_time = result.start_time;
+        process.is_process_tree = result.shell_pid.is_some();
+        process.running = true;
+        process.started = Utc::now();
+        process.crash.crashed = false;
+        process.manual_stop = false;
+        process.last_action_at = Utc::now();
+
+        let mut updated_env: Env = env::vars().collect();
+        updated_env.extend(dotenv_vars);
+        process.env.extend(updated_env);
+
+        true
     }
 
     pub fn reload(&mut self, id: usize, dead: bool, increment_counter: bool) -> &mut Self {
@@ -3719,7 +3776,191 @@ pub struct ProcessRunResult {
     pub shell_pid: Option<i64>,
     pub session_id: Option<i64>,
     pub start_time: Option<u64>,
+    /// PID of the process actually spawned: the shell wrapper for a
+    /// shell-wrapped command, else the same as `pid`. Its
+    /// [`PROCESS_HANDLES`] entry is the child, so its exit status can be
+    /// reaped without waiting on it.
+    pub handle_pid: i64,
 }
+
+/// Everything a restore worker needs to spawn one process, captured from that
+/// process before any thread starts, so workers share no runner state.
+#[derive(Debug, Clone)]
+pub struct RestoreSpawn {
+    id: usize,
+    name: String,
+    metadata: ProcessMetadata,
+    workdir: PathBuf,
+    previous_pid: i64,
+    previous_shell_pid: Option<i64>,
+}
+
+impl RestoreSpawn {
+    /// Capture the spawn inputs for `process`.
+    ///
+    /// The environment is the same one `Runner::restart` builds: the `.env`
+    /// variables of the working directory first (highest priority), then the
+    /// stored process environment, then the system environment.
+    pub fn new(process: &Process, config: &config::structs::Runner) -> Self {
+        let workdir = process.path.clone();
+        let dotenv_vars = load_dotenv(&workdir);
+        let system_env = unix::env();
+
+        let mut env = Vec::with_capacity(dotenv_vars.len() + process.env.len() + system_env.len());
+        for (key, value) in &dotenv_vars {
+            env.push(format!("{}={}", key, value));
+        }
+        for (key, value) in &process.env {
+            env.push(format!("{}={}", key, value));
+        }
+        env.extend(system_env);
+
+        RestoreSpawn {
+            id: process.id,
+            name: process.name.clone(),
+            metadata: ProcessMetadata {
+                args: config.args.clone(),
+                name: process.name.clone(),
+                shell: config.shell.clone(),
+                log_path: config.log_path.clone(),
+                command: process.script.to_string(),
+                env,
+            },
+            workdir,
+            previous_pid: process.pid,
+            previous_shell_pid: process.shell_pid,
+        }
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Spawn the process. Touches no runner: the child's handle is registered in
+    /// the process-wide [`PROCESS_HANDLES`] map, which is shared safely.
+    ///
+    /// The working directory is changed for the duration of the spawn only (it
+    /// is process-wide), so concurrent callers never leave each other in another
+    /// process's directory.
+    pub fn spawn(&self) -> Result<ProcessRunResult, String> {
+        let cwd_guard = CWD_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let original_dir = std::env::current_dir().ok();
+
+        if let Err(err) = std::env::set_current_dir(&self.workdir) {
+            if let Some(dir) = original_dir {
+                let _ = std::env::set_current_dir(dir);
+            }
+            return Err(format!(
+                "Failed to set working directory {:?}: {}",
+                self.workdir,
+                err
+            ));
+        }
+
+        // The start time is resolved by `spawn_restore_batch` once every spawn
+        // has returned: resolving it here pays a process-table scan in the
+        // serialized working-directory section, which held all spawns apart.
+        let result = process_run_with_hooks(
+            ProcessMetadata {
+                args: self.metadata.args.clone(),
+                name: self.metadata.name.clone(),
+                shell: self.metadata.shell.clone(),
+                log_path: self.metadata.log_path.clone(),
+                command: self.metadata.command.clone(),
+                env: self.metadata.env.clone(),
+            },
+            |_| None,
+            || drop(cwd_guard),
+        );
+
+        if let Some(dir) = original_dir {
+            if let Err(err) = std::env::set_current_dir(&dir) {
+                log::warn!("Failed to restore working directory after restore spawn: {}", err);
+            }
+        }
+
+        let result = result?;
+
+        let mut pid_registry = PID_REGISTRY.lock().unwrap();
+        if self.previous_pid > 0 {
+            pid_registry.remove(&self.previous_pid);
+        }
+        if let Some(previous_shell_pid) = self.previous_shell_pid {
+            pid_registry.remove(&previous_shell_pid);
+        }
+        pid_registry.insert(result.pid);
+        if let Some(shell_pid) = result.shell_pid {
+            pid_registry.insert(shell_pid);
+        }
+        drop(pid_registry);
+
+        Ok(result)
+    }
+}
+
+/// Serializes the process-wide working-directory change around a spawn.
+static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+/// Spawn every job concurrently and wait for all of them.
+///
+/// One worker thread per job: spawning is dominated by fixed waits inside
+/// `process_run` (a shell tree can take 200-700 ms to settle) and the worker
+/// otherwise only waits on the OS, so the job count is the bound. No runner is
+/// shared between workers. The results are returned in the order of `jobs`.
+pub fn spawn_restore_batch(jobs: Vec<RestoreSpawn>) -> Vec<Result<ProcessRunResult, String>> {
+    let handles: Vec<_> = jobs
+        .into_iter()
+        .map(|job| thread::spawn(move || job.spawn()))
+        .collect();
+
+    let mut results: Vec<Result<ProcessRunResult, String>> = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap_or_else(|_| panic!("restore spawn worker panicked")))
+        .collect();
+
+    if results
+        .iter()
+        .any(|result| matches!(result, Ok(spawned) if spawned.pid > 0))
+    {
+        // The table below is a point in time: give every freshly spawned tree a
+        // bounded moment to settle first. `process_run` already waited for each
+        // shell tree to stabilize; this covers the rest (a shell still inside
+        // its own startup, a system busy with many concurrent spawns).
+        thread::sleep(SETTLE_AFTER_SPAWNS);
+    }
+
+    // One reading of the process table, after all spawns, instead of a full
+    // scan inside every spawn.
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::new(),
+    );
+    for result in &mut results {
+        let Ok(spawned) = result else { continue };
+        if spawned.pid <= 0 || spawned.start_time.is_some() {
+            continue;
+        }
+        // No reaping here: `std::process::Child::try_wait` may fall back to a
+        // blocking waitpid for a child reaped elsewhere, and a child that has
+        // exited already reads as dead to every validity check (`is_pid_alive`
+        // treats a zombie as dead).
+        if let Some(process) = system.process(sysinfo::Pid::from_u32(spawned.pid as u32)) {
+            spawned.start_time = Some(process.start_time());
+        }
+    }
+
+    results
+}
+
+/// How long to let freshly spawned process trees settle before the process
+/// table is read for their start times.
+const SETTLE_AFTER_SPAWNS: Duration = Duration::from_millis(100);
 
 /// Check if a command contains shell-specific features that require shell interpretation
 /// Returns true if the command needs to be run through a shell (sh/bash)
@@ -3774,6 +4015,39 @@ fn parse_direct_command(command: &str) -> Option<(String, Vec<String>)> {
 
 /// Run the process
 pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String> {
+    // Resolve the start time from a full process-table scan.
+    process_run_with_start_time(metadata, |pid| validate_process_with_sysinfo(pid, None, None).1)
+}
+
+/// Run the process, letting the caller resolve the start time for the spawned
+/// PID (the same value `process_run` takes from `validate_process_with_sysinfo`).
+///
+/// `resolve_start_time` is called with the spawned PID before the result is
+/// returned, so a caller that spawns many processes can resolve the times after
+/// the spawns, off the spawn path, instead of paying a process-table scan
+/// between each `spawn()` and the next one.
+pub fn process_run_with_start_time<F>(
+    metadata: ProcessMetadata,
+    resolve_start_time: F,
+) -> Result<ProcessRunResult, String>
+where
+    F: FnOnce(i64) -> Option<u64>,
+{
+    process_run_with_hooks(metadata, resolve_start_time, || {})
+}
+
+/// Run the process with both hooks: `after_spawn` runs as soon as the child
+/// exists (before the shell tree is waited on and the start time is resolved),
+/// and `resolve_start_time` gets the spawned PID last.
+pub fn process_run_with_hooks<F, A>(
+    metadata: ProcessMetadata,
+    resolve_start_time: F,
+    after_spawn: A,
+) -> Result<ProcessRunResult, String>
+where
+    F: FnOnce(i64) -> Option<u64>,
+    A: FnOnce(),
+{
     use std::fs::{self, OpenOptions};
     use std::process::{Command, Stdio};
 
@@ -3951,6 +4225,8 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
     // For shell-wrapped spawns: this is the shell wrapper PID
     let spawned_pid = child.id() as i64;
 
+    after_spawn();
+
     // Determine the actual application PID
     // For shell-wrapped processes, wait briefly to allow OS to register process tree
     // This ensures sysinfo can discover child processes during PID stability checks
@@ -3987,14 +4263,14 @@ pub fn process_run(metadata: ProcessMetadata) -> Result<ProcessRunResult, String
     let session_id: Option<i64> = None;
 
     // Capture process start time for PID reuse detection
-    // validate_process_with_sysinfo will refresh process list from OS
-    let start_time = validate_process_with_sysinfo(actual_pid, None, None).1;
+    let start_time = resolve_start_time(actual_pid);
 
     Ok(ProcessRunResult {
         pid: actual_pid,
         shell_pid: shell_pid_opt,
         session_id,
         start_time,
+        handle_pid: spawned_pid,
     })
 }
 
@@ -8732,5 +9008,150 @@ mod tests {
             interrupted, bystander_interruptions,
             "an untracked process must not be signalled by the daemon stop sweep"
         );
+    }
+
+    /// A process record that is stopped and carries no PID, the state restore
+    /// starts from after it clears every PID.
+    fn restore_fixture(script: &str, workdir: &std::path::Path, log_dir: &std::path::Path) -> RestoreSpawn {
+        let mut process = alloc_test_process(0);
+        process.name = "restore_fixture".to_string();
+        process.script = script.to_string();
+        process.path = workdir.to_path_buf();
+        process.running = true;
+        process.pid = 0;
+        process.shell_pid = None;
+        process.children.clear();
+        process.session_id = None;
+        process.process_start_time = None;
+
+        RestoreSpawn::new(
+            &process,
+            &config::structs::Runner {
+                shell: "/bin/sh".to_string(),
+                args: vec!["-c".to_string()],
+                node: "node".to_string(),
+                log_path: log_dir.to_string_lossy().to_string(),
+            },
+        )
+    }
+
+    fn restore_scratch_dir(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+
+        let dir = std::env::temp_dir().join(format!(
+            "opm-restore-spawn-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir must be creatable");
+        dir
+    }
+
+    fn restore_fixture_dirs(tag: &str) -> (PathBuf, PathBuf) {
+        let scratch = restore_scratch_dir(tag);
+        let log_dir = scratch.join("logs");
+        std::fs::create_dir_all(&log_dir).expect("log dir must be creatable");
+        (scratch, log_dir)
+    }
+
+    fn kill_tree(pid: i64) {
+        if pid <= 0 {
+            return;
+        }
+        for child in process_find_children(pid) {
+            let _ = kill(Pid::from_raw(child as i32), Signal::SIGKILL);
+        }
+        let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    }
+
+    fn kill_spawned(result: &Result<ProcessRunResult, String>) {
+        if let Ok(spawned) = result {
+            kill_tree(spawned.pid);
+            if let Some(shell_pid) = spawned.shell_pid {
+                kill_tree(shell_pid);
+            }
+        }
+    }
+
+    #[test]
+    fn restore_spawns_processes_at_the_same_time_instead_of_one_after_another() {
+        // `opm restore` spawned one thread per process but each thread held the
+        // one shared runner lock for the whole restart, so restarts ran strictly
+        // one after another. Each job here sleeps 400 ms before it starts
+        // serving; serialized spawning would take 4 x 400 ms.
+        let mut jobs = Vec::new();
+        let mut dirs = Vec::new();
+
+        for i in 0..4 {
+            let (scratch, log_dir) = restore_fixture_dirs(&format!("parallel-{i}"));
+            let script = format!("/bin/sh -c 'sleep 0.4; exec sleep 3000 # restore parallel {i}'");
+            jobs.push(restore_fixture(&script, &scratch, &log_dir));
+            dirs.push(scratch);
+        }
+
+        let started = std::time::Instant::now();
+        let results = spawn_restore_batch(jobs);
+        let elapsed = started.elapsed();
+
+        for result in &results {
+            kill_spawned(result);
+        }
+        for dir in &dirs {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        let pids: Vec<i64> = results
+            .iter()
+            .map(|result| result.as_ref().expect("spawn must succeed").pid)
+            .collect();
+        assert!(
+            pids.iter().all(|pid| *pid > 0),
+            "every process must report a pid: {pids:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1200),
+            "4 jobs sleeping 400 ms each took {elapsed:?}; they were spawned one after another"
+        );
+    }
+
+    #[test]
+    fn restore_merge_installs_a_spawn_into_this_runners_own_entry() {
+        // The merge side of the restore path writes only the entry of the runner
+        // it is handed, from the outcome a worker reported, the way `restart`
+        // does after `process_run`.
+        let (scratch, log_dir) = restore_fixture_dirs("merge");
+        let job = restore_fixture(
+            "/bin/sh -c 'sleep 3000 # restore merge'",
+            &scratch,
+            &log_dir,
+        );
+
+        let mut runner = setup_test_runner();
+        let mut process = alloc_test_process(0);
+        process.name = "restore_fixture".to_string();
+        process.script = "/bin/sh -c 'sleep 3000 # restore merge'".to_string();
+        process.path = scratch.clone();
+        process.running = true;
+        process.pid = 0;
+        runner.list.insert(0, process);
+
+        let spawned = job.spawn().expect("spawn must succeed");
+        let merged = runner.merge_restore_spawn(0, spawned.clone());
+
+        let info = runner.info(0).unwrap();
+        let (pid, start_time, running, crashed) =
+            (info.pid, info.process_start_time, info.running, info.crash.crashed);
+        kill_spawned(&Ok(spawned.clone()));
+        let _ = std::fs::remove_dir_all(&scratch);
+
+        assert!(merged, "a fresh spawn must be installed");
+        assert_eq!(pid, spawned.pid, "the spawned pid must be installed");
+        assert_eq!(
+            start_time, spawned.start_time,
+            "the start time must be installed for PID reuse detection"
+        );
+        assert!(running, "a merged spawn leaves the process running");
+        assert!(!crashed, "a merged spawn is not a crash");
     }
 }
