@@ -1,6 +1,8 @@
 mod cli;
 mod daemon;
 mod globals;
+#[cfg(test)]
+mod test_hooks;
 mod webui;
 
 use clap::{Parser, Subcommand};

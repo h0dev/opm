@@ -2,7 +2,7 @@ use colored::Colorize;
 use lazy_static::lazy_static;
 use macros_rs::{crashln, string, ternary, then};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use opm::process::{unix::NativeProcess as Process, MemoryInfo};
+use opm::process::MemoryInfo;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
@@ -16,7 +16,8 @@ use opm::{
     helpers::{self, ColoredString},
     log,
     process::{
-        extract_search_pattern_from_command, get_process_cpu_usage_with_children_from_process, http,
+        self, extract_search_pattern_from_command,
+        get_process_cpu_usage_with_children_with_uptime, get_system_uptime, http,
         is_any_descendant_alive, is_pid_alive, ItemSingle, Runner,
     },
 };
@@ -123,6 +124,18 @@ pub struct Internal<'i> {
 }
 
 impl<'i> Internal<'i> {
+    /// The process `id` a single-process render shows, unless a test hooked one
+    /// in its place (a renderer loads its own runner the same way).
+    #[allow(unused_variables)]
+    fn loaded_process_of(id: usize) -> opm::process::Process {
+        #[cfg(test)]
+        if let Some(hooked) = crate::test_hooks::hooked_process(id) {
+            return hooked;
+        }
+
+        Runner::new().process(id).clone()
+    }
+
     pub fn create(
         mut self,
         script: &String,
@@ -698,8 +711,12 @@ impl<'i> Internal<'i> {
             if let Some(home) = home::home_dir() {
                 let full_config = config::read();
                 let config = full_config.runner;
-                let mut runner = Runner::new();
-                let item = runner.process(self.id);
+                let item = Internal::loaded_process_of(self.id);
+                let item = &item;
+
+                // One /proc/uptime read for the whole render, shared by the
+                // fast CPU reading below.
+                let listing_uptime = get_system_uptime();
 
                 // PM2-STYLE VALIDATION: Validate PID with sysinfo
                 // Check if process actually exists before reporting as online
@@ -766,16 +783,21 @@ impl<'i> Internal<'i> {
                     // For CPU, still use shell_pid as the root for tree traversal
                     let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
 
-                    if let Ok(process) = Process::new(pid_for_monitoring as u32) {
+                    // `get_cpu_percent_fast` (average since start) never sleeps:
+                    // a listing measures every process in turn, so the two-sample
+                    // read would cost a PROCESS_OPERATION_DELAY_MS sleep per row.
+                    if process::has_live_pid(pid_for_monitoring) {
+                        cpu_percent = Some(get_process_cpu_usage_with_children_with_uptime(
+                            pid_for_monitoring,
+                            listing_uptime,
+                        ));
+                        // The tree walk stays behind the provenance check, as
+                        // before: it costs several syscalls per process.
                         memory_usage = opm::process::get_process_tree_memory(
                             item.pid,
                             item.shell_pid,
                             &item.children,
                         );
-                        cpu_percent = Some(get_process_cpu_usage_with_children_from_process(
-                            &process,
-                            pid_for_monitoring,
-                        ));
                     }
                 }
 
@@ -1830,6 +1852,10 @@ impl<'i> Internal<'i> {
         // Check permissions for remote operations
         super::check_remote_permission(server_name);
 
+        // One /proc/uptime read for the whole listing; each row's fast CPU
+        // reading reuses it instead of paying a syscall per process.
+        let listing_uptime = get_system_uptime();
+
         let render_list = |runner: &mut Runner, internal: bool| {
             let mut processes: Vec<ProcessItem> = Vec::new();
 
@@ -1872,6 +1898,7 @@ impl<'i> Internal<'i> {
                 println!("{} Process table empty", *helpers::SUCCESS);
             } else {
                 for (id, item) in runner.items() {
+                    let item = &item;
                     let crash_detection_enabled = config::read().daemon.crash_detection;
 
                     // PM2-STYLE VALIDATION: Validate PID with sysinfo
@@ -1921,23 +1948,25 @@ impl<'i> Internal<'i> {
                             let mut usage_internals: (Option<f64>, Option<MemoryInfo>) =
                                 (None, None);
 
-                            // For shell scripts, use comprehensive tree memory aggregation
-                            // This includes shell_pid, main pid, and all tracked children
-                            let memory = opm::process::get_process_tree_memory(
-                                item.pid,
-                                item.shell_pid,
-                                &item.children,
-                            );
-
-                            // For CPU, still use shell_pid as the root for tree traversal
+                            // For CPU, use shell_pid as the root for tree traversal
                             let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-                            if let Ok(process) = Process::new(pid_for_monitoring as u32) {
-                                usage_internals = (
-                                    Some(get_process_cpu_usage_with_children_from_process(
-                                        &process,
+                            // `get_cpu_percent_fast` (average since start) never
+                            // sleeps: a listing measures every process in turn, so
+                            // the two-sample read would cost
+                            // PROCESS_OPERATION_DELAY_MS per row.
+                            if process::has_live_pid(pid_for_monitoring) {
+                                usage_internals.0 =
+                                    Some(get_process_cpu_usage_with_children_with_uptime(
                                         pid_for_monitoring,
-                                    )),
-                                    memory,
+                                        listing_uptime,
+                                    ));
+                                // For shell scripts, use comprehensive tree memory
+                                // aggregation (shell_pid, main pid, tracked children),
+                                // only when there is something to report.
+                                usage_internals.1 = opm::process::get_process_tree_memory(
+                                    item.pid,
+                                    item.shell_pid,
+                                    &item.children,
                                 );
                             }
 
@@ -2119,6 +2148,10 @@ impl<'i> Internal<'i> {
         if matches!(&**server_name, "internal" | "local" | "default") && runner_opt.is_some() {
             let mut runner_clone = runner_opt.unwrap().clone();
 
+            // One /proc/uptime read for the whole listing; each row's fast CPU
+            // reading reuses it instead of paying a syscall per process.
+            let listing_uptime = get_system_uptime();
+
             let render_list = |runner: &mut Runner, internal: bool| {
                 let mut processes: Vec<ProcessItem> = Vec::new();
 
@@ -2179,24 +2212,27 @@ impl<'i> Internal<'i> {
                                 let mut usage_internals: (Option<f64>, Option<MemoryInfo>) =
                                     (None, None);
 
-                                // For shell scripts, use comprehensive tree memory aggregation
-                                // This includes shell_pid, main pid, and all tracked children
-                                let memory = opm::process::get_process_tree_memory(
-                                    item.pid,
-                                    item.shell_pid,
-                                    &item.children,
-                                );
-
-                                // For CPU, still use shell_pid as the root for tree traversal
+                                // For CPU, use shell_pid as the root for tree traversal
                                 let pid_for_monitoring = item.shell_pid.unwrap_or(item.pid);
-                                if let Ok(process) = Process::new(pid_for_monitoring as u32) {
-                                    usage_internals = (
-                                        Some(get_process_cpu_usage_with_children_from_process(
-                                            &process,
+                                // `get_cpu_percent_fast` (average since start) never
+                                // sleeps: a listing measures every process in turn,
+                                // so the two-sample read would cost
+                                // PROCESS_OPERATION_DELAY_MS per row.
+                                if process::has_live_pid(pid_for_monitoring) {
+                                    usage_internals.0 =
+                                        Some(get_process_cpu_usage_with_children_with_uptime(
                                             pid_for_monitoring,
-                                        )),
-                                        memory,
-                                    );
+                                            listing_uptime,
+                                        ));
+                                    // For shell scripts, use comprehensive tree memory
+                                    // aggregation (shell_pid, main pid, tracked
+                                    // children), only when there is something to report.
+                                    usage_internals.1 =
+                                        opm::process::get_process_tree_memory(
+                                            item.pid,
+                                            item.shell_pid,
+                                            &item.children,
+                                        );
                                 }
 
                                 cpu_percent = match usage_internals.0 {
@@ -2324,6 +2360,125 @@ impl<'i> Internal<'i> {
     }
 }
 
+/// The CPU a listing shows must come from the fast (never-sleeping) reading.
+///
+/// A listing renders every process, so `Runner::build_process_item` — which both
+/// `opm list` and its json form go through — has to show the fast reading's
+/// average-since-start. A two-sample reading would instead sleep
+/// PROCESS_OPERATION_DELAY_MS per row and report the last 500 ms.
+#[cfg(test)]
+mod list_cpu_rendering_tests {
+    use super::*;
+
+    struct EnvRestore {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, "1");
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    /// The CPU column of the row a listing renders for `process`: the same
+    /// renderer, with the test's process in place of the one it loads.
+    fn shown_cpu(process: &opm::process::Process) -> String {
+        let runner = Runner::default();
+        let item = {
+            let _env = EnvRestore::set("OPM_TEST_LIST_CPU_PERCENT");
+            crate::test_hooks::hook_process(process.clone());
+            runner.build_process_item(process.id, process)
+        };
+
+        item.cpu
+    }
+
+    /// The fast reading's average since start, formatted as the column does.
+    fn fast_average(pid: i64) -> String {
+        format!(
+            "{:.2}%",
+            opm::process::get_process_cpu_usage_with_children_with_uptime(
+                pid,
+                opm::process::get_system_uptime()
+            )
+        )
+    }
+
+    /// A managed process rooted at `pid`.
+    fn running_process(id: usize, pid: i64) -> opm::process::Process {
+        let mut process = adjust_rename_tests::adjust_process(id, "cpu-probe", "sh -c 'sleep 30'");
+        process.pid = pid;
+        process.running = true;
+        process
+    }
+
+    /// That process with a tracked child that keeps the liveness checks a
+    /// listing does satisfied.
+    fn running_process_with_child(id: usize, pid: i64) -> opm::process::Process {
+        let mut process = running_process(id, pid);
+        process.children = vec![1];
+        process
+    }
+
+    #[test]
+    fn a_listing_shows_the_fast_average_since_start() {
+        let pid = std::process::id() as i64;
+        if opm::process::process_find_children(pid).is_empty() {
+            // A childless process reads 0.00%; the test needs a busy one.
+            return;
+        }
+
+        assert_eq!(
+            shown_cpu(&running_process(0, pid)),
+            fast_average(pid),
+            "a listing shows the fast average, not a two-sample reading"
+        );
+    }
+
+    #[test]
+    fn a_listing_measures_nothing_for_a_process_without_a_stat() {
+        // kill(0, 0) succeeds but there is no /proc/0/stat to read.
+        assert_eq!(
+            shown_cpu(&running_process_with_child(0, 0)),
+            "0.00%",
+            "nothing measurable must stay unmeasured"
+        );
+    }
+
+    #[test]
+    fn a_listing_never_sleeps_per_row() {
+        use std::time::Instant;
+
+        let process = running_process(0, std::process::id() as i64);
+
+        let start = Instant::now();
+        for _ in 0..10 {
+            let _ = shown_cpu(&process);
+        }
+        let duration = start.elapsed();
+
+        // Ten two-sample rows would sleep ten PROCESS_OPERATION_DELAY_MS times
+        // (5 s); ten fast rows only do filesystem work, which a loaded sandbox
+        // can stretch to tens of milliseconds per row.
+        assert!(
+            duration.as_millis() < 2000,
+            "ten rows must not cost ten PROCESS_OPERATION_DELAY_MS sleeps: {duration:?}"
+        );
+    }
+}
+
 /// `opm adjust` must persist its edit by id, whichever transport it uses.
 ///
 /// These pin the CLI's end state. The defect they accompany — a rename sent as a
@@ -2374,7 +2529,7 @@ mod adjust_rename_tests {
         dump::clear_memory();
     }
 
-    fn adjust_process(id: usize, name: &str, script: &str) -> opm::process::Process {
+    pub(super) fn adjust_process(id: usize, name: &str, script: &str) -> opm::process::Process {
         opm::process::Process {
             id,
             pid: 0,

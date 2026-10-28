@@ -7,7 +7,11 @@ pub mod memory;
 pub mod process_info;
 pub mod process_list;
 
-pub use cpu::{get_cpu_percent, get_cpu_percent_fast, get_effective_cpu_count};
+pub use cpu::{
+    get_cpu_percent, get_cpu_percent_fast, get_cpu_percent_fast_with, get_effective_cpu_count,
+};
+#[cfg(target_os = "linux")]
+pub use cpu::get_system_uptime;
 pub use env::{env, Vars};
 pub use memory::{get_memory_info, NativeMemoryInfo};
 pub use process_info::{
@@ -40,30 +44,30 @@ pub struct NativeProcess {
 
 impl NativeProcess {
     pub fn new(pid: u32) -> Result<Self, String> {
-        let ppid = get_parent_pid(pid as i32)?.map(|p| p as u32);
-        let name = get_process_name(pid)?;
-        let memory_info = get_memory_info(pid).ok();
         let cpu_percent = get_cpu_percent(pid);
-        let create_time = get_process_start_time(pid)?;
-
-        Ok(NativeProcess {
-            pid,
-            ppid,
-            name,
-            memory_info,
-            cpu_percent,
-            create_time,
-        })
+        Self::new_with_cpu(pid, cpu_percent)
     }
 
     /// Create a new NativeProcess using fast CPU calculation.
     /// This is much faster as it doesn't require delay-based sampling,
     /// but returns average CPU usage since process start instead of current usage.
     pub fn new_fast(pid: u32) -> Result<Self, String> {
+        let cpu_percent = get_cpu_percent_fast(pid);
+        Self::new_with_cpu(pid, cpu_percent)
+    }
+
+    /// Create a new NativeProcess with fast CPU calculation, reusing a system
+    /// uptime already sampled for the surrounding listing (one /proc/uptime read
+    /// per listing instead of one per process).
+    pub fn new_fast_with_uptime(pid: u32, system_uptime: Option<f64>) -> Result<Self, String> {
+        let cpu_percent = get_cpu_percent_fast_with(pid, system_uptime);
+        Self::new_with_cpu(pid, cpu_percent)
+    }
+
+    fn new_with_cpu(pid: u32, cpu_percent: f64) -> Result<Self, String> {
         let ppid = get_parent_pid(pid as i32)?.map(|p| p as u32);
         let name = get_process_name(pid)?;
         let memory_info = get_memory_info(pid).ok();
-        let cpu_percent = get_cpu_percent_fast(pid);
         let create_time = get_process_start_time(pid)?;
 
         Ok(NativeProcess {
