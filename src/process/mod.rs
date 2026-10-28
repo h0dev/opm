@@ -3159,6 +3159,29 @@ fn is_pid_terminating(pid: i64) -> bool {
     }
 }
 
+/// The current start time of a live process, as sysinfo reports it (the same
+/// clock `validate_process_with_sysinfo` records into `process_start_time`).
+/// `None` when the pid no longer exists.
+#[cfg(target_os = "linux")]
+fn current_process_start_time(pid: i64) -> Option<u64> {
+    validate_process_with_sysinfo(pid, None, None).1
+}
+
+/// Whether a recorded pid still belongs to the tracked process.
+///
+/// A pid alone is not an identity: once the tracked process dies the OS hands
+/// the number to an unrelated process, and signalling it would kill something
+/// opm never started. Without a recorded start time there is nothing to compare
+/// against, so the pid is not attributable and is left out — the session id and
+/// the tree are still walked.
+#[cfg(target_os = "linux")]
+fn pid_still_owned(pid: i64, recorded_start_time: Option<u64>) -> bool {
+    match recorded_start_time {
+        Some(recorded) => current_process_start_time(pid) == Some(recorded),
+        None => false,
+    }
+}
+
 /// Every process a daemon stop must signal, sorted and without duplicates.
 ///
 /// A managed process is spawned into its own session (`setsid()` in
@@ -3167,7 +3190,10 @@ fn is_pid_terminating(pid: i64) -> bool {
 /// only the session id still pointing at it. This collects the tracked pid, its
 /// recorded children, its session and the whole process tree under those pids.
 ///
-/// Only PIDs the runner tracks are included. The daemon's own process and its
+/// A recorded pid or child is only included while its current start time still
+/// matches the recorded `process_start_time`, so a pid the OS reused by an
+/// unrelated process is never signalled. A session id is kept because it is
+/// unique to the process group's lifetime. The daemon's own process and its
 /// session are dropped: PID 0, negative PIDs and the daemon's session would
 /// signal the daemon itself (and the daemon's session is shared with `opm` CLI
 /// invocations, which must keep running).
@@ -3184,10 +3210,14 @@ pub fn termination_targets(runner: &Runner) -> Vec<i64> {
     };
 
     for process in runner.list.values() {
-        push(&mut targets, process.pid);
+        if pid_still_owned(process.pid, process.process_start_time) {
+            push(&mut targets, process.pid);
+        }
 
         for &child in &process.children {
-            push(&mut targets, child);
+            if pid_still_owned(child, process.process_start_time) {
+                push(&mut targets, child);
+            }
         }
 
         if let Some(session_id) = process.session_id {
@@ -8266,18 +8296,25 @@ mod tests {
     fn test_termination_targets_cover_pid_children_and_session() {
         // A stale entry (dead pid) still carries the session id of the process
         // that escaped into its own session; that session must be signalled.
+        // The recorded children are live pids whose start time still matches.
+        let (live_pid, start_time) = live_pid_and_start_time();
+        let (other_live_pid, other_start_time) = live_pid_and_start_time();
+
         let mut runner = setup_test_runner();
-        runner
-            .list
-            .insert(0, termination_test_process("app", 0, Some(4242), vec![4243, 4244]));
-        runner
-            .list
-            .insert(1, termination_test_process("other", 0, Some(4242), vec![]));
+        let mut process = termination_test_process("app", 0, Some(4242), vec![live_pid]);
+        process.process_start_time = Some(start_time);
+        runner.list.insert(0, process);
+
+        let mut other = termination_test_process("other", other_live_pid, Some(4242), vec![]);
+        other.process_start_time = Some(other_start_time);
+        runner.list.insert(1, other);
 
         let mut targets = termination_targets(&runner);
+        kill_termination_fixture(live_pid);
+        kill_termination_fixture(other_live_pid);
         targets.sort_unstable();
 
-        assert_eq!(targets, vec![4242, 4243, 4244]);
+        assert_eq!(targets, vec![4242, live_pid, other_live_pid]);
     }
 
     #[cfg(target_os = "linux")]
@@ -8301,6 +8338,104 @@ mod tests {
 
         assert!(targets.contains(&fixture_pid));
         assert!(targets.contains(&session_id));
+    }
+
+    /// A live PID that cannot be recycled during the test, with its real start
+    /// time as sysinfo reports it (the same clock the runner records). The pid
+    /// has no children, so the tree walk finds nothing under it.
+    #[cfg(target_os = "linux")]
+    fn live_pid_and_start_time() -> (i64, u64) {
+        let fixture = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("trap '' TERM; while :; do :; done")
+            .spawn()
+            .expect("fixture failed to spawn");
+        let pid = fixture.id() as i64;
+
+        let start_time = validate_process_with_sysinfo(pid, None, None)
+            .1
+            .expect("fixture must be visible to sysinfo");
+
+        (pid, start_time)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn kill_termination_fixture(pid: i64) {
+        let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
+        for _ in 0..100 {
+            if !is_pid_alive(pid) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_exclude_a_pid_whose_start_time_moved() {
+        // The recorded PID died and the OS handed the number to an unrelated
+        // process. The recorded start time no longer matches, so it must not be
+        // signalled.
+        let (pid, start_time) = live_pid_and_start_time();
+
+        let mut runner = setup_test_runner();
+        let mut process = termination_test_process("reused", pid, None, vec![]);
+        process.process_start_time = Some(start_time.wrapping_add(4242));
+        runner.list.insert(0, process);
+
+        let targets = termination_targets(&runner);
+        kill_termination_fixture(pid);
+
+        assert!(!targets.contains(&pid), "a reused pid must not be signalled: {targets:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_include_a_pid_whose_start_time_matches() {
+        let (pid, start_time) = live_pid_and_start_time();
+
+        let mut runner = setup_test_runner();
+        let mut process = termination_test_process("owned", pid, None, vec![]);
+        process.process_start_time = Some(start_time);
+        runner.list.insert(0, process);
+
+        let targets = termination_targets(&runner);
+        kill_termination_fixture(pid);
+
+        assert!(targets.contains(&pid), "a matching start time must be signalled: {targets:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_without_a_recorded_start_time_do_not_signal_the_pid() {
+        // Nothing to compare against, so the pid cannot be attributed to the
+        // tracked process. Only the session (unique to the process group) and
+        // the tree under it remain.
+        let (pid, _) = live_pid_and_start_time();
+
+        let mut runner = setup_test_runner();
+        runner.list.insert(0, termination_test_process("unknown", pid, None, vec![]));
+
+        let targets = termination_targets(&runner);
+        kill_termination_fixture(pid);
+
+        assert!(!targets.contains(&pid), "an unknown start time must not be signalled: {targets:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_termination_targets_exclude_a_reused_child_pid() {
+        let (pid, start_time) = live_pid_and_start_time();
+
+        let mut runner = setup_test_runner();
+        let mut process = termination_test_process("parent", 0, None, vec![pid]);
+        process.process_start_time = Some(start_time.wrapping_add(1));
+        runner.list.insert(0, process);
+
+        let targets = termination_targets(&runner);
+        kill_termination_fixture(pid);
+
+        assert!(!targets.contains(&pid), "a reused child pid must not be signalled: {targets:?}");
     }
 
     #[cfg(target_os = "linux")]
