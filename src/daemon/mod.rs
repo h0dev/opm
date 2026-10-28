@@ -1687,6 +1687,12 @@ mod tests {
 
     static RESTORE_FLAG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    /// The signal-handler fallback keeps its state in process-wide atomics
+    /// (FALLBACK_ARMED, FALLBACK_DEADLINE_US, MONITOR_LOOP_PROGRESS,
+    /// SHUTDOWN_REQUESTED, LOOP_SHUTDOWN). Every test that touches them must
+    /// hold this, or they race each other under the parallel test runner.
+    static FALLBACK_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn test_restore_in_progress_flag() {
         let _guard = RESTORE_FLAG_TEST_LOCK
@@ -1918,6 +1924,9 @@ mod tests {
     /// deadlock the daemon and the grace timeout would never run.
     #[test]
     fn test_termination_handler_only_flags_and_arms_the_fallback() {
+        let _fallback_guard = FALLBACK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // Runs where a `libc::alarm` only costs this process's own timer: the
         // terminal signals a test runner sends are kept away for its duration.
         let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -2039,6 +2048,9 @@ mod tests {
 
     #[test]
     fn test_restart_progress_is_spent_once() {
+        let _fallback_guard = FALLBACK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         arm_fallback_at_clock_zero();
         FALLBACK_ARMED.store(false, Ordering::SeqCst);
         LOOP_SHUTDOWN.store(false, Ordering::SeqCst);
@@ -2083,6 +2095,9 @@ mod tests {
 
     #[test]
     fn test_fallback_grace_expires_after_the_deadline() {
+        let _fallback_guard = FALLBACK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         arm_fallback_at_clock_zero();
         FALLBACK_ARMED.store(false, Ordering::SeqCst);
         LOOP_SHUTDOWN.store(false, Ordering::SeqCst);
@@ -2106,6 +2121,9 @@ mod tests {
 
     #[test]
     fn test_fallback_terminates_the_snapshot_without_touching_the_cache() {
+        let _fallback_guard = FALLBACK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // The fallback runs in signal context, where taking the cache lock can
         // deadlock against a handler that interrupted the loop holding it.
         let guard = dump::memory_cache_mutex()
