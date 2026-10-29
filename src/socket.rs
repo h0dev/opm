@@ -538,9 +538,23 @@ fn merge_setstate(mut current: Runner, incoming: Runner) -> Runner {
             process.log_out = existing.log_out.clone();
             process.log_error = existing.log_error.clone();
 
+            // A manual stop is an instruction, not runtime state: it must survive
+            // the merge whatever the snapshot says, or the daemon sees a process
+            // that is supposed to be running, treats the exit as a crash and
+            // counts a restart the user never asked for.
+            if existing.manual_stop {
+                process.manual_stop = true;
+                process.running = false;
+            }
+
             // A snapshot with pid=0 (old dump, daemon restart, restore clearing
             // pids) must not wipe the live runtime state of a running process.
-            if existing.pid > 0 && process.pid == 0 {
+            //
+            // The exception is a stop: the caller cleared the pid on purpose, and
+            // putting it back would leave a stopped process looking like one that
+            // died while running, which the daemon restarts.
+            let stopping = process.manual_stop || existing.manual_stop;
+            if existing.pid > 0 && process.pid == 0 && !stopping {
                 process.pid = existing.pid;
                 process.shell_pid = existing.shell_pid;
                 process.children = existing.children.clone();

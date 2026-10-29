@@ -2118,6 +2118,13 @@ impl Runner {
             // Set manual_stop flag to indicate user-initiated stop
             // This prevents daemon from treating the exit as a crash
             process.manual_stop = true;
+            // Clear the pid in the same write. Leaving it set made the daemon see
+            // "was running, now gone" between this save and the kill, which is the
+            // shape of a crash - and it counted a restart nobody asked for.
+            // `children` stays until they are killed below, because the daemon
+            // must still be able to reach them if it reads this state.
+            process.pid = 0;
+            process.shell_pid = None;
             // Save state BEFORE killing to ensure daemon sees the flag first
             self.save();
 
