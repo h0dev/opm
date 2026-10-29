@@ -838,14 +838,14 @@ impl Runner {
             let dotenv_vars = load_dotenv(&path);
             let system_env = unix::env();
 
-            // Prepare process environment with dotenv variables having priority
+            // `Command::envs` lets a later entry win, so `.env` goes last: it is
+            // the most specific source and must override the inherited system
+            // environment.
             let mut process_env = Vec::with_capacity(dotenv_vars.len() + system_env.len());
-            // Add dotenv variables first (higher priority)
+            process_env.extend(system_env);
             for (key, value) in &dotenv_vars {
                 process_env.push(format!("{}={}", key, value));
             }
-            // Then add system environment
-            process_env.extend(system_env);
 
             let result = match process_run(ProcessMetadata {
                 args: config.args,
@@ -1124,7 +1124,8 @@ impl Runner {
             let dotenv_vars = load_dotenv(&path);
             let system_env = unix::env();
 
-            // Prepare process environment with dotenv variables having priority
+            // Later entries win in `Command::envs`, so `.env` goes last:
+            //   stored  <  system  <  .env from disk
             let stored_env_vec: Vec<String> = process
                 .env
                 .iter()
@@ -1132,14 +1133,11 @@ impl Runner {
                 .collect();
             let mut temp_env =
                 Vec::with_capacity(dotenv_vars.len() + stored_env_vec.len() + system_env.len());
-            // Add dotenv variables first (highest priority)
+            temp_env.extend(stored_env_vec);
+            temp_env.extend(system_env);
             for (key, value) in &dotenv_vars {
                 temp_env.push(format!("{}={}", key, value));
             }
-            // Then add stored environment
-            temp_env.extend(stored_env_vec);
-            // Finally add system environment
-            temp_env.extend(system_env);
 
             let result = match process_run(ProcessMetadata {
                 args: config.args,
@@ -1537,21 +1535,23 @@ impl Runner {
             let dotenv_vars = load_dotenv(&path);
             let system_env = unix::env();
 
-            // Prepare process environment with dotenv variables having priority
+            // Build the child environment. `Command::envs` lets a later entry win,
+            // so the order here IS the precedence:
+            //   stored  <  system  <  .env from disk
+            // `.env` must win: it is the only source that reflects an edit made
+            // since the process was created. Putting the stored copy last made a
+            // restart use the old value and ignore the edited `.env`.
             let stored_env_vec: Vec<String> = env
                 .iter()
                 .map(|(key, value)| format!("{}={}", key, value))
                 .collect();
             let mut temp_env =
                 Vec::with_capacity(dotenv_vars.len() + stored_env_vec.len() + system_env.len());
-            // Add dotenv variables first (highest priority)
+            temp_env.extend(stored_env_vec);
+            temp_env.extend(system_env);
             for (key, value) in &dotenv_vars {
                 temp_env.push(format!("{}={}", key, value));
             }
-            // Then add stored environment
-            temp_env.extend(stored_env_vec);
-            // Finally add system environment
-            temp_env.extend(system_env);
 
             // Start new process first
             let result = match process_run(ProcessMetadata {
@@ -4031,14 +4031,18 @@ impl RestoreSpawn {
         let dotenv_vars = load_dotenv(&workdir);
         let system_env = unix::env();
 
+        // `Command::envs` lets a later entry win, so the order is the precedence:
+        //   stored  <  system  <  .env from disk
+        // `.env` has to win, or an edit made since the process was created is
+        // ignored on restore.
         let mut env = Vec::with_capacity(dotenv_vars.len() + process.env.len() + system_env.len());
-        for (key, value) in &dotenv_vars {
-            env.push(format!("{}={}", key, value));
-        }
         for (key, value) in &process.env {
             env.push(format!("{}={}", key, value));
         }
         env.extend(system_env);
+        for (key, value) in &dotenv_vars {
+            env.push(format!("{}={}", key, value));
+        }
 
         RestoreSpawn {
             id: process.id,
@@ -4509,6 +4513,46 @@ where
 
 #[cfg(test)]
 mod tests {
+    /// `.env` must beat the environment stored with the process.
+    ///
+    /// `Command::envs` lets a later entry win, and the stored copy holds the
+    /// values from when the process was created. Listing it last meant an edit
+    /// to `.env` was ignored on restart and restore.
+    #[test]
+    fn dotenv_wins_over_the_stored_environment() {
+        let dir = std::env::temp_dir().join(format!("opm-dotenv-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        std::fs::write(dir.join(".env"), "SHARED=fresh\nONLY_DOTENV=yes\n").expect("write .env");
+
+        let dotenv = load_dotenv(&dir);
+
+        // Build the list the way the spawn path does and check which value a
+        // duplicate key ends up with: last one wins in `Command::envs`.
+        let stored = vec!["SHARED=stale".to_string(), "ONLY_STORED=yes".to_string()];
+        let system: Vec<String> = Vec::new();
+
+        let mut env = Vec::new();
+        env.extend(stored);
+        env.extend(system);
+        for (key, value) in &dotenv {
+            env.push(format!("{}={}", key, value));
+        }
+
+        let effective = |name: &str| -> Option<String> {
+            env.iter()
+                .filter_map(|entry| entry.split_once('='))
+                .filter(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+                .next_back()
+        };
+
+        assert_eq!(effective("SHARED").as_deref(), Some("fresh"));
+        assert_eq!(effective("ONLY_DOTENV").as_deref(), Some("yes"));
+        assert_eq!(effective("ONLY_STORED").as_deref(), Some("yes"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     use std::path::PathBuf;
     use std::thread;
