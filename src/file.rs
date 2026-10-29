@@ -23,10 +23,14 @@ pub fn logs_with_options(
     filter: Option<&str>,
     stats: bool,
 ) {
-    let log_file = match kind {
-        "out" => item.logs().out,
-        "error" => item.logs().error,
-        _ => item.logs().out,
+    // One file holds both streams; `kind` now only decides how lines are
+    // labelled and whether errors are filtered. A pinned path from an older
+    // process still wins, so logs written before the merge stay readable.
+    let logs = item.logs();
+    let log_file = if kind == "error" && logs.error != logs.out {
+        logs.error
+    } else {
+        logs.out
     };
 
     if !Exists::check(&log_file).empty() {
@@ -154,6 +158,21 @@ pub fn logs_internal_with_options(
     let mut filtered_lines = Vec::new();
 
     for (_, line) in lines.iter().skip(start_index).enumerate() {
+        // A line the process wrote to stderr carries this marker (see the spawn
+        // path); it is the only surviving sign of which stream produced it.
+        let is_error_line = line.starts_with("[ERR] ");
+        if log_type == "error" && !is_error_line {
+            continue;
+        }
+
+        // Strip the stream marker before anything reads the text; it is a tag
+        // from the writer, not part of what the process printed.
+        let line = if is_error_line {
+            line.trim_start_matches("[ERR] ").to_string()
+        } else {
+            line.clone()
+        };
+
         // Apply filter if provided
         if let Some(pattern) = filter {
             if !line.to_lowercase().contains(&pattern.to_lowercase()) {
@@ -162,7 +181,12 @@ pub fn logs_internal_with_options(
         }
 
         // Detect log level in the line content for better identification
-        let (level_indicator, line_color) = detect_log_level(&line, log_type);
+        // A stderr line is an error whatever its text says.
+        let (level_indicator, line_color) = if is_error_line {
+            (string!("ERR"), "red")
+        } else {
+            detect_log_level(&line, log_type)
+        };
 
         // Count log levels for statistics
         if level_indicator.contains("ERR") {

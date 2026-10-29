@@ -2483,13 +2483,18 @@ impl LogInfo {
 }
 
 impl Process {
-    /// Log paths a process gets on its first start, derived from its name
+    /// Log path a process gets on its first start, derived from its name.
+    ///
+    /// A process writes one log: stdout and stderr both go to it. `LogInfo`
+    /// still carries `out`/`error` because the reading side uses `error` to know
+    /// which lines to mark, and both point at the same file.
     pub fn default_logs(&self) -> LogInfo {
         let name = self.name.replace(" ", "_");
+        let path = global!("opm.logs", name.as_str());
 
         LogInfo {
-            out: global!("opm.logs.out", name.as_str()),
-            error: global!("opm.logs.error", name.as_str()),
+            out: path.clone(),
+            error: path,
         }
     }
 
@@ -4238,9 +4243,11 @@ where
     use std::fs::{self, OpenOptions};
     use std::process::{Command, Stdio};
 
+    // One log per process. stdout and stderr both land here, in the order the
+    // process produced them; stderr lines are prefixed by the reading side
+    // (`opm logs`), which is the only place the two can still be told apart.
     let log_base = format!("{}/{}", metadata.log_path, metadata.name.replace(' ', "_"));
-    let stdout_path = format!("{}-out.log", log_base);
-    let stderr_path = format!("{}-error.log", log_base);
+    let log_path = format!("{}.log", log_base);
 
     // Create parent directories for log files if they don't exist
     // This handles cases where process name contains slashes (e.g., "server/server.js")
@@ -4256,30 +4263,23 @@ where
         })?;
     }
 
-    // Create log files
-    let stdout_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&stdout_path)
-        .map_err(|err| {
-            format!(
-                "Failed to open stdout log file '{}': {}. \
-                Check that the directory exists and you have write permissions.",
-                stdout_path, err
-            )
-        })?;
+    // Two handles on one file: each writer appends at its own offset with
+    // O_APPEND, so neither can overwrite the other's lines.
+    let open_log = || {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|err| {
+                format!(
+                    "Failed to open log file '{}': {}. \
+                    Check that the directory exists and you have write permissions.",
+                    log_path, err
+                )
+            })
+    };
 
-    let stderr_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&stderr_path)
-        .map_err(|err| {
-            format!(
-                "Failed to open stderr log file '{}': {}. \
-                Check that the directory exists and you have write permissions.",
-                stderr_path, err
-            )
-        })?;
+    let stdout_file = open_log()?;
 
     // PM2-like execution strategy: spawn directly if possible, otherwise use shell
     // This eliminates the intermediate shell PID problem for simple commands
@@ -4323,7 +4323,9 @@ where
         }
     }))
     .stdout(Stdio::from(stdout_file))
-    .stderr(Stdio::from(stderr_file))
+    // stderr goes through a pipe so each line can be marked before it joins the
+    // same file; the reader thread below does that.
+    .stderr(Stdio::piped())
     .stdin(Stdio::null());
 
     // Create a new session for better process tree management
@@ -4341,7 +4343,7 @@ where
         }
     }
 
-    let child = cmd.spawn().map_err(|err| {
+    let mut child = cmd.spawn().map_err(|err| {
         // Provide more helpful error messages based on error kind
         match err.kind() {
             std::io::ErrorKind::NotFound => {
@@ -4411,6 +4413,42 @@ where
     // For direct spawns: this is the application PID
     // For shell-wrapped spawns: this is the shell wrapper PID
     let spawned_pid = child.id() as i64;
+
+    // Move stderr into the log as `[ERR]`-marked lines. The write end closes
+    // when the process (and everything it forked) exits, ending the loop.
+    if let Some(stderr) = child.stderr.take() {
+        let log_path = log_path.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+
+            let Ok(mut sink) = OpenOptions::new().create(true).append(true).open(&log_path) else {
+                // Nothing to log to: drain the pipe so the child never blocks.
+                let mut sink = std::io::sink();
+                let _ = std::io::copy(&mut BufReader::new(stderr), &mut sink);
+                return;
+            };
+
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let marked = if line.ends_with('\n') {
+                            format!("[ERR] {line}")
+                        } else {
+                            format!("[ERR] {line}\n")
+                        };
+                        if sink.write_all(marked.as_bytes()).is_err() {
+                            break;
+                        }
+                        let _ = sink.flush();
+                    }
+                }
+            }
+        });
+    }
 
     after_spawn();
 
@@ -4737,8 +4775,7 @@ mod tests {
     }
 
     fn init_test_log_globals() {
-        init!("opm.logs.out", "/var/log/opm/{}-out.log");
-        init!("opm.logs.error", "/var/log/opm/{}-error.log");
+        init!("opm.logs", "/var/log/opm/{}.log");
     }
 
     /// Global placeholders and `dump::MEMORY_CACHE` are process-wide singletons,
@@ -5116,14 +5153,13 @@ mod tests {
         assert_eq!(pinned.id, 0);
         let logs = pinned.logs();
         assert!(
-            logs.out.contains("test_3-out.log"),
+            logs.out.contains("test_3.log"),
             "log path must stay pinned to the original id after compaction, got {}",
             logs.out
         );
-        assert!(
-            logs.error.contains("test_3-error.log"),
-            "error log path must stay pinned to the original id after compaction, got {}",
-            logs.error
+        assert_eq!(
+            logs.out, logs.error,
+            "one log file serves both streams, so both paths are the same"
         );
 
         // A stale snapshot of the old state merged into a compacted runner must keep
@@ -5136,7 +5172,7 @@ mod tests {
 
         let logs = runner.list.get(&0).expect("process still present").logs();
         assert!(
-            logs.out.contains("test_3-out.log"),
+            logs.out.contains("test_3.log"),
             "pinned path must not be re-derived from a changed name/id, got {}",
             logs.out
         );
@@ -5156,8 +5192,8 @@ mod tests {
         assert_eq!(restored.log_out, None);
         assert_eq!(restored.log_error, None);
         let logs = restored.logs();
-        assert_eq!(logs.out, "/var/log/opm/test_0-out.log");
-        assert_eq!(logs.error, "/var/log/opm/test_0-error.log");
+        assert_eq!(logs.out, "/var/log/opm/test_0.log");
+        assert_eq!(logs.error, "/var/log/opm/test_0.log");
     }
 
     #[test]
@@ -5168,8 +5204,8 @@ mod tests {
 
         let logs = process.logs();
 
-        assert_eq!(logs.out, "/var/log/opm/test_0-out.log");
-        assert_eq!(logs.error, "/var/log/opm/test_0-error.log");
+        assert_eq!(logs.out, "/var/log/opm/test_0.log");
+        assert_eq!(logs.error, "/var/log/opm/test_0.log");
     }
 
     #[test]

@@ -1097,21 +1097,12 @@ impl<'i> Internal<'i> {
                 );
             }
 
-            if errors_only {
-                file::logs_with_options(item, *lines, "error", follow, filter, stats);
-            } else {
-                // When follow mode is enabled, we can't follow both logs simultaneously
-                // So we'll only display initial content for both, then follow stdout
-                if follow {
-                    println!("{}", "\n--- Error Logs (last lines) ---".bright_red());
-                    file::logs_with_options(item, *lines, "error", false, filter, false);
-                    println!("{}", "\n--- Standard Output (following) ---".bright_green());
-                    file::logs_with_options(item, *lines, "out", true, filter, stats);
-                } else {
-                    file::logs_with_options(item, *lines, "error", false, filter, stats);
-                    file::logs_with_options(item, *lines, "out", false, filter, stats);
-                }
-            }
+            // One log holds both streams, so it is read once. `kind` picks how
+            // lines are labelled: "error" marks and filters stderr lines, "out"
+            // shows everything. A process started before the merge still has two
+            // files, and the error kind resolves to its error file.
+            let kind = if errors_only { "error" } else { "out" };
+            file::logs_with_options(item, *lines, kind, follow, filter, stats);
         }
     }
 

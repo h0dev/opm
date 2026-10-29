@@ -64,11 +64,11 @@ pub(crate) fn init() {
             init!("opm.daemon.kind", config.daemon.kind);
             init!("opm.daemon.log", format!("{path}/.opm/daemon.log"));
 
-            let out = format!("{}/{{}}-out.log", config.runner.log_path);
-            let error = format!("{}/{{}}-error.log", config.runner.log_path);
+            // One log file per process: stdout and stderr are written to it
+            // together, so a reader never has to pick between two files.
+            let log_file = format!("{}/{{}}.log", config.runner.log_path);
 
-            init!("opm.logs.out", out);
-            init!("opm.logs.error", error);
+            init!("opm.logs", log_file);
         }
         None => crashln!("{} Impossible to get your home directory", *helpers::FAIL),
     }
