@@ -181,6 +181,13 @@ fn clock_ticks_per_sec() -> f64 {
 /// Listings measure many processes one after another, so the caller can read
 /// this once and hand it to [`get_cpu_percent_fast_with`] instead of paying a
 /// /proc/uptime read per process.
+/// macOS has no /proc/uptime; callers treat `None` as "read it yourself", and
+/// the fast CPU reading there comes from `ps` instead.
+#[cfg(target_os = "macos")]
+pub fn get_system_uptime() -> Option<f64> {
+    None
+}
+
 #[cfg(target_os = "linux")]
 pub fn get_system_uptime() -> Option<f64> {
     std::fs::read_to_string("/proc/uptime")
@@ -202,6 +209,15 @@ pub fn get_cpu_percent_fast(pid: u32) -> f64 {
 
 /// [`get_cpu_percent_fast`] with the system uptime already sampled.
 /// `None` re-reads /proc/uptime, so a failed read degrades instead of panicking.
+///
+/// macOS has no /proc/uptime to reuse: its fast reading comes from `ps`, which
+/// takes no uptime argument, so the parameter is accepted and ignored to keep
+/// one call shape for both platforms.
+#[cfg(target_os = "macos")]
+pub fn get_cpu_percent_fast_with(pid: u32, _system_uptime: Option<f64>) -> f64 {
+    get_cpu_percent_fast(pid)
+}
+
 #[cfg(target_os = "linux")]
 pub fn get_cpu_percent_fast_with(pid: u32, system_uptime: Option<f64>) -> f64 {
     use std::fs;

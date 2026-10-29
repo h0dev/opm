@@ -10,7 +10,6 @@ pub mod process_list;
 pub use cpu::{
     get_cpu_percent, get_cpu_percent_fast, get_cpu_percent_fast_with, get_effective_cpu_count,
 };
-#[cfg(target_os = "linux")]
 pub use cpu::get_system_uptime;
 pub use env::{env, Vars};
 pub use memory::{get_memory_info, NativeMemoryInfo};

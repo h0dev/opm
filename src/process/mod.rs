@@ -3450,10 +3450,31 @@ pub fn is_pid_finished(pid: i64) -> bool {
     }
 }
 
+/// Non-Linux fallback: sysinfo's zombie status is not portable, so a pid that
+/// sysinfo no longer lists is finished and a listed one is not. Shutdown waits
+/// are bounded by their grace period regardless.
+#[cfg(not(target_os = "linux"))]
+pub fn is_pid_finished(pid: i64) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    if pid <= 0 {
+        return true;
+    }
+
+    let mut system = System::new();
+    let sysinfo_pid = Pid::from_u32(pid as u32);
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        ProcessRefreshKind::new(),
+    );
+
+    system.process(sysinfo_pid).is_none()
+}
+
 /// The current start time of a live process, as sysinfo reports it (the same
 /// clock `validate_process_with_sysinfo` records into `process_start_time`).
 /// `None` when the pid no longer exists.
-#[cfg(target_os = "linux")]
 fn current_process_start_time(pid: i64) -> Option<u64> {
     validate_process_with_sysinfo(pid, None, None).1
 }
