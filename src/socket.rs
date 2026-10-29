@@ -592,9 +592,21 @@ fn merge_setstate(mut current: Runner, incoming: Runner) -> Runner {
         current.list.insert(id, process);
     }
 
-    let current_counter = current.id.counter.load(Ordering::SeqCst);
-    if incoming_counter > current_counter {
-        current.id.counter.store(incoming_counter, Ordering::SeqCst);
+    // The counter follows the ids that exist. Keeping the larger of the two
+    // counters preserved history that no longer exists: after a removal the
+    // daemon could hold a counter past the end of a contiguous list, and the
+    // next process got an id with a gap in front of it.
+    //
+    // `incoming_counter` is deliberately ignored: ids beyond this list are
+    // history, and `alloc_id` skips any id that is already taken.
+    let _ = incoming_counter;
+    if let Some(highest) = current.list.keys().copied().max() {
+        current
+            .id
+            .counter
+            .store(highest.saturating_add(1), Ordering::SeqCst);
+    } else {
+        current.id.counter.store(0, Ordering::SeqCst);
     }
 
     current

@@ -1791,8 +1791,6 @@ impl Runner {
             return; // Don't compact remote processes
         }
 
-        let counter_floor = self.id.counter.load(Ordering::SeqCst);
-
         // Renumber in a single pass on a rebuilt map. BTreeMap is already
         // sorted, so into_iter() yields items in ascending key order.
         let old_list = std::mem::replace(&mut self.list, BTreeMap::new());
@@ -1831,9 +1829,12 @@ impl Runner {
             );
         }
 
-        // Keep the counter ahead: never below the compacted length, never
-        // below the highest id issued so far.
-        let next_id = expected_len.max(counter_floor);
+        // The map is now 0..len-1, so the next id is exactly `len`. The counter
+        // must follow the ids that exist: keeping it at the highest id ever
+        // issued left gaps after a removal (ids 0..5 with a counter of 7), and
+        // the next process then got id 7 - a number no process had, in a list
+        // that was supposed to be contiguous.
+        let next_id = expected_len;
         self.id = id::Id::new(next_id);
         log::debug!(
             "[compact] Compaction complete, {} process(es), next ID: {}",
@@ -7481,15 +7482,14 @@ mod tests {
             "Third process should be process_4 (was ID 5)"
         );
 
-        // The counter may never move backwards: it was already 6 (ids 1..=5 were
-        // handed out), so it stays ahead of the renumbered 0..2 list.
+        // The list is 0..2, so the next id is 3 - right after it, with no gap.
         assert_eq!(
             runner.id.counter.load(Ordering::SeqCst),
-            6,
-            "Counter must not be rewound below the highest id ever issued"
+            3,
+            "Counter follows the ids that exist after compaction"
         );
         let next_id = runner.id.next();
-        assert_eq!(next_id, 6, "Next ID must stay ahead of the compacted list");
+        assert_eq!(next_id, 3, "Next ID continues right after the compacted list");
         assert!(
             !runner.exists(next_id),
             "Next ID from the counter must never collide with a compacted entry"
@@ -7497,27 +7497,25 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_counter_never_decreases() {
+    fn test_compact_counter_follows_the_ids_that_exist() {
         let mut runner = setup_test_runner();
 
-        // Two processes plus a counter far ahead of them (ids up to 24 were
-        // handed out in the past). The naive `max(list.len(), counter)` and the
-        // old `Id::new(list.len())` both lose that floor.
+        // A counter far ahead of the list (ids up to 24 were handed out in the
+        // past). Compaction makes the list 0..1, so the next id is 2 - keeping
+        // 25 would hand a new process an id with a gap in front of it.
         runner.list.insert(10, alloc_test_process(10));
         runner.list.insert(20, alloc_test_process(20));
-        runner.id = id::Id::new(25); // ids up to 24 were handed out in the past
+        runner.id = id::Id::new(25);
 
         runner.compact();
 
-        assert_eq!(runner.id.counter.load(Ordering::SeqCst), 25);
-        assert_eq!(runner.alloc_id(), 25, "fresh ids continue past the counter");
-        assert!(!runner.list.contains_key(&25));
+        assert_eq!(runner.id.counter.load(Ordering::SeqCst), 2);
+        assert_eq!(runner.alloc_id(), 2, "fresh ids continue right after the list");
     }
 
     #[test]
-    fn test_compact_empty_list_keeps_counter_floor() {
+    fn test_compact_empty_list_starts_again_from_zero() {
         let mut runner = setup_test_runner();
-        // A run that already consumed ids 1..=4 must not serve id 0 again as if new.
         runner.id = id::Id::new(4);
         runner.list.clear();
 
@@ -7525,8 +7523,8 @@ mod tests {
 
         assert_eq!(
             runner.id.counter.load(Ordering::SeqCst),
-            4,
-            "Empty compaction must not rewind the counter (previous floor is 4)"
+            0,
+            "with no processes left, the next one is id 0 again"
         );
     }
 
@@ -7586,7 +7584,8 @@ mod tests {
             runner.list.get(&2).unwrap().logs().out,
             "/var/log/opm/test_12-out.log"
         );
-        assert_eq!(runner.id.counter.load(Ordering::SeqCst), 13);
+        // 0..2 are taken, so the next id is 3: no gap for the next process.
+        assert_eq!(runner.id.counter.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -7683,6 +7682,45 @@ mod tests {
             process_item.restarts, 12,
             "Should display crash.value (12) consistently when crashed again"
         );
+    }
+
+    /// The reported case: seven processes, remove one, create one. The new
+    /// process must land on the free slot the compaction created, not on an id
+    /// past the end of the list.
+    #[test]
+    fn test_creating_after_a_removal_fills_the_compacted_list() {
+        // A real install starts numbering at 0; the shared fixture starts at 1.
+        let mut runner = Runner {
+            id: id::Id::new(0),
+            ..Default::default()
+        };
+        for i in 0..7 {
+            let id = runner.alloc_id();
+            let mut process = alloc_test_process(id);
+            process.name = format!("app{i}");
+            runner.list.insert(id, process);
+        }
+        assert_eq!(runner.list.keys().copied().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4, 5, 6]);
+
+        // Remove id 1 the way the CLI does: drop it, then compact. The counter
+        // is deliberately left ahead of the list first, which is the state a
+        // long-lived daemon reaches after its own restarts.
+        runner.id = id::Id::new(7);
+        runner.list.remove(&1);
+        runner.compact();
+        assert_eq!(runner.list.keys().copied().collect::<Vec<_>>(), vec![0, 1, 2, 3, 4, 5]);
+
+        let id = runner.alloc_id();
+        let mut process = alloc_test_process(id);
+        process.name = "fresh".to_string();
+        runner.list.insert(id, process);
+
+        assert_eq!(
+            runner.list.keys().copied().collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5, 6],
+            "a new process must take the next id in the list, not a gap after it"
+        );
+        assert_eq!(runner.info(6).unwrap().name, "fresh");
     }
 
     #[test]
@@ -7790,15 +7828,15 @@ mod tests {
             "ID 3 should be process_5"
         );
 
-        // The counter may never move backwards: it was already 7 (ids 1..=6 were
-        // handed out), so it stays ahead of the renumbered 0..3 list.
+        // The list is 0..3, so the next id is 4: the reported bug was a new
+        // process landing on 7 with ids 0..5 already in use.
         assert_eq!(
             runner.id.counter.load(Ordering::SeqCst),
-            7,
-            "Counter must not be rewound below the highest id ever issued"
+            4,
+            "Counter follows the ids that exist after compaction"
         );
         let next_id = runner.id.next();
-        assert_eq!(next_id, 7, "Next ID must stay ahead of the compacted list");
+        assert_eq!(next_id, 4, "Next ID continues right after the compacted list");
     }
 
     #[test]
