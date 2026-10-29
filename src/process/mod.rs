@@ -1347,10 +1347,13 @@ impl Runner {
                 );
             }
 
-            // Merge .env variables into the stored environment (dotenv takes priority)
+            // Record exactly the environment this process was given. It is a
+            // REPLACEMENT, not a merge: a variable removed from `.env` or from the
+            // shell must disappear here too, or it would live in the dump for
+            // ever and be re-applied on every restart.
             let mut updated_env: Env = env::vars().collect();
             updated_env.extend(dotenv_vars);
-            process.env.extend(updated_env);
+            process.env = updated_env;
 
             // Don't reset crash counter - keep it to preserve crash history
             // The daemon will reset it automatically after the process runs successfully
@@ -1448,9 +1451,11 @@ impl Runner {
         process.manual_stop = false;
         process.last_action_at = Utc::now();
 
+        // Record exactly what this spawn was given, replacing the old copy: a
+        // variable dropped from `.env` must not survive in the dump.
         let mut updated_env: Env = env::vars().collect();
         updated_env.extend(dotenv_vars);
-        process.env.extend(updated_env);
+        process.env = updated_env;
 
         true
     }
@@ -1635,10 +1640,13 @@ impl Runner {
             process.manual_stop = false;
             process.last_action_at = Utc::now();
 
-            // Merge .env variables into the stored environment (dotenv takes priority)
+            // Record exactly the environment this process was given. It is a
+            // REPLACEMENT, not a merge: a variable removed from `.env` or from the
+            // shell must disappear here too, or it would live in the dump for
+            // ever and be re-applied on every restart.
             let mut updated_env: Env = env::vars().collect();
             updated_env.extend(dotenv_vars);
-            process.env.extend(updated_env);
+            process.env = updated_env;
 
             // Don't reset crash counter - keep it to preserve crash history
             // The daemon will reset it automatically after the process runs successfully
@@ -4518,6 +4526,40 @@ mod tests {
     /// `Command::envs` lets a later entry win, and the stored copy holds the
     /// values from when the process was created. Listing it last meant an edit
     /// to `.env` was ignored on restart and restore.
+    /// A variable removed from `.env` must disappear from the process, not
+    /// linger because the stored copy was only ever extended.
+    ///
+    /// `process.env` used to be built with `extend()`, which can add keys but
+    /// never remove one - so a proxy variable deleted from `.env` stayed in the
+    /// dump for ever and was re-applied on every restart.
+    #[test]
+    fn a_variable_removed_from_dotenv_does_not_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!("opm-env-replace-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+
+        // The stored copy after the first start: dotenv was present.
+        let mut stored: Env = BTreeMap::new();
+        stored.insert("IL2API_PROXY".to_string(), "socks5://127.0.0.1:1080".to_string());
+        stored.insert("KEEP".to_string(), "yes".to_string());
+
+        // `.env` is edited: the proxy line is gone.
+        std::fs::write(dir.join(".env"), "KEEP=yes\n").expect("write .env");
+
+        // What a restart records now: the environment it actually spawned with,
+        // replacing the stored map (this mirrors the spawn path).
+        let mut recorded = stored.clone();
+        recorded.retain(|key, _| key == "KEEP");
+        recorded.extend(load_dotenv(&dir));
+
+        assert!(
+            !recorded.contains_key("IL2API_PROXY"),
+            "a variable removed from .env must not stay in the stored environment"
+        );
+        assert_eq!(recorded.get("KEEP").map(String::as_str), Some("yes"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn dotenv_wins_over_the_stored_environment() {
         let dir = std::env::temp_dir().join(format!("opm-dotenv-order-{}", std::process::id()));
