@@ -36,20 +36,27 @@ impl Repo {
         format!("{}/{}", self.owner, self.name)
     }
 
+    /// The newest published release.
+    ///
+    /// Releases are tagged `vMAJOR.MINOR.PATCH`; GitHub orders this list by
+    /// publication, and the workflow publishes one release per tag, so the first
+    /// entry is the newest build. `draft`/`prerelease` entries are filtered out
+    /// below so a half-finished release can never be installed.
     fn api_latest(&self) -> String {
         format!(
-            "https://api.github.com/repos/{}/{}/releases/tags/{RELEASE_TAG}",
+            "https://api.github.com/repos/{}/{}/releases?per_page=10",
             self.owner, self.name
         )
     }
 
-    fn asset_url(&self, asset: &str) -> String {
-        asset_url(&self.slug(), asset)
+    fn asset_url(&self, tag: &str, asset: &str) -> String {
+        format!("https://github.com/{}/releases/download/{tag}/{asset}", self.slug())
     }
 }
 
-pub fn asset_url(repo: &str, asset: &str) -> String {
-    format!("https://github.com/{repo}/releases/download/{RELEASE_TAG}/{asset}")
+/// Download URL for `asset` inside the release tagged `tag`.
+pub fn asset_url(repo: &str, tag: &str, asset: &str) -> String {
+    format!("https://github.com/{repo}/releases/download/{tag}/{asset}")
 }
 
 pub fn parse_repo(repo: &str) -> Result<Repo, String> {
@@ -281,20 +288,25 @@ fn commit_from_body(body: Option<&str>) -> Option<String> {
 impl Release {
     /// The release describes exactly this build, so re-installing it would
     /// download and swap in an identical binary.
+    /// The release is the build this binary was made from.
+    ///
+    /// The tag carries the version, so version equality is the primary test; the
+    /// commit in the body only breaks ties for builds that report no version
+    /// difference but come from another commit (a rebuild).
     fn is_this_build(&self) -> bool {
+        let same_version = parse_version(&self.tag) == parse_version(env!("CARGO_PKG_VERSION"));
+        if !same_version {
+            return false;
+        }
+
         let local = env!("GIT_HASH").trim().to_ascii_lowercase();
         if local.is_empty() {
-            return false;
+            return true;
         }
 
         match commit_from_body(self.body.as_deref()) {
             Some(remote) => remote.starts_with(&local) || local.starts_with(&remote),
-            // No identity to compare: only a tag that names a version can
-            // tell us the build is the same.
-            None => {
-                parse_version(&self.tag) == parse_version(env!("CARGO_PKG_VERSION"))
-                    && self.tag.to_ascii_lowercase() != RELEASE_TAG
-            }
+            None => true,
         }
     }
 }
@@ -342,15 +354,43 @@ fn fetch_release(client: &reqwest::blocking::Client, repo: &Repo) -> Result<Rele
         .json()
         .map_err(|err| format!("unexpected response from GitHub: {err}"))?;
 
-    let tag = body
+    let releases = body
+        .as_array()
+        .ok_or_else(|| "unexpected response from GitHub: expected a list of releases".to_string())?;
+
+    // Skip drafts and prereleases: only a finished release is installable.
+    //
+    // Builds published before versions were tagged carry the tag `latest` and are
+    // marked prerelease. They are accepted here only as the fallback when no
+    // versioned release exists yet, so migrating to versioned releases does not
+    // strand users who have that build installed.
+    let published = |release: &&serde_json::Value| {
+        !release.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
+            && !release
+                .get("prerelease")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+    };
+
+    let newest = releases
+        .iter()
+        .find(published)
+        .or_else(|| {
+            releases
+                .iter()
+                .find(|release| release.get("tag_name").and_then(|v| v.as_str()) == Some(RELEASE_TAG))
+        })
+        .ok_or_else(|| format!("{} has no published release yet", repo.slug()))?;
+
+    let tag = newest
         .get("tag_name")
         .and_then(|value| value.as_str())
-        .unwrap_or(RELEASE_TAG)
+        .ok_or_else(|| "release has no tag_name".to_string())?
         .to_string();
 
     Ok(Release {
         tag,
-        body: body
+        body: newest
             .get("body")
             .and_then(|value| value.as_str())
             .map(|body| body.to_string()),
@@ -360,10 +400,11 @@ fn fetch_release(client: &reqwest::blocking::Client, repo: &Repo) -> Result<Rele
 fn ensure_asset_exists(
     client: &reqwest::blocking::Client,
     repo: &Repo,
+    tag: &str,
     asset: &str,
 ) -> Result<(), String> {
     let response = client
-        .head(repo.asset_url(asset))
+        .head(repo.asset_url(tag, asset))
         .send()
         .map_err(|err| format!("cannot reach GitHub: {err}"))?;
 
@@ -521,10 +562,10 @@ pub fn run(options: Options) {
         commit_from_body(release.body.as_deref()).unwrap_or_else(|| release.tag.clone())
     );
 
-    if let Err(err) = ensure_asset_exists(&client, &repo, &asset) {
+    if let Err(err) = ensure_asset_exists(&client, &repo, &release.tag, &asset) {
         crashln!("{} {}", *helpers::FAIL, err);
     }
-    println!("  asset: {}", repo.asset_url(&asset));
+    println!("  asset: {}", repo.asset_url(&release.tag, &asset));
 
     if options.check {
         if same_build {
@@ -593,7 +634,7 @@ pub fn run(options: Options) {
         }
     }
 
-    let bytes = match download(&client, &repo.asset_url(&asset), &asset) {
+    let bytes = match download(&client, &repo.asset_url(&release.tag, &asset), &asset) {
         Ok(bytes) => bytes,
         Err(err) => crashln!("{} {}", *helpers::FAIL, err),
     };
@@ -763,7 +804,14 @@ mod tests {
 
     fn release(body: &str) -> Release {
         Release {
-            tag: "latest".to_string(),
+            tag: format!("v{}", env!("CARGO_PKG_VERSION")),
+            body: Some(body.to_string()),
+        }
+    }
+
+    fn release_tagged(tag: &str, body: &str) -> Release {
+        Release {
+            tag: tag.to_string(),
             body: Some(body.to_string()),
         }
     }
@@ -791,12 +839,14 @@ mod tests {
         let same = format!("## Latest Development Build\n\n**Commit:** {local}\n");
         let other = "## Latest Development Build\n\n**Commit:** 0123456789abcdef0123\n";
 
-        // the published build is this very commit: nothing to install
+        // same version and this very commit: nothing to install
         assert!(release(&same).is_this_build());
-        // another commit is a different, installable build
+        // same version from another commit is still a different build
         assert!(!release(other).is_this_build());
-        // a release without a commit cannot be proven to be this build
-        assert!(!release("## Latest Development Build").is_this_build());
+        // same version with no commit recorded is taken at face value
+        assert!(release("## build notes").is_this_build());
+        // a different version is always installable, whatever the commit says
+        assert!(!release_tagged("v9.9.9", &same).is_this_build());
     }
 
     // ---------------------------------------------------------------------
@@ -819,11 +869,22 @@ mod tests {
     }
 
     #[test]
-    fn builds_the_release_asset_url() {
+    fn builds_the_release_asset_url_from_a_version_tag() {
         assert_eq!(
-            asset_url("h0dev/opm", "opm-linux-x86_64"),
-            "https://github.com/h0dev/opm/releases/download/latest/opm-linux-x86_64"
+            asset_url("h0dev/opm", "v2.1.0", "opm-linux-x86_64"),
+            "https://github.com/h0dev/opm/releases/download/v2.1.0/opm-linux-x86_64"
         );
+    }
+
+    /// The tag carries the version, so a newer tag is what tells a user they can
+    /// upgrade - the commit hash in the body is not the signal.
+    #[test]
+    fn a_newer_version_tag_is_an_upgrade_from_an_older_build() {
+        assert!(version_is_newer("2.0.0", "v2.1.0"));
+        assert!(version_is_newer("2.1.0", "v2.2.0"));
+        assert!(version_is_newer("1.9.9", "v2.0.0"));
+        assert!(!version_is_newer("2.1.0", "v2.1.0"));
+        assert!(!version_is_newer("2.2.0", "v2.1.0"));
     }
 
     // ---------------------------------------------------------------------

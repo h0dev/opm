@@ -2,8 +2,13 @@ name: Build and Release Binaries
 
 on:
   push:
-    branches: [ "master" ]
+    tags: [ "v*" ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, as vMAJOR.MINOR.PATCH (e.g. v2.1.0)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -117,101 +122,76 @@ jobs:
           find artifacts -type f -name "opm-*" -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
-      - name: Delete existing release
-        continue-on-error: true
+      - name: Resolve the version being released
+        id: version
         run: |
-          gh release delete latest --yes || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
 
-      - name: Delete existing tag
-        continue-on-error: true
+          # One shape only: vMAJOR.MINOR.PATCH. The tag is the version users see
+          # and the one `opm update` compares against, so it is validated here
+          # rather than discovered later by a broken client.
+          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version '$VERSION' is not vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "number=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag matches Cargo.toml
         run: |
-          git push --delete origin latest || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANIFEST=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          if [ "$MANIFEST" != "${{ steps.version.outputs.number }}" ]; then
+            echo "::error::Cargo.toml is $MANIFEST but the tag is ${{ steps.version.outputs.version }}; bump Cargo.toml and commit before tagging"
+            exit 1
+          fi
 
-      - name: Create new release
-        uses: softprops/action-gh-release@v1
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest Development Build
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
           body: |
-            ## Latest Development Build
-            
-            This is an automatically generated release containing the latest builds from the master branch.
-            
-            **Commit:** ${{ github.sha }}
-            **Date:** ${{ github.event.head_commit.timestamp }}
-            
-            ### Available Binaries:
-            
-            #### Standard Binaries (without WebUI):
-            - `opm-linux-x86_64` - Linux (x86_64) - Built with Debian 10
-            - `opm-linux-aarch64` - Linux (ARM64) - Built with Debian 10
-            - `opm-macos-x86_64` - macOS (Intel)
-            - `opm-macos-aarch64` - macOS (Apple Silicon)
-            
-            #### WebUI-Enabled Binaries:
-            - `opm-linux-x86_64-webui` - Linux (x86_64) with WebUI - Built with Debian 10
-            - `opm-linux-aarch64-webui` - Linux (ARM64) with WebUI - Built with Debian 10
-            
-            > **Note:** Linux binaries are built with Debian 10 Docker for better compatibility with older systems.
-            > WebUI-enabled binaries include the web interface for managing processes via browser.
-            
-            ### Installation:
-            
-            #### Standard Build (Linux x86_64):
+            ## OPM ${{ steps.version.outputs.version }}
+
+            Built from commit ${{ github.sha }}.
+
+            **This build identifies itself as version ${{ steps.version.outputs.number }}**, and
+            `opm update` compares that version against the newest release, so upgrading
+            from any older build picks this one up.
+
+            ### Available binaries
+
+            | Asset | Platform |
+            |---|---|
+            | `opm-linux-x86_64` | Linux x86_64 (Debian 10, no WebUI) |
+            | `opm-linux-aarch64` | Linux ARM64 (Debian 10, no WebUI) |
+            | `opm-linux-x86_64-webui` | Linux x86_64 (Debian 10, with WebUI) |
+            | `opm-linux-aarch64-webui` | Linux ARM64 (Debian 10, with WebUI) |
+            | `opm-macos-x86_64` | macOS Intel |
+            | `opm-macos-aarch64` | macOS Apple Silicon |
+
+            ### Install or upgrade
+
             ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-x86_64
+            # Recommended: let opm replace itself, wherever it is installed
+            opm update --check
+            opm update --yes
+
+            # Or download an asset directly
+            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/opm-linux-x86_64
             chmod +x opm-linux-x86_64
             sudo mv opm-linux-x86_64 /usr/local/bin/opm
             ```
-            
-            #### WebUI Build (Linux x86_64):
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-x86_64-webui
-            chmod +x opm-linux-x86_64-webui
-            sudo mv opm-linux-x86_64-webui /usr/local/bin/opm
-            
-            # Start the daemon with WebUI enabled
-            opm daemon restore --api --webui
-            # Access the web interface at http://127.0.0.1:9876/
-            ```
-            
-            #### Standard Build (Linux ARM64):
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-aarch64
-            chmod +x opm-linux-aarch64
-            sudo mv opm-linux-aarch64 /usr/local/bin/opm
-            ```
-            
-            #### WebUI Build (Linux ARM64):
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-linux-aarch64-webui
-            chmod +x opm-linux-aarch64-webui
-            sudo mv opm-linux-aarch64-webui /usr/local/bin/opm
-            
-            # Start the daemon with WebUI enabled
-            opm daemon restore --api --webui
-            # Access the web interface at http://127.0.0.1:9876/
-            ```
-            
-            #### macOS (Intel):
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-macos-x86_64
-            chmod +x opm-macos-x86_64
-            sudo mv opm-macos-x86_64 /usr/local/bin/opm
-            ```
-            
-            #### macOS (Apple Silicon):
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/latest/opm-macos-aarch64
-            chmod +x opm-macos-aarch64
-            sudo mv opm-macos-aarch64 /usr/local/bin/opm
-            ```
+
+            `opm update` installs over the binary it is running from, so an install in
+            `~/.local/bin` or `/usr/local/bin` stays where it is.
           files: release-assets/*
-          draft: false
-          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
