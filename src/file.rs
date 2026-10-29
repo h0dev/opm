@@ -50,6 +50,7 @@ pub fn logs_with_options(
             &item.name,
             filter,
             stats,
+            item.logs().out == item.logs().error,
         );
 
         if follow {
@@ -125,6 +126,7 @@ pub fn logs_internal(
         item_name,
         None,
         false,
+        false,
     );
 }
 
@@ -137,6 +139,7 @@ pub fn logs_internal_with_options(
     item_name: &str,
     filter: Option<&str>,
     stats: bool,
+    merged_streams: bool,
 ) {
     println!(
         "{}",
@@ -180,11 +183,15 @@ pub fn logs_internal_with_options(
             }
         }
 
-        // Detect log level in the line content for better identification
-        // A stderr line is an error whatever its text says.
+        // The stream decides, not the text. Guessing from words ("failed" in a
+        // normal progress line) marked healthy output as an error, and a stderr
+        // line is one whatever it happens to say.
         let (level_indicator, line_color) = if is_error_line {
             (string!("ERR"), "red")
+        } else if merged_streams {
+            (string!("OUT"), "white")
         } else {
+            // A log written before the merge: the file itself is the stream.
             detect_log_level(&line, log_type)
         };
 

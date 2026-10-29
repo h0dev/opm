@@ -1070,8 +1070,10 @@ impl<'i> Internal<'i> {
                         continue;
                     }
 
+                    // A remote log is fetched per stream, so it is still two files.
                     file::logs_internal_with_options(
                         log.lines, *lines, log.path, self.id, kind, &item.name, filter, stats,
+                        false,
                     )
                 }
             }
