@@ -1,5 +1,5 @@
 [env]
-VERSION='2.1.5'
+VERSION='2.1.6'
 
 [tasks.build_all]
 info = "build all"
