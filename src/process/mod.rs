@@ -3967,6 +3967,46 @@ pub struct RestoreSpawn {
     previous_shell_pid: Option<i64>,
 }
 
+/// Restores the working directory and releases [`CWD_LOCK`] when dropped, so a
+/// panic in the spawn path cannot leave the process in another directory with
+/// the lock held.
+struct CwdScope {
+    original: Option<PathBuf>,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl CwdScope {
+    /// Enter `dir` under the lock, restoring the old directory on drop.
+    fn enter(dir: &std::path::Path) -> Result<Self, String> {
+        let guard = CWD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let original = std::env::current_dir().ok();
+
+        std::env::set_current_dir(dir).map_err(|err| {
+            if let Some(ref dir) = original {
+                let _ = std::env::set_current_dir(dir);
+            }
+            format!("Failed to set working directory {:?}: {}", dir, err)
+        })?;
+
+        Ok(CwdScope {
+            original,
+            _guard: guard,
+        })
+    }
+}
+
+impl Drop for CwdScope {
+    fn drop(&mut self) {
+        if let Some(ref dir) = self.original {
+            if let Err(err) = std::env::set_current_dir(dir) {
+                log::warn!("Failed to restore working directory after spawn: {}", err);
+            }
+        }
+    }
+}
+
 impl RestoreSpawn {
     /// Capture the spawn inputs for `process`.
     ///
@@ -4019,23 +4059,13 @@ impl RestoreSpawn {
     /// is process-wide), so concurrent callers never leave each other in another
     /// process's directory.
     pub fn spawn(&self) -> Result<ProcessRunResult, String> {
-        let cwd_guard = CWD_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let original_dir = std::env::current_dir().ok();
+        // The current directory is process-wide, so it is changed only while this
+        // scope is alive and restored before the next spawn thread is let in.
+        // Releasing it any earlier lets another thread change the directory under
+        // us, and a relative command like `./app` then resolves against the wrong
+        // place - the process comes back "not found".
+        let cwd_scope = CwdScope::enter(&self.workdir)?;
 
-        if let Err(err) = std::env::set_current_dir(&self.workdir) {
-            if let Some(dir) = original_dir {
-                let _ = std::env::set_current_dir(dir);
-            }
-            return Err(format!(
-                "Failed to set working directory {:?}: {}",
-                self.workdir,
-                err
-            ));
-        }
-
-        // The start time is resolved by `spawn_restore_batch` once every spawn
-        // has returned: resolving it here pays a process-table scan in the
-        // serialized working-directory section, which held all spawns apart.
         let result = process_run_with_hooks(
             ProcessMetadata {
                 args: self.metadata.args.clone(),
@@ -4046,14 +4076,12 @@ impl RestoreSpawn {
                 env: self.metadata.env.clone(),
             },
             |_| None,
-            || drop(cwd_guard),
+            // The child exists: the directory is no longer needed, so hand it
+            // back here rather than after the function returns. Waiting longer
+            // would hold every other spawn behind this one's shell-tree wait and
+            // turn the batch back into a sequence.
+            || drop(cwd_scope),
         );
-
-        if let Some(dir) = original_dir {
-            if let Err(err) = std::env::set_current_dir(&dir) {
-                log::warn!("Failed to restore working directory after restore spawn: {}", err);
-            }
-        }
 
         let result = result?;
 
@@ -9398,9 +9426,57 @@ mod tests {
         );
     }
 
+    /// A restarted process must come back even when its command is a relative
+    /// path and it is one of many spawned at once.
+    ///
+    /// The working directory is process-wide, so two spawn threads overlap there:
+    /// one restores the directory while another is still between setting it and
+    /// calling `Command::spawn`. When that window was open, `./app` was resolved
+    /// against the wrong directory and every such process came back
+    /// "Command './app' not found" - exactly what a container restart showed.
+    #[cfg(unix)]
     #[test]
-    fn restore_merge_installs_a_spawn_into_this_runners_own_entry() {
-        // The merge side of the restore path writes only the entry of the runner
+    fn restore_spawns_a_relative_command_in_its_own_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut jobs = Vec::new();
+        let mut dirs = Vec::new();
+
+        // Several processes, each with its own directory holding a script named
+        // the same way, all started by a relative path.
+        for i in 0..8 {
+            let (scratch, log_dir) = restore_fixture_dirs(&format!("relative-{i}"));
+            let executable = scratch.join("worker");
+            std::fs::write(&executable, "#!/bin/sh\nexec sleep 3000\n").expect("script");
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod");
+
+            jobs.push(restore_fixture("./worker", &scratch, &log_dir));
+            dirs.push((scratch, log_dir));
+        }
+
+        let results = spawn_restore_batch(jobs);
+
+        let failures: Vec<String> = results
+            .iter()
+            .filter_map(|result| result.as_ref().err().cloned())
+            .collect();
+        for result in &results {
+            kill_spawned(result);
+        }
+        for (dir, logs) in &dirs {
+            let _ = std::fs::remove_dir_all(dir);
+            let _ = std::fs::remove_dir_all(logs);
+        }
+
+        assert!(
+            failures.is_empty(),
+            "every relative command must spawn in its own directory, failed: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn restore_merge_installs_a_spawn_into_this_runners_own_entry() {        // The merge side of the restore path writes only the entry of the runner
         // it is handed, from the outcome a worker reported, the way `restart`
         // does after `process_run`.
         let (scratch, log_dir) = restore_fixture_dirs("merge");
