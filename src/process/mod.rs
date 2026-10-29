@@ -245,19 +245,16 @@ pub struct Process {
     /// Used to detect if any process in the session is still alive
     #[serde(default)]
     pub session_id: Option<i64>,
-    /// Start time of the session leader (same clock as `process_start_time`).
-    ///
-    /// A session id is a pid, and pids are recycled across reboots, so an id
-    /// recorded in the dump can later belong to an unrelated process. The
-    /// pre-restore cleanup only signals a process whose session matches AND
-    /// whose leader still has this start time, which a recycled id cannot
-    /// satisfy.
-    #[serde(default)]
-    pub session_start_time: Option<u64>,
     /// Process start time (system uptime seconds) for PID reuse detection
     /// Persisted to detect when PID has been recycled by OS
     #[serde(default)]
     pub process_start_time: Option<u64>,
+    /// PID opm recorded for this process when it spawned it, kept across the
+    /// dump so a later restore can confirm that the process still alive under a
+    /// recycled session id is really the one opm started. It is an identity
+    /// only: `pid` stays 0 in the dump, so nothing re-attaches to it.
+    #[serde(default)]
+    pub spawned_pid: Option<i64>,
     /// Indicates this process is a wrapper/tree (bash script with children)
     /// Used to display tree indicator in UI
     #[serde(default)]
@@ -978,8 +975,8 @@ impl Runner {
                     last_restart_attempt: None, // No restart attempt yet
                     failed_restart_attempts: 0, // No failures yet
                     session_id: result.session_id, // Store session ID for tracking
-                    session_start_time: session_leader_start_time(result.session_id),
                     process_start_time: result.start_time, // Store for PID reuse detection
+                    spawned_pid: (result.pid > 0).then_some(result.pid),
                     is_process_tree: result.shell_pid.is_some(), // Mark as tree if has shell wrapper
                     log_out: None,              // Pinned below from the concrete paths
                     log_error: None,
@@ -1290,8 +1287,8 @@ impl Runner {
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
             process.session_id = result.session_id;
-            process.session_start_time = session_leader_start_time(result.session_id);
             process.process_start_time = result.start_time;
+            process.spawned_pid = (result.pid > 0).then_some(result.pid);
             process.is_process_tree = result.shell_pid.is_some();
             process.running = true;
             process.started = Utc::now();
@@ -1435,7 +1432,6 @@ impl Runner {
             process.shell_pid = None;
             process.children = vec![];
             process.session_id = None;
-            process.session_start_time = None;
             process.process_start_time = None;
             process.running = false;
             return false;
@@ -1445,8 +1441,8 @@ impl Runner {
         process.pid = result.pid;
         process.shell_pid = result.shell_pid;
         process.session_id = result.session_id;
-        process.session_start_time = session_leader_start_time(result.session_id);
         process.process_start_time = result.start_time;
+        process.spawned_pid = (result.pid > 0).then_some(result.pid);
         process.is_process_tree = result.shell_pid.is_some();
         process.running = true;
         process.started = Utc::now();
@@ -1627,8 +1623,8 @@ impl Runner {
             process.pid = result.pid;
             process.shell_pid = result.shell_pid;
             process.session_id = result.session_id;
-            process.session_start_time = session_leader_start_time(result.session_id);
             process.process_start_time = result.start_time;
+            process.spawned_pid = (result.pid > 0).then_some(result.pid);
             process.is_process_tree = result.shell_pid.is_some();
             process.running = true;
             process.started = Utc::now();
@@ -3122,69 +3118,62 @@ pub fn find_processes_by_command_pattern(_pattern: &str) -> Vec<i64> {
 /// Kill only OPM-managed processes matching command patterns before restore
 /// This prevents port conflicts and resource issues while avoiding killing unrelated processes
 pub fn kill_old_processes_before_restore(
-    processes: &[(usize, String, Option<i64>, Option<u64>)],
+    processes: &[(usize, String, Option<i64>, Option<u64>, Option<i64>)],
 ) -> Result<(), String> {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::thread;
     use std::time::Duration;
 
     let mut killed_pids = Vec::new();
     
-    // Collect the OPM-managed sessions for filtering, with the start time of the
-    // leader that was recorded when the process was spawned.
+    // Processes we are willing to signal, verified against the identity opm
+    // recorded when it spawned them.
     //
-    // A session id is a pid, and pids are recycled: an id from a dump written
-    // before a reboot can belong to an unrelated process afterwards. Without the
-    // recorded leader start time, matching on the id alone would let this
-    // cleanup SIGKILL a user's process that merely shares the number, so an id
-    // whose leader start time is unknown is not used for matching at all.
-    let opm_sessions: HashMap<i64, Option<u64>> = processes
+    // A session id is a pid and pids are recycled, so neither the id nor a
+    // "leader looks consistent" check proves anything: an unrelated process
+    // that called setsid() looks exactly like an opm child. What an unrelated
+    // process cannot fake is being *the* pid opm spawned, still alive, still
+    // leading the recorded session, and still carrying the start time recorded
+    // at spawn. All four must hold.
+    let verified: HashSet<i64> = processes
         .iter()
-        .filter_map(|(id, _, session_id, session_start_time)| {
-            match (*session_id, *session_start_time) {
-                (None, _) => {
-                    ::log::debug!("Process ID {} has no session ID stored", id);
-                    None
-                }
-                (Some(session), None) => {
-                    ::log::debug!(
-                        "Process ID {} has session {} but no leader start time - not using it for cleanup",
-                        id,
-                        session
-                    );
-                    None
-                }
-                (Some(session), start) => Some((session, start)),
+        .filter_map(|(id, _, session_id, process_start_time, spawned_pid)| {
+            let (Some(session), Some(recorded_start), Some(spawned)) =
+                (*session_id, *process_start_time, *spawned_pid)
+            else {
+                ::log::debug!(
+                    "Process ID {} is missing its recorded identity (session/start/pid) - not usable for cleanup",
+                    id
+                );
+                return None;
+            };
+
+            let alive = is_pid_alive(spawned);
+            let leads = unix::get_session_id(spawned as i32) == Some(session);
+            let start_matches = current_process_start_time(spawned) == Some(recorded_start);
+
+            if alive && leads && start_matches {
+                Some(spawned)
+            } else {
+                ::log::debug!(
+                    "Recorded pid {} does not match what opm spawned (alive={}, leads={}, start_ok={}) - skipping",
+                    spawned,
+                    alive,
+                    leads,
+                    start_matches
+                );
+                None
             }
         })
         .collect();
-    
-    // SAFETY: If no verifiable session is available, skip all killing. Matching
-    // only by command pattern could terminate user processes.
-    if opm_sessions.is_empty() {
-        ::log::debug!("No verifiable OPM sessions in dump - skipping process cleanup");
+
+    // SAFETY: with nothing verifiable, skip all killing. Matching only by
+    // command pattern could terminate user processes.
+    if verified.is_empty() {
+        ::log::debug!("No verifiable OPM process in dump - skipping process cleanup");
         return Ok(());
     }
 
-    // Start times of the session ids we are willing to match, read once.
-    let mut verified_sessions: HashSet<i64> = HashSet::new();
-    for (session, recorded_start) in &opm_sessions {
-        if current_process_start_time(*session) == *recorded_start {
-            verified_sessions.insert(*session);
-        } else {
-            ::log::debug!(
-                "Session {} no longer has its recorded leader start time ({:?}) - stale id, ignoring",
-                session,
-                recorded_start
-            );
-        }
-    }
-
-    if verified_sessions.is_empty() {
-        ::log::debug!("No OPM session is still verifiable - skipping process cleanup");
-        return Ok(());
-    }
-    
     // Read the process table ONCE for the whole batch. Calling
     // `find_processes_by_command_pattern` per process re-scanned /proc (and read
     // every PID's cmdline) once per managed process, which made a 40-process
@@ -3201,7 +3190,7 @@ pub fn kill_old_processes_before_restore(
         })
         .unwrap_or_default();
 
-    for (_id, script, _session_id, _session_start) in processes {
+    for (_id, script, _session_id, _start, _spawned) in processes {
         // Extract search pattern from command (same logic as daemon adoption)
         let pattern = extract_search_pattern_from_command(script);
         
@@ -3226,9 +3215,9 @@ pub fn kill_old_processes_before_restore(
             // This prevents killing user shells and unrelated processes
             // We check if this PID belongs to any OPM-managed session
             let should_kill = if let Some(proc_session_id) = unix::get_session_id(pid as i32) {
-                if verified_sessions.contains(&proc_session_id) {
+                if verified.contains(&pid) {
                     ::log::info!(
-                        "Process PID {} belongs to OPM session {} - will kill", 
+                        "Killing recorded OPM process PID {} (session {})",
                         pid, proc_session_id
                     );
                     true
@@ -3449,20 +3438,6 @@ pub fn is_pid_finished(pid: i64) -> bool {
 #[cfg(target_os = "linux")]
 fn current_process_start_time(pid: i64) -> Option<u64> {
     validate_process_with_sysinfo(pid, None, None).1
-}
-
-/// Start time of the session leader for `session_id`, when it can be read.
-///
-/// Recorded next to `session_id` so a later cleanup can tell "the session opm
-/// spawned" from "a pid the OS recycled after a reboot".
-#[cfg(target_os = "linux")]
-fn session_leader_start_time(session_id: Option<i64>) -> Option<u64> {
-    session_id.and_then(|sid| current_process_start_time(sid))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn session_leader_start_time(_session_id: Option<i64>) -> Option<u64> {
-    None
 }
 
 /// Whether a recorded pid still belongs to the tracked process.
@@ -4658,8 +4633,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5455,8 +5430,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5495,8 +5470,8 @@ mod tests {
             last_restart_attempt: Some(Utc::now() - chrono::Duration::seconds(1)),
             failed_restart_attempts: 1,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5539,8 +5514,8 @@ mod tests {
             ),
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5582,8 +5557,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5642,8 +5617,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5739,8 +5714,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -5947,8 +5922,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6004,8 +5979,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6061,8 +6036,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6120,8 +6095,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6173,8 +6148,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6234,8 +6209,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6301,8 +6276,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6377,8 +6352,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6428,8 +6403,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6487,8 +6462,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6549,8 +6524,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6614,8 +6589,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6678,8 +6653,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6747,8 +6722,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -6895,8 +6870,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7010,8 +6985,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7115,8 +7090,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7297,8 +7272,8 @@ mod tests {
                 last_restart_attempt: None,
                 failed_restart_attempts: 0,
                 session_id: None,
-                session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7511,8 +7486,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7609,8 +7584,8 @@ mod tests {
                 last_restart_attempt: None,
                 failed_restart_attempts: 0,
                 session_id: None,
-                session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7722,8 +7697,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7796,8 +7771,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7867,8 +7842,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -7952,8 +7927,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8040,8 +8015,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8133,8 +8108,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8226,8 +8201,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8294,8 +8269,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8364,8 +8339,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8418,8 +8393,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8477,8 +8452,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8557,8 +8532,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8693,8 +8668,8 @@ mod tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: None,
             log_error: None,
@@ -8838,9 +8813,9 @@ mod tests {
         // Test that kill_old_processes_before_restore safely skips killing when no session IDs are available
         // This is critical to prevent killing unrelated processes
         let processes = vec![
-            (1, "node server.js".to_string(), None, None),
-            (2, "python app.py".to_string(), None, None),
-            (3, "java -jar app.jar".to_string(), None, None),
+            (1, "node server.js".to_string(), None, None, None),
+            (2, "python app.py".to_string(), None, None, None),
+            (3, "java -jar app.jar".to_string(), None, None, None),
         ];
 
         // Should return Ok and not panic or kill anything
@@ -8851,56 +8826,94 @@ mod tests {
     #[test]
     fn test_kill_old_processes_before_restore_empty_list() {
         // Test that an empty process list is handled correctly
-        let processes: Vec<(usize, String, Option<i64>, Option<u64>)> = vec![];
+        let processes: Vec<(usize, String, Option<i64>, Option<u64>, Option<i64>)> = vec![];
         let result = kill_old_processes_before_restore(&processes);
         assert!(result.is_ok(), "Should succeed with empty list");
     }
 
-    /// A session id from an older dump can belong to an unrelated process after
-    /// a reboot. Cleanup must never signal a process whose recorded leader start
-    /// time no longer matches.
+    /// Cleanup must signal exactly the pid opm recorded, and only while that
+    /// pid is still the process opm spawned.
+    ///
+    /// A session id is a pid and pids are recycled, so a dump can name a number
+    /// that now belongs to something opm never started. The recorded pid is the
+    /// identity: if it is alive, leads the recorded session and still has the
+    /// recorded start time, it is the process opm started; otherwise nothing is
+    /// signalled.
     #[cfg(target_os = "linux")]
     #[test]
-    fn test_kill_old_processes_ignores_a_reused_session_id() {
-        use std::os::unix::process::CommandExt;
-
-        // A process opm never started, leading its own session, whose cmdline
-        // matches the pattern an opm-managed script would produce.
-        let mut victim = unsafe {
-            std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg("exec sleep 7000")
-                .stdin(std::process::Stdio::null())
-                .pre_exec(|| {
-                    libc::setsid();
-                    Ok(())
-                })
-                .spawn()
-                .expect("victim should spawn")
-        };
+    fn test_kill_old_processes_does_not_kill_a_process_whose_recorded_pid_differs() {
+        let mut victim = spawn_session_script("victim");
         let victim_pid = victim.id() as i64;
-        std::thread::sleep(std::time::Duration::from_millis(400));
-
         let session = unix::get_session_id(victim_pid as i32);
-        assert_eq!(session, Some(victim_pid), "victim leads its own session");
+        let own_start = validate_process_with_sysinfo(victim_pid, None, None).1;
 
-        // A start time that cannot be the leader's own: the id was recycled.
-        let stale_start = Some(1u64);
-        let processes = vec![(0usize, "sleep 7000".to_string(), session, stale_start)];
+        // The dump names a DIFFERENT pid than the one now serving this session,
+        // which is what a recycled id looks like. The victim must survive.
+        let processes = vec![(
+            0usize,
+            "while true".to_string(),
+            session,
+            own_start,
+            Some(victim_pid + 100_000),
+        )];
         let _ = kill_old_processes_before_restore(&processes);
 
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        thread::sleep(Duration::from_millis(300));
         let alive = is_pid_alive(victim_pid);
-        let _ = victim.kill();
-        let _ = victim.wait();
+        kill_and_reap(&mut victim);
 
         assert!(
             alive,
-            "cleanup killed pid {victim_pid} (an unrelated process) because only the \
-             session id was checked; the recorded leader start time must be verified"
+            "cleanup killed pid {victim_pid} although the dump recorded a different pid"
         );
     }
 
+    /// A process opm really did spawn in this session is cleaned up.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_kill_old_processes_cleans_up_the_recorded_pid() {
+        let mut victim = spawn_session_script("owned");
+        let victim_pid = victim.id() as i64;
+        let session = unix::get_session_id(victim_pid as i32);
+        let own_start = validate_process_with_sysinfo(victim_pid, None, None).1;
+
+        let processes = vec![(
+            0usize,
+            "while true".to_string(),
+            session,
+            own_start,
+            Some(victim_pid),
+        )];
+        let _ = kill_old_processes_before_restore(&processes);
+
+        thread::sleep(Duration::from_millis(400));
+        let alive = is_pid_alive(victim_pid);
+        kill_and_reap(&mut victim);
+
+        assert!(!alive, "the recorded pid should have been cleaned up");
+    }
+
+    /// The safe direction: a session whose leader is gone, or whose recorded
+    /// start time no longer matches, is skipped rather than guessed at.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_kill_old_processes_skips_a_session_whose_start_time_does_not_match() {
+        let mut victim = spawn_session_script("stale");
+        let victim_pid = victim.id() as i64;
+        let session = unix::get_session_id(victim_pid as i32);
+
+        // A start time that cannot be the leader's.
+        let stale = Some(1u64);
+        let processes = vec![(0usize, "while true".to_string(), session, stale, Some(victim_pid))];
+        let result = kill_old_processes_before_restore(&processes);
+
+        thread::sleep(Duration::from_millis(200));
+        let alive = is_pid_alive(victim_pid);
+        kill_and_reap(&mut victim);
+
+        assert!(result.is_ok());
+        assert!(alive, "a session with a mismatched start time must not be touched");
+    }
 
     // ------------------------------------------------------------------
     // daemon stop: termination targets and signalling

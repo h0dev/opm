@@ -56,16 +56,16 @@ fn permanent_snapshot(source: &Runner) -> Runner {
     let mut snapshot = source.clone();
 
     for process in snapshot.list.values_mut() {
+        // The live handle goes, the IDENTITY stays: `spawned_pid`,
+        // `session_id` and `process_start_time` describe the process opm
+        // started, and `kill_old_processes_before_restore` verifies all three
+        // before it signals anything. They are never used to re-attach (restore
+        // sets `pid` to 0 before spawning). Stripping them required matching on
+        // a command pattern alone, which is how generations accumulated.
+        process.spawned_pid = (process.pid > 0).then_some(process.pid);
         process.pid = 0;
         process.shell_pid = None;
         process.children.clear();
-        // `session_id` is deliberately kept. It is how
-        // `kill_old_processes_before_restore` recognises processes opm started
-        // (it skips the whole cleanup when no session id is recorded), so
-        // clearing it here made every restore leave the previous generation
-        // running. Unlike a pid it is not reused by unrelated processes while
-        // its leader lives.
-        process.process_start_time = None;
         process.is_process_tree = false;
     }
 

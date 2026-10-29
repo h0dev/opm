@@ -1351,12 +1351,12 @@ impl<'i> Internal<'i> {
 
         let mut runner_temp = Runner::new();
 
-        let processes_to_check: Vec<(usize, String, Option<i64>, Option<u64>)> = runner_temp
+        let processes_to_check: Vec<(usize, String, Option<i64>, Option<u64>, Option<i64>)> = runner_temp
             .list()
             .filter_map(|(id, p)| {
                 // Only check processes that will be restored (running=true)
                 if p.running {
-                    Some((*id, p.script.clone(), p.session_id, p.session_start_time))
+                    Some((*id, p.script.clone(), p.session_id, p.process_start_time, p.spawned_pid))
                 } else {
                     None
                 }
@@ -2551,8 +2551,8 @@ mod adjust_rename_tests {
             last_restart_attempt: None,
             failed_restart_attempts: 0,
             session_id: None,
-            session_start_time: None,
             process_start_time: None,
+            spawned_pid: None,
             is_process_tree: false,
             log_out: Some("/var/log/opm/app1-out.log".to_string()),
             log_error: Some("/var/log/opm/app1-error.log".to_string()),
