@@ -435,8 +435,30 @@ fn escalate(command: &str) -> ! {
         *helpers::FAIL,
         "the directory holding this binary"
     );
+
+    // The user asked for the update, so try the elevation ourselves rather than
+    // leaving them to copy the command. If sudo is unavailable or refused we
+    // print it, which is still the fallback.
+    if sudo_available() {
+        eprintln!("{} Re-running with sudo: {}", *helpers::INFO, command);
+        restart_privileged(command);
+    }
+
     eprintln!("{} Run: {}", *helpers::INFO, command);
     std::process::exit(1);
+}
+
+/// Whether a bare `sudo -n true` can run without prompting here.
+fn sudo_available() -> bool {
+    Command::new("sudo")
+        .arg("-n")
+        .arg("true")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn restart_privileged(command: &str) -> ! {
@@ -605,18 +627,38 @@ fn local_build() -> String {
 }
 
 /// This command line, so a privileged re-run does the same thing.
+///
+/// The binary is named by its own path, not as `opm`: a user may have installed
+/// it under `~/.local/bin`, `/usr/local/bin`, or a name of their own, and the
+/// re-run must replace the same file it is running from. Arguments are quoted
+/// so a path or option value containing spaces survives.
 fn self_invocation(options: &Options) -> String {
-    let mut command = String::from("opm update --yes");
+    let binary = running_binary()
+        .map(|path| shell_quote(&path.to_string_lossy()))
+        .unwrap_or_else(|_| "opm".to_string());
+
+    let mut command = format!("{binary} update --yes");
     if options.force {
         command.push_str(" --force");
     }
     if let Some(asset) = &options.asset {
-        command.push_str(&format!(" --asset {asset}"));
+        command.push_str(&format!(" --asset {}", shell_quote(asset)));
     }
     if options.repo != DEFAULT_REPO {
-        command.push_str(&format!(" --repo {}", options.repo));
+        command.push_str(&format!(" --repo {}", shell_quote(&options.repo)));
     }
     command
+}
+
+/// Single-quote a value for a shell, so paths with spaces stay one argument.
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ':' | '@'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -894,5 +936,59 @@ mod tests {
     fn the_default_repo_is_the_one_named_in_help() {
         assert_eq!(DEFAULT_REPO, "h0dev/opm");
         assert!(parse_repo(DEFAULT_REPO).is_ok());
+    }
+
+    /// A privileged re-run must replace the binary that is running, not whatever
+    /// `opm` happens to resolve to on PATH. Installed at ~/.local/bin or
+    /// /usr/bin, the update stays there.
+    #[test]
+    fn self_invocation_names_this_binary_by_path() {
+        let options = Options {
+            check: false,
+            yes: true,
+            force: false,
+            asset: None,
+            repo: DEFAULT_REPO.to_string(),
+        };
+
+        let command = self_invocation(&options);
+        let running = running_binary().expect("this test runs from a binary");
+        let expected = shell_quote(&running.to_string_lossy());
+
+        assert!(
+            command.starts_with(&format!("{expected} update --yes")),
+            "expected the running binary's own path, got: {command}"
+        );
+        assert!(
+            running.is_absolute(),
+            "the re-run needs an absolute path so PATH order cannot pick another binary"
+        );
+    }
+
+    #[test]
+    fn self_invocation_carries_options_and_quotes_them() {
+        let options = Options {
+            check: false,
+            yes: true,
+            force: true,
+            asset: Some("my asset".to_string()),
+            repo: "owner/repo".to_string(),
+        };
+
+        let command = self_invocation(&options);
+        assert!(command.contains("--force"), "got: {command}");
+        assert!(
+            command.contains("--asset 'my asset'"),
+            "a value with a space must stay one argument, got: {command}"
+        );
+        assert!(command.contains("--repo owner/repo"), "got: {command}");
+    }
+
+    #[test]
+    fn shell_quote_leaves_plain_paths_alone_and_escapes_the_rest() {
+        assert_eq!(shell_quote("/usr/local/bin/opm"), "/usr/local/bin/opm");
+        assert_eq!(shell_quote("/home/u/.local/bin/opm"), "/home/u/.local/bin/opm");
+        assert_eq!(shell_quote("/tmp/a b/opm"), "'/tmp/a b/opm'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
     }
 }

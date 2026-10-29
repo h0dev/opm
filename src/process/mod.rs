@@ -3044,21 +3044,39 @@ pub fn force_kill_process_tree(pid: i64) -> Result<(), String> {
     }
 
     // Get all children before killing parent
-    let children = process_find_children(pid);
+    let mut targets = process_find_children(pid);
+    targets.push(pid);
 
-    // Kill all children first with SIGKILL
-    for child_pid in children {
-        let _ = kill(Pid::from_raw(child_pid as i32), Signal::SIGKILL);
-        // Continue even if killing child processes fails
+    // Ask first: a SIGKILLed process cannot flush, close sockets or write its
+    // shutdown state, which turns restoring a well-behaved service into data
+    // loss. Everyone gets SIGTERM, a short grace period, and only survivors are
+    // killed outright.
+    for target in &targets {
+        let _ = kill(Pid::from_raw(*target as i32), Signal::SIGTERM);
     }
 
-    // Kill parent process with SIGKILL
+    let deadline = std::time::Instant::now() + Duration::from_millis(PROCESS_CLEANUP_WAIT_MS);
+    let mut survivors: Vec<i64> = Vec::new();
+    loop {
+        survivors = targets.iter().copied().filter(|t| is_pid_alive(*t)).collect();
+        if survivors.is_empty() || std::time::Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_millis(TERMINATION_CHECK_INTERVAL_MS));
+    }
+
+    if survivors.is_empty() {
+        return Ok(());
+    }
+
+    // Children first so the parent cannot keep respawning them.
+    for target in survivors.iter().rev() {
+        let _ = kill(Pid::from_raw(*target as i32), Signal::SIGKILL);
+    }
+
     match kill(Pid::from_raw(pid as i32), Signal::SIGKILL) {
         Ok(_) => Ok(()),
-        Err(nix::errno::Errno::ESRCH) => {
-            // Process already terminated
-            Ok(())
-        }
+        Err(nix::errno::Errno::ESRCH) => Ok(()),
         Err(err) => Err(format!("Failed to force kill process {}: {:?}", pid, err)),
     }
 }
@@ -3546,6 +3564,34 @@ pub fn terminate_tracked_processes(_runner: &Runner, _grace: Duration) {}
 
 /// Check if any descendant (or the root PID) in the tracked set is alive
 /// This includes the root pid, children, and grandchildren
+/// Whether any part of a managed process is still running.
+///
+/// This is the single definition of "alive" for a `Process`: the daemon uses it
+/// to decide on crash/restart, and the listing uses it to render status, so the
+/// two can never disagree about a process. It checks the main pid, the shell
+/// wrapper, any tracked child, and the session (which outlives a leader that
+/// exited while members kept running).
+pub fn is_process_still_alive(process: &Process) -> bool {
+    let shell_alive = process.shell_pid.map_or(false, |pid| is_pid_alive(pid));
+    let session_alive = process
+        .session_id
+        .map_or(false, |sid| is_session_alive(sid));
+
+    let main_or_shell_alive =
+        process.pid > 0 && (is_pid_alive(process.pid) || shell_alive || session_alive);
+
+    let tree_alive = if process.pid > 0 {
+        is_process_or_children_alive_sysinfo(process.pid, &process.children)
+    } else {
+        process
+            .children
+            .iter()
+            .any(|&child_pid| is_pid_alive(child_pid))
+    };
+
+    main_or_shell_alive || tree_alive || session_alive
+}
+
 pub fn is_any_descendant_alive(root_pid: i64, children: &[i64]) -> bool {
     // Check root PID first
     if is_pid_alive(root_pid) {

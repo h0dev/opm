@@ -218,29 +218,6 @@ fn should_fail_process_validation(
     start_time_mismatch || !pid_alive
 }
 
-fn is_process_still_alive(process: &opm::process::Process) -> bool {
-    let shell_alive = process
-        .shell_pid
-        .map_or(false, |pid| opm::process::is_pid_alive(pid));
-    let session_alive = process
-        .session_id
-        .map_or(false, |sid| opm::process::is_session_alive(sid));
-
-    let main_or_shell_alive = process.pid > 0
-        && (opm::process::is_pid_alive(process.pid) || shell_alive || session_alive);
-
-    let tree_alive = if process.pid > 0 {
-        opm::process::is_process_or_children_alive_sysinfo(process.pid, &process.children)
-    } else {
-        process
-            .children
-            .iter()
-            .any(|&child_pid| opm::process::is_pid_alive(child_pid))
-    };
-
-    main_or_shell_alive || tree_alive || session_alive
-}
-
 fn should_start_process_without_pid(
     snapshot: &opm::process::Process,
     latest: Option<&opm::process::Process>,
@@ -254,7 +231,7 @@ fn should_start_process_without_pid(
     candidate.running
         && candidate.pid == 0
         && !candidate.crash.crashed
-        && !is_process_still_alive(candidate)
+        && !opm::process::is_process_still_alive(candidate)
 }
 
 fn restart_process() {
@@ -687,7 +664,7 @@ fn restart_process() {
                     if let Some(proc) = updated_process {
                         log!("[daemon] checking if process is running", "id" => id, "running" => proc.running, "restarts" => proc.restarts);
                         if proc.running {
-                            if is_process_still_alive(&proc) {
+                            if opm::process::is_process_still_alive(&proc) {
                                 log!("[daemon] skipping restart because process is still alive", "name" => &proc.name, "id" => id, "pid" => proc.pid, "shell_pid" => format!("{:?}", proc.shell_pid));
                                 continue;
                             }

@@ -18,7 +18,7 @@ use opm::{
     process::{
         self, extract_search_pattern_from_command,
         get_process_cpu_usage_with_children_with_uptime, get_system_uptime, http,
-        is_any_descendant_alive, is_pid_alive, ItemSingle, Runner,
+        is_pid_alive, ItemSingle, Runner,
     },
 };
 
@@ -1919,18 +1919,12 @@ impl<'i> Internal<'i> {
                         false
                     };
 
-                    // Check if process actually exists before reporting as online
-                    // Include shell PID and tracked descendants to avoid false crashed status
-                    let any_descendant_alive = is_any_descendant_alive(item.pid, &item.children)
-                        || item
-                            .shell_pid
-                            .map_or(false, |pid| is_any_descendant_alive(pid, &item.children));
-
-                    // Process is actually running if:
-                    // 1. It's marked as running
-                    // 2. Any descendant is alive (main PID, shell PID, or tracked children)
-                    // PID validation is for detecting reuse, but shouldn't block uptime display
-                    let process_actually_running = item.running && any_descendant_alive;
+                    // Same definition of "alive" the daemon uses, so the listing
+                    // and crash detection cannot disagree about a process.
+                    // Process is actually running if it is marked running AND any
+                    // part of it is still alive (main pid, shell, session, tree).
+                    let process_actually_running =
+                        item.running && opm::process::is_process_still_alive(item);
 
                     let mut cpu_percent: String = string!("0.00%");
                     let mut memory_usage: String = string!("0b");
