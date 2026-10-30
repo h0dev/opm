@@ -790,6 +790,7 @@ mod tests {
             pid,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: name.to_string(),
             path: PathBuf::from("/tmp/opm-e2e"),
             script: "node /tmp/probe.js".to_string(),

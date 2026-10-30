@@ -773,6 +773,7 @@ mod remove_batch_tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: name.to_string(),
             path: PathBuf::from("/tmp/opm-remove-batch"),
             script: format!("node {name}.js"),

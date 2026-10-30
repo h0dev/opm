@@ -1835,6 +1835,7 @@ mod tests {
             pid,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test".to_string(),
             path: PathBuf::from("/tmp"),
             script: "sleep 1".to_string(),

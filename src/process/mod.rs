@@ -197,6 +197,14 @@ pub struct Process {
     /// and shell_pid != actual_pid. Used for accurate CPU monitoring of shell scripts.
     pub shell_pid: Option<i64>,
     pub env: Env,
+    /// Keys that came from the `.env` file of the working directory.
+    ///
+    /// Without this there is no way to tell "a variable the user set in .env"
+    /// from "a variable inherited from the shell": when one disappears from
+    /// `.env` it must be dropped from the process too, and merging the stored
+    /// environment cannot know which entries those were.
+    #[serde(default)]
+    pub dotenv_keys: Vec<String>,
     pub name: String,
     pub path: PathBuf,
     pub script: String,
@@ -469,6 +477,42 @@ fn kill_children(children: Vec<i64>) {
             }
         }
     }
+}
+
+/// The environment a process should be given, and the keys that came from `.env`.
+///
+/// A key that was previously provided by `.env` but is no longer there is
+/// DROPPED rather than inherited from the stored copy: deleting a line from
+/// `.env` has to delete the variable, otherwise a proxy or token stays in
+/// effect for ever. Keys the `.env` never provided (PATH, HOME, ...) are kept
+/// from the stored map so a restore after a reboot still has them.
+///
+/// Precedence for keys that exist in several places: stored < system < .env,
+/// which is also the order they are pushed in, since `Command::envs` lets a
+/// later entry win.
+fn build_process_env(
+    stored: &Env,
+    previous_dotenv_keys: &[String],
+    path: &PathBuf,
+) -> (Env, Vec<String>) {
+    let dotenv_vars = load_dotenv(path);
+    let dotenv_keys: Vec<String> = dotenv_vars.keys().cloned().collect();
+
+    let mut env: Env = stored
+        .iter()
+        // Drop what `.env` used to own and no longer defines.
+        .filter(|(key, _)| !previous_dotenv_keys.contains(key) || dotenv_vars.contains_key(*key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+
+    for entry in unix::env() {
+        if let Some((key, value)) = entry.split_once('=') {
+            env.insert(key.to_string(), value.to_string());
+        }
+    }
+    env.extend(dotenv_vars);
+
+    (env, dotenv_keys)
 }
 
 /// Load environment variables from .env file in the specified directory
@@ -834,18 +878,12 @@ impl Runner {
                 },
             };
 
-            // Load environment variables from .env file
-            let dotenv_vars = load_dotenv(&path);
-            let system_env = unix::env();
-
-            // `Command::envs` lets a later entry win, so `.env` goes last: it is
-            // the most specific source and must override the inherited system
-            // environment.
-            let mut process_env = Vec::with_capacity(dotenv_vars.len() + system_env.len());
-            process_env.extend(system_env);
-            for (key, value) in &dotenv_vars {
-                process_env.push(format!("{}={}", key, value));
-            }
+            // A new process has no previous `.env` keys to retire.
+            let (process_env_map, dotenv_keys) = build_process_env(&Env::new(), &[], &path);
+            let process_env: Vec<String> = process_env_map
+                .iter()
+                .map(|(key, value)| format!("{}={}", key, value))
+                .collect();
 
             let result = match process_run(ProcessMetadata {
                 args: config.args,
@@ -868,10 +906,7 @@ impl Runner {
                 }
             };
 
-            // Merge .env variables into the stored environment (dotenv takes priority)
-            let mut stored_env: Env = env::vars().collect();
-            // Extend with dotenv variables (this overwrites any existing keys)
-            stored_env.extend(dotenv_vars);
+            let stored_env = process_env_map;
 
             // Check for duplicate PIDs before inserting new process
             // This prevents tracking the same process multiple times
@@ -966,6 +1001,7 @@ impl Runner {
                     started: Utc::now(),
                     script: command.clone(),
                     env: stored_env,
+                    dotenv_keys,
                     max_memory,
                     agent_id: None,     // Local processes don't have an agent
                     frozen_until: None, // Not frozen by default
@@ -1120,24 +1156,13 @@ impl Runner {
                 return self;
             }
 
-            // Load environment variables from .env file
-            let dotenv_vars = load_dotenv(&path);
-            let system_env = unix::env();
-
-            // Later entries win in `Command::envs`, so `.env` goes last:
-            //   stored  <  system  <  .env from disk
-            let stored_env_vec: Vec<String> = process
-                .env
+            // The environment this spawn gets, and the `.env` keys it owns.
+            let (env_map, dotenv_keys) =
+                build_process_env(&process.env, &process.dotenv_keys, &path);
+            let temp_env: Vec<String> = env_map
                 .iter()
                 .map(|(key, value)| format!("{}={}", key, value))
                 .collect();
-            let mut temp_env =
-                Vec::with_capacity(dotenv_vars.len() + stored_env_vec.len() + system_env.len());
-            temp_env.extend(stored_env_vec);
-            temp_env.extend(system_env);
-            for (key, value) in &dotenv_vars {
-                temp_env.push(format!("{}={}", key, value));
-            }
 
             let result = match process_run(ProcessMetadata {
                 args: config.args,
@@ -1347,13 +1372,10 @@ impl Runner {
                 );
             }
 
-            // Record exactly the environment this process was given. It is a
-            // REPLACEMENT, not a merge: a variable removed from `.env` or from the
-            // shell must disappear here too, or it would live in the dump for
-            // ever and be re-applied on every restart.
-            let mut updated_env: Env = env::vars().collect();
-            updated_env.extend(dotenv_vars);
-            process.env = updated_env;
+            // Record exactly the environment this process was given, so a
+            // variable removed from `.env` disappears from the dump too.
+            process.env = env_map;
+            process.dotenv_keys = dotenv_keys;
 
             // Don't reset crash counter - keep it to preserve crash history
             // The daemon will reset it automatically after the process runs successfully
@@ -1387,7 +1409,12 @@ impl Runner {
     /// written from two threads. It performs the same entry update `restart`
     /// does after `process_run`; the returned bool is false when another process
     /// already tracks the spawned pid (nothing was installed then).
-    pub fn merge_restore_spawn(&mut self, id: usize, result: ProcessRunResult) -> bool {
+    pub fn merge_restore_spawn(
+        &mut self,
+        id: usize,
+        result: ProcessRunResult,
+        dotenv_keys: Vec<String>,
+    ) -> bool {
         // Everything this spawn started must go when it cannot be installed: the
         // tree it may have grown, and the shell wrapper we spawned.
         let discard = |result: &ProcessRunResult| {
@@ -1406,7 +1433,6 @@ impl Runner {
             return false;
         };
         let name = existing.name.clone();
-        let dotenv_vars = load_dotenv(&existing.path);
 
         let (has_duplicate, error_msg) =
             check_duplicate_pid(&self.list, id, result.pid, result.shell_pid);
@@ -1451,11 +1477,17 @@ impl Runner {
         process.manual_stop = false;
         process.last_action_at = Utc::now();
 
-        // Record exactly what this spawn was given, replacing the old copy: a
-        // variable dropped from `.env` must not survive in the dump.
-        let mut updated_env: Env = env::vars().collect();
-        updated_env.extend(dotenv_vars);
-        process.env = updated_env;
+        // Record exactly what this spawn was given. Rebuilding it from the
+        // daemon's own environment loses variables that exist only in `.env`
+        // and keeps ones that were removed from it, so the spawn reports its
+        // environment back instead.
+        process.dotenv_keys = dotenv_keys;
+        process.env = result.env.iter().fold(Env::new(), |mut map, entry| {
+            if let Some((key, value)) = entry.split_once('=') {
+                map.insert(key.to_string(), value.to_string());
+            }
+            map
+        });
 
         true
     }
@@ -3974,6 +4006,13 @@ pub struct ProcessRunResult {
     /// [`PROCESS_HANDLES`] entry is the child, so its exit status can be
     /// reaped without waiting on it.
     pub handle_pid: i64,
+    /// The environment this spawn actually received, as `KEY=value` strings.
+    ///
+    /// The stored copy a process keeps must be exactly this, not a map rebuilt
+    /// from the daemon's own environment: those differ, and anything the
+    /// rebuild cannot see (a variable that exists only in `.env`) would be
+    /// dropped, while anything stale would survive.
+    pub env: Vec<String>,
 }
 
 /// Everything a restore worker needs to spawn one process, captured from that
@@ -3986,6 +4025,9 @@ pub struct RestoreSpawn {
     workdir: PathBuf,
     previous_pid: i64,
     previous_shell_pid: Option<i64>,
+    /// `.env` keys this spawn provides, recorded on the process so a later
+    /// restore knows which variables belong to the file.
+    dotenv_keys: Vec<String>,
 }
 
 /// Restores the working directory and releases [`CWD_LOCK`] when dropped, so a
@@ -4036,21 +4078,15 @@ impl RestoreSpawn {
     /// stored process environment, then the system environment.
     pub fn new(process: &Process, config: &config::structs::Runner) -> Self {
         let workdir = process.path.clone();
-        let dotenv_vars = load_dotenv(&workdir);
-        let system_env = unix::env();
 
-        // `Command::envs` lets a later entry win, so the order is the precedence:
-        //   stored  <  system  <  .env from disk
-        // `.env` has to win, or an edit made since the process was created is
-        // ignored on restore.
-        let mut env = Vec::with_capacity(dotenv_vars.len() + process.env.len() + system_env.len());
-        for (key, value) in &process.env {
-            env.push(format!("{}={}", key, value));
-        }
-        env.extend(system_env);
-        for (key, value) in &dotenv_vars {
-            env.push(format!("{}={}", key, value));
-        }
+        // Same environment a restart would build, including dropping variables
+        // `.env` no longer defines. Restore used to merge the stored copy, so a
+        // removed variable kept being re-applied.
+        let (env_map, dotenv_keys) = build_process_env(&process.env, &process.dotenv_keys, &workdir);
+        let env: Vec<String> = env_map
+            .iter()
+            .map(|(key, value)| format!("{}={}", key, value))
+            .collect();
 
         RestoreSpawn {
             id: process.id,
@@ -4066,6 +4102,7 @@ impl RestoreSpawn {
             workdir,
             previous_pid: process.pid,
             previous_shell_pid: process.shell_pid,
+            dotenv_keys,
         }
     }
 
@@ -4075,6 +4112,11 @@ impl RestoreSpawn {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The `.env` keys this spawn provides, to record on the process.
+    pub fn dotenv_keys(&self) -> &[String] {
+        &self.dotenv_keys
     }
 
     /// Spawn the process. Touches no runner: the child's handle is registered in
@@ -4334,6 +4376,10 @@ where
         command
     };
 
+    // The environment this spawn is about to receive, kept for the result so the
+    // caller stores exactly what ran instead of rebuilding it.
+    let spawned_env = metadata.env.clone();
+
     cmd.envs(metadata.env.iter().map(|env_var| {
         let parts: Vec<&str> = env_var.splitn(2, '=').collect();
         if parts.len() == 2 {
@@ -4516,6 +4562,7 @@ where
         session_id,
         start_time,
         handle_pid: spawned_pid,
+        env: spawned_env,
     })
 }
 
@@ -4556,6 +4603,38 @@ mod tests {
             "a variable removed from .env must not stay in the stored environment"
         );
         assert_eq!(recorded.get("KEEP").map(String::as_str), Some("yes"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A variable that used to come from `.env` and no longer does must be
+    /// dropped from the next spawn, including on restore.
+    ///
+    /// Merging the stored environment cannot tell "the user removed this line"
+    /// from "this came from the shell", so the keys `.env` owns are recorded.
+    #[test]
+    fn a_dotenv_key_that_disappears_is_dropped_on_the_next_spawn() {
+        let dir = std::env::temp_dir().join(format!("opm-dotenv-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+
+        // First start: `.env` provides the proxy.
+        std::fs::write(dir.join(".env"), "PROXY=socks5://127.0.0.1:1080\nKEEP=yes\n")
+            .expect("write .env");
+        let stored = Env::new();
+        let (first_env, first_keys) = build_process_env(&stored, &[], &dir);
+        assert_eq!(first_env.get("PROXY").map(String::as_str), Some("socks5://127.0.0.1:1080"));
+        assert!(first_keys.contains(&"PROXY".to_string()));
+
+        // The line is removed from `.env`.
+        std::fs::write(dir.join(".env"), "KEEP=yes\n").expect("rewrite .env");
+        let (next_env, next_keys) = build_process_env(&first_env, &first_keys, &dir);
+
+        assert!(
+            !next_env.contains_key("PROXY"),
+            "a variable removed from .env must not be carried into the next spawn"
+        );
+        assert_eq!(next_env.get("KEEP").map(String::as_str), Some("yes"));
+        assert!(!next_keys.contains(&"PROXY".to_string()));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4838,6 +4917,7 @@ mod tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: format!("test_{id}"),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -5633,6 +5713,7 @@ mod tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -5673,6 +5754,7 @@ mod tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -5715,6 +5797,7 @@ mod tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -5760,6 +5843,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -5820,6 +5904,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -5915,6 +6000,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello world'".to_string(),
@@ -6125,6 +6211,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -6182,6 +6269,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -6239,6 +6327,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_crashed_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -6298,6 +6387,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -6351,6 +6441,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_stopped_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -6412,6 +6503,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -6479,6 +6571,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process_9_crashes".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6555,6 +6648,7 @@ mod tests {
             pid: 0, // Not running
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process_15_crashes".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6606,6 +6700,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6665,6 +6760,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6727,6 +6823,7 @@ mod tests {
             pid: UNLIKELY_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_crashed_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6792,6 +6889,7 @@ mod tests {
             pid: 12345,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6856,6 +6954,7 @@ mod tests {
             pid: UNLIKELY_PID, // Invalid PID - restore will fail
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_restore_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -6923,6 +7022,7 @@ mod tests {
             pid: 0, // Restored process has PID=0 before daemon starts it
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_restored_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -7071,6 +7171,7 @@ mod tests {
             pid: 0, // Dead process
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_restart_failure".to_string(),
             path: PathBuf::from("/nonexistent/directory/that/does/not/exist"),
             script: "echo 'test'".to_string(),
@@ -7186,6 +7287,7 @@ mod tests {
             pid: 0, // Dead process
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process_at_limit".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -7293,6 +7395,7 @@ mod tests {
             pid: INITIAL_PID,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_auto_restart_limit".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -7475,6 +7578,7 @@ mod tests {
                 pid: 1000 + i as i64,
                 shell_pid: None,
                 env: BTreeMap::new(),
+                dotenv_keys: Vec::new(),
                 name: format!("process_{}", i),
                 path: PathBuf::from("/tmp"),
                 script: "echo 'test'".to_string(),
@@ -7687,6 +7791,7 @@ mod tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -7824,6 +7929,7 @@ mod tests {
                 pid: (2000 + i) as i64,
                 shell_pid: None,
                 env: BTreeMap::new(),
+                dotenv_keys: Vec::new(),
                 name: format!("process_{}", i),
                 path: PathBuf::from("/tmp"),
                 script: "echo 'test'".to_string(),
@@ -7937,6 +8043,7 @@ mod tests {
             pid: 3000,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -8009,6 +8116,7 @@ mod tests {
             pid: 0, // PID of 0 indicates process is not running
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_crashed_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "exit 1".to_string(),
@@ -8080,6 +8188,7 @@ mod tests {
             pid: 0, // No valid PID (process died)
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "tets".to_string(), // Using same name as in the issue report
             path: PathBuf::from("/tmp"),
             script: "tets".to_string(), // Non-existent command
@@ -8165,6 +8274,7 @@ mod tests {
             pid: 0,
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_clean_exit".to_string(),
             path: PathBuf::from("/tmp"),
             script: "exit 0".to_string(),
@@ -8255,6 +8365,7 @@ mod tests {
             pid: 12345,
             shell_pid: Some(12346), // Shell PID is set
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_shell_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -8348,6 +8459,7 @@ mod tests {
             pid: UNLIKELY_PID,          // Dead PID (actual child)
             shell_pid: Some(alive_pid), // Alive shell PID (our test process)
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_shell_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "node server.js".to_string(),
@@ -8441,6 +8553,7 @@ mod tests {
             pid: current_pid, // Use a valid, alive PID
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_started_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'hello'".to_string(),
@@ -8509,6 +8622,7 @@ mod tests {
             pid: dead_pid, // Parent shell is dead
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_parent_exits".to_string(),
             path: PathBuf::from("/tmp"),
             script: "start.sh".to_string(),
@@ -8579,6 +8693,7 @@ mod tests {
             pid: dead_root_pid, // Root PID is dead
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_background_shell".to_string(),
             path: PathBuf::from("/tmp"),
             script: "a.sh".to_string(),
@@ -8633,6 +8748,7 @@ mod tests {
             pid: UNLIKELY_PID, // Dead PID
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_delay_process".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo test".to_string(),
@@ -8692,6 +8808,7 @@ mod tests {
             pid: 0, // Invalid PID (<= 0)
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_missing_pid".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo test".to_string(),
@@ -8772,6 +8889,7 @@ mod tests {
             pid: 0, // Default after deserialization (not persisted)
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "uptimekuma".to_string(),
             path: PathBuf::from("/home/container/uptime-kuma"),
             script: "node server/server.js".to_string(),
@@ -8908,6 +9026,7 @@ mod tests {
             pid: 0, // No PID - restart failed or never started
             shell_pid: None,
             env: BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: "test_retry_counter".to_string(),
             path: PathBuf::from("/tmp"),
             script: "echo 'test'".to_string(),
@@ -9663,7 +9782,7 @@ mod tests {
         runner.list.insert(0, process);
 
         let spawned = job.spawn().expect("spawn must succeed");
-        let merged = runner.merge_restore_spawn(0, spawned.clone());
+        let merged = runner.merge_restore_spawn(0, spawned.clone(), Vec::new());
 
         let info = runner.info(0).unwrap();
         let (pid, start_time, running, crashed) =

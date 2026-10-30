@@ -1683,13 +1683,16 @@ impl<'i> Internal<'i> {
             .collect();
 
         let mut spawn_results: Vec<(usize, String)> = Vec::with_capacity(processes_to_restore.len());
-        for (result, (id, name, _was_running, _was_crashed)) in opm::process::spawn_restore_batch(jobs)
+        let dotenv_keys: Vec<Vec<String>> = jobs.iter().map(|job| job.dotenv_keys().to_vec()).collect();
+
+        for ((result, keys), (id, name, _was_running, _was_crashed)) in opm::process::spawn_restore_batch(jobs)
             .into_iter()
+            .zip(dotenv_keys.into_iter())
             .zip(processes_to_restore.iter())
         {
             match result {
                 Ok(spawned) => {
-                    if !runner.merge_restore_spawn(*id, spawned) {
+                    if !runner.merge_restore_spawn(*id, spawned, keys) {
                         ::log::warn!(
                             "Restore of process '{}' (id={}) was not installed; its spawned pid is already tracked",
                             name,
@@ -1791,16 +1794,16 @@ impl<'i> Internal<'i> {
             }
         }
 
-        // Save final state after restore attempts to persist crashed process states
-        // This ensures processes that failed to restore (via set_crashed() calls) are properly
-        // marked as crashed in permanent storage for daemon monitoring
-        runner.save_permanent();
-
-        // Update daemon's memory cache via socket so it sees the new state immediately
-        // NOTE: This duplicates the update sent right after PID clearing, but ensures final state
-        // is properly synchronized after all restore operations complete
+        // Hand the daemon the finished state FIRST, then commit. `save_permanent`
+        // commits whatever the daemon holds, and until this update that is the
+        // pre-restore copy - so committing first wrote the old environment (and
+        // any other stale field) to the dump while the fresh state only reached
+        // memory.
         let socket_path = global!("opm.socket");
-        match opm::socket::send_request(&socket_path, opm::socket::SocketRequest::SetState(runner.clone())) {
+        match opm::socket::send_request(
+            &socket_path,
+            opm::socket::SocketRequest::SetState(runner.clone()),
+        ) {
             Ok(opm::socket::SocketResponse::Success) => {}
             Ok(opm::socket::SocketResponse::Error(message)) => {
                 ::log::warn!(
@@ -1818,6 +1821,11 @@ impl<'i> Internal<'i> {
                 );
             }
         }
+
+        // Save final state after restore attempts to persist crashed process states
+        // This ensures processes that failed to restore (via set_crashed() calls) are properly
+        // marked as crashed in permanent storage for daemon monitoring
+        runner.save_permanent();
 
         // Clear restore in progress flag to allow daemon to resume normal operations
         // This must be done after all processes have been started to prevent duplicates
@@ -2516,6 +2524,7 @@ mod adjust_rename_tests {
             pid: 0,
             shell_pid: None,
             env: std::collections::BTreeMap::new(),
+            dotenv_keys: Vec::new(),
             name: name.to_string(),
             path: PathBuf::from("/tmp/opm-adjust"),
             script: script.to_string(),
