@@ -2,7 +2,7 @@
 	"name": "opm-webui",
 	"type": "module",
 	"license": "MIT",
-	"version": "2.1.6",
+	"version": "2.1.7",
 	"scripts": {
 		"astro": "astro",
 		"dev": "astro dev",
